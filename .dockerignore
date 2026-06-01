@@ -1,0 +1,89 @@
+# =============================================================================
+# Docker Ignore - ARIA Music Generation
+# =============================================================================
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Distribution and build
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Test and coverage
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Large data directories (mounted as volumes instead)
+data/
+outputs/
+logs/
+wandb/
+artifacts/training/
+artifacts/benchmark/
+
+# Notebooks (mounted as volumes)
+notebooks/
+
+# Local configuration and secrets
+.env
+.local/
+.claude/
+config.yaml
+
+# Miscellaneous
+misc/
+*.log
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+TODO.md
+notes/

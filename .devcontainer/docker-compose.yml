@@ -1,0 +1,20 @@
+services:
+  sonitra:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        TZ: ${TZ:-America/Los_Angeles}
+    ports:
+      - "8889:8888"
+      - "8051:8050"
+    runtime: nvidia
+    volumes:
+      - C:\Users\Shayan\Documents\Obsidian\dev\sonitra:/workspace/.local/notes
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NODE_OPTIONS: --max-old-space-size=4096
+      CLAUDE_CONFIG_DIR: /home/node/workspace/.claude
+      PYTHONPATH: /workspace/midi_renderer
+    user: node
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace
