@@ -1,9 +1,9 @@
 [project]
-name = "midi-renderer"
+name = "sonitra"
 version = "0.1.0"
 description = "MIDI-to-audio batch rendering pipeline."
 authors = [
-    {name = "copilot-swe-agent[bot]",email = "198982749+Copilot@users.noreply.github.com"}
+    {name = "copilot-swe-agent[bot]", email = "198982749+Copilot@users.noreply.github.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,12 @@ dependencies = [
     "numpy",
     "scipy",
     "pedalboard",
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "typer",
+    "pyyaml",
+    "pydantic",
 ]
 
 [project.optional-dependencies]
@@ -24,9 +30,6 @@ dev = [
     "anyio",
 ]
 
-[tool.poetry]
-packages = [{include = "midi_renderer"}]
-
 [tool.pytest.ini_options]
 markers = [
     "skip_if_no_vst: requires a real VST plugin path",
@@ -36,3 +39,6 @@ markers = [
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{include = "sonitra", from = "src"}]
