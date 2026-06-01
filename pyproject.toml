@@ -1,0 +1,38 @@
+[project]
+name = "midi-renderer"
+version = "0.1.0"
+description = "MIDI-to-audio batch rendering pipeline."
+authors = [
+    {name = "copilot-swe-agent[bot]",email = "198982749+Copilot@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dawdreamer",
+    "mido",
+    "numpy",
+    "scipy",
+    "pedalboard",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-timeout",
+    "pytest-anyio",
+    "anyio",
+]
+
+[tool.poetry]
+packages = [{include = "midi_renderer"}]
+
+[tool.pytest.ini_options]
+markers = [
+    "skip_if_no_vst: requires a real VST plugin path",
+    "integration: end-to-end tests requiring a VST",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

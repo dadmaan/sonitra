@@ -1,0 +1,13 @@
+dawdreamer
+mido
+numpy
+scipy
+pedalboard
+fastapi
+uvicorn[standard]
+httpx
+anyio[asyncio]
+pytest-anyio
+pytest
+pytest-cov
+pytest-timeout
