@@ -1,10 +1,10 @@
 import numpy as np
 
-from midi_renderer.config import RenderingMode, load_config
-from midi_renderer.midi_reader import parse_midi
-from midi_renderer.synth.dawdreamer_synth import DawDreamerSynth
-from midi_renderer.synth.pedalboard_synth import PedalboardSynth
-from midi_renderer.synth.protocol import SynthesiserProtocol, make_synth
+from sonitra.config import RenderingMode, load_config
+from sonitra.midi_reader import parse_midi
+from sonitra.synth.dawdreamer_synth import DawDreamerSynth
+from sonitra.synth.pedalboard_synth import PedalboardSynth
+from sonitra.synth.protocol import SynthesiserProtocol, make_synth
 
 
 def test_dawdreamer_synth_implements_protocol():

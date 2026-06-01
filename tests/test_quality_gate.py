@@ -1,7 +1,7 @@
 import json
 
-from midi_renderer.config import QualityGatesSection
-from midi_renderer.quality_gate import check_quality
+from sonitra.config import QualityGatesSection
+from sonitra.quality_gate import check_quality
 
 
 def test_silent_audio_flagged(dummy_silent_audio):

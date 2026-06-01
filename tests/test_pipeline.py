@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from midi_renderer.pipeline import run_pipeline
+from sonitra.pipeline import run_pipeline
 
 
 def test_pipeline_processes_single_midi(tmp_path, midi_fixture, session_engine):
@@ -34,7 +34,7 @@ def test_pipeline_logs_failure_without_abort(tmp_path, session_engine, monkeypat
     def broken_render(*_args, **_kwargs):
         raise RuntimeError("simulated crash")
 
-    monkeypatch.setattr("midi_renderer.renderer.render_notes_faust", broken_render)
+    monkeypatch.setattr("sonitra.renderer.render_notes_faust", broken_render)
     result = run_pipeline([Path("nonexistent.mid")], tmp_path, session_engine)
     assert result.failed == 1
     assert result.succeeded == 0

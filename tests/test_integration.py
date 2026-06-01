@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from midi_renderer.engine import RendererEngine
-from midi_renderer.midi_reader import parse_midi
-from midi_renderer.pipeline import run_pipeline
-from midi_renderer.renderer import render_notes_vst
+from sonitra.engine import RendererEngine
+from sonitra.midi_reader import parse_midi
+from sonitra.pipeline import run_pipeline
+from sonitra.renderer import render_notes_vst
 
 
 @pytest.mark.integration

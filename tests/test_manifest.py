@@ -1,8 +1,8 @@
 import json
 
-from midi_renderer.effects.builtin_effects import CompressorConfig
-from midi_renderer.effects.chain_builder import compute_chain_hash
-from midi_renderer.manifest import ManifestEntry, ManifestWriter
+from sonitra.effects.builtin_effects import CompressorConfig
+from sonitra.effects.chain_builder import compute_chain_hash
+from sonitra.manifest import ManifestEntry, ManifestWriter
 
 
 def test_write_creates_manifest_file(tmp_path):

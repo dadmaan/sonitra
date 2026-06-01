@@ -2,8 +2,8 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from midi_renderer.api.app import create_app
-from midi_renderer.api.job_store import JobStore
+from sonitra.api.app import create_app
+from sonitra.api.job_store import JobStore
 import shutil
 
 

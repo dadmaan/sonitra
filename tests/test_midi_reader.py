@@ -1,6 +1,6 @@
 import pytest
 
-from midi_renderer.midi_reader import parse_midi
+from sonitra.midi_reader import parse_midi
 
 
 def test_parse_returns_note_list(midi_fixture):

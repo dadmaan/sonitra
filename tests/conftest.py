@@ -34,7 +34,7 @@ def corpus_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def session_engine():
-    from midi_renderer.engine import RendererEngine
+    from sonitra.engine import RendererEngine
 
     return RendererEngine(sample_rate=44100, block_size=512)
 

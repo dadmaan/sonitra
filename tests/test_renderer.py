@@ -3,8 +3,8 @@ import threading
 import numpy as np
 import pytest
 
-from midi_renderer.midi_reader import parse_midi
-from midi_renderer.renderer import render_notes_faust, render_notes_vst
+from sonitra.midi_reader import parse_midi
+from sonitra.renderer import render_notes_faust, render_notes_vst
 
 
 def test_notes_fed_to_faust_processor_produce_audio(session_engine, midi_fixture):

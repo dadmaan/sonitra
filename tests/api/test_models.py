@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from midi_renderer.api.models import JobRequest, JobResponse, JobStatus
+from sonitra.api.models import JobRequest, JobResponse, JobStatus
 
 
 def test_job_request_requires_midi_dir():

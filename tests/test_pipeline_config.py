@@ -4,10 +4,10 @@ import numpy as np
 import pedalboard
 import pytest
 
-from midi_renderer.config import RenderingMode, load_config
-from midi_renderer.pipeline import run_pipeline
-from midi_renderer.synth.dawdreamer_synth import DawDreamerSynth
-from midi_renderer.synth.pedalboard_synth import PedalboardSynth
+from sonitra.config import RenderingMode, load_config
+from sonitra.pipeline import run_pipeline
+from sonitra.synth.dawdreamer_synth import DawDreamerSynth
+from sonitra.synth.pedalboard_synth import PedalboardSynth
 
 
 # ── Mode routing ─────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ def test_pre_effects_normalisation_applied_before_chain(
     cfg = load_config(config_fixture("config_valid.yaml"))
     cfg.normalisation.pre_effects = True
     call_order = []
-    monkeypatch.setattr("midi_renderer.normaliser.normalise", lambda a, **kw: call_order.append("norm") or a)
+    monkeypatch.setattr("sonitra.normaliser.normalise", lambda a, **kw: call_order.append("norm") or a)
     monkeypatch.setattr(
         "pedalboard.Pedalboard.__call__",
         lambda self, a, sr: call_order.append("fx") or a,
@@ -72,7 +72,7 @@ def test_pre_effects_normalisation_applied_before_chain(
 def test_silent_render_marked_failed_in_result(monkeypatch, tmp_path, midi_fixture, config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
     monkeypatch.setattr(
-        "midi_renderer.synth.dawdreamer_synth.DawDreamerSynth.render",
+        "sonitra.synth.dawdreamer_synth.DawDreamerSynth.render",
         lambda *a, **kw: np.zeros((2, 44100), dtype=np.float32),
     )
     result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
@@ -118,7 +118,7 @@ def test_dawdreamer_mode_uses_single_worker(monkeypatch, tmp_path, midi_fixture,
     worker_counts = []
 
     monkeypatch.setattr(
-        "midi_renderer.pipeline._get_worker_count",
+        "sonitra.pipeline._get_worker_count",
         lambda cfg: worker_counts.append(cfg.pipeline.max_workers) or cfg.pipeline.max_workers,
     )
     run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)

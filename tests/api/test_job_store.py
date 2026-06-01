@@ -1,7 +1,7 @@
 import pytest
 
-from midi_renderer.api.job_store import JobStore
-from midi_renderer.api.models import JobStatus
+from sonitra.api.job_store import JobStore
+from sonitra.api.models import JobStatus
 
 
 def test_create_job_returns_unique_id():

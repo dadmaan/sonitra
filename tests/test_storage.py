@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from scipy.io import wavfile
 
-from midi_renderer.storage import derive_output_path, write_wav
+from sonitra.storage import derive_output_path, write_wav
 
 
 def test_write_wav_creates_file(tmp_path, dummy_audio):

@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from midi_renderer.config import load_config
-from midi_renderer.normaliser import normalise, normalise_from_config
+from sonitra.config import load_config
+from sonitra.normaliser import normalise, normalise_from_config
 
 
 def test_peak_normalise_scales_to_target():
