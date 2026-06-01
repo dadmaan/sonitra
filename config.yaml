@@ -32,7 +32,21 @@ pedalboard:
     preset_path: null
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
-  effects: []
+  effects:
+    - type: Compressor
+      threshold_db: -18.0
+      ratio: 4.0
+      attack_ms: 5.0
+      release_ms: 100.0
+      enabled: true
+    - type: Reverb
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.15
+      dry_level: 0.85
+      width: 1.0
+      freeze_mode: false
+      enabled: true
 
 normalisation:
   enabled: false
