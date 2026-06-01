@@ -9,41 +9,49 @@
 ## Repository structure
 
 ```
-midi_renderer/
-├── midi_renderer/
-│   ├── config.py                # Pydantic config schema + YAML loader
-│   ├── engine.py                # DawDreamer processing engine
-│   ├── renderer.py              # Faust/VST note rendering
-│   ├── midi_reader.py           # MIDI file parsing
-│   ├── normaliser.py            # Peak/RMS normalisation
-│   ├── quality_gate.py          # Silence/clip/duration guards
-│   ├── manifest.py              # renders.jsonl writer
-│   ├── storage.py               # WAV/FLAC/MP3 output
-│   ├── pipeline.py              # Orchestration (config + legacy paths)
-│   ├── effects/
-│   │   ├── base.py              # EffectsChain protocol
-│   │   ├── builtin_effects.py   # Pydantic effect config models
-│   │   └── chain_builder.py     # Config → pedalboard.Pedalboard factory
-│   ├── synth/
-│   │   ├── protocol.py          # SynthesiserProtocol + make_synth factory
-│   │   ├── dawdreamer_synth.py  # DawDreamer backend wrapper
-│   │   └── pedalboard_synth.py  # Pedalboard instrument renderer
-│   └── api/
-│       ├── app.py               # FastAPI application
-│       ├── models.py            # API request/response models
-│       ├── job_store.py         # Job state management
-│       ├── worker.py            # Background rendering worker
-│       └── routers/
-│           ├── config.py        # GET/PUT /config
-│           ├── health.py        # Health check endpoints
-│           ├── jobs.py          # Job CRUD
-│           └── status.py        # SSE status stream
-├── config.yaml                  # Default configuration
+sonitra/
+├── src/
+│   └── sonitra/
+│       ├── __init__.py           # Package root
+│       ├── __main__.py           # python -m sonitra
+│       ├── cli.py                # Typer CLI (render, serve, init)
+│       ├── py.typed              # PEP 561 marker
+│       ├── config.py             # Pydantic config schema + YAML loader
+│       ├── engine.py             # DawDreamer processing engine
+│       ├── renderer.py           # Faust/VST note rendering
+│       ├── midi_reader.py        # MIDI file parsing
+│       ├── normaliser.py         # Peak/RMS normalisation
+│       ├── quality_gate.py       # Silence/clip/duration guards
+│       ├── manifest.py           # renders.jsonl writer
+│       ├── storage.py            # WAV/FLAC/MP3 output
+│       ├── pipeline.py           # Orchestration (config + legacy paths)
+│       ├── effects/
+│       │   ├── __init__.py
+│       │   ├── base.py           # EffectsChain protocol
+│       │   ├── builtin_effects.py# Pydantic effect config models
+│       │   └── chain_builder.py  # Config -> pedalboard.Pedalboard factory
+│       ├── synth/
+│       │   ├── __init__.py
+│       │   ├── protocol.py       # SynthesiserProtocol + make_synth factory
+│       │   ├── dawdreamer_synth.py  # DawDreamer backend wrapper
+│       │   └── pedalboard_synth.py  # Pedalboard instrument renderer
+│       └── api/
+│           ├── __init__.py
+│           ├── app.py            # FastAPI application
+│           ├── models.py         # API request/response models
+│           ├── job_store.py      # Job state management
+│           ├── worker.py         # Background rendering worker
+│           └── routers/
+│               ├── __init__.py
+│               ├── config.py     # GET/PUT /config
+│               ├── health.py     # Health check endpoints
+│               ├── jobs.py       # Job CRUD
+│               └── status.py     # SSE status stream
 ├── tests/
-│   ├── conftest.py              # Shared fixtures
+│   ├── conftest.py               # Shared fixtures
 │   ├── fixtures/
-│   │   ├── config_*.yaml        # Test config variants
-│   │   ├── test_*.mid           # MIDI test files
+│   │   ├── config_*.yaml         # Test config variants
+│   │   └── test_*.mid            # MIDI test files
 │   ├── test_config.py
 │   ├── test_chain_builder.py
 │   ├── test_pedalboard_synth.py
@@ -59,8 +67,16 @@ midi_renderer/
 │       ├── test_worker.py
 │       ├── test_health.py
 │       └── test_openapi.py
-├── requirements.txt
-└── pyproject.toml
+├── scripts/                      # Dev/CI helper scripts
+├── CHANGELOG/                    # One file per release
+│   └── 0.1.0.md
+├── config.yaml                   # Default configuration
+├── pyproject.toml
+├── README.md
+├── SECURITY.md
+├── CONTRIBUTING.md
+├── LICENSE
+└── zensical.toml                 # Documentation site config
 ```
 
 ## Features
@@ -144,11 +160,27 @@ observability:
 
 ## Usage
 
-### Command-line pipeline
+### CLI
+
+```bash
+# Run the pipeline
+sonitra render --corpus corpus/midi --output corpus/audio
+
+# Start the FastAPI server
+sonitra serve --port 8000
+
+# Write a default config.yaml
+sonitra init --config config.yaml
+
+# Show version
+sonitra --version
+```
+
+### Python API
 
 ```python
-from midi_renderer.config import load_config
-from midi_renderer.pipeline import run_pipeline
+from sonitra.config import load_config
+from sonitra.pipeline import run_pipeline
 from pathlib import Path
 
 cfg = load_config("config.yaml")
@@ -160,10 +192,13 @@ result = run_pipeline(
 print(f"Done: {result.succeeded}, Failed: {result.failed}")
 ```
 
-### FastAPI server
+### FastAPI server (programmatic)
 
-```bash
-uvicorn midi_renderer.api.app:create_app --factory --reload
+```python
+import uvicorn
+from sonitra.api.app import create_app
+
+uvicorn.run(create_app(), host="0.0.0.0", port=8000)
 ```
 
 | Endpoint | Description |
