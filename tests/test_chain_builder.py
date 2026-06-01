@@ -1,8 +1,8 @@
 import pytest
 import pedalboard
 
-from midi_renderer.config import load_config
-from midi_renderer.effects.builtin_effects import (
+from sonitra.config import load_config
+from sonitra.effects.builtin_effects import (
     ChorusConfig,
     CompressorConfig,
     DelayConfig,
@@ -12,7 +12,7 @@ from midi_renderer.effects.builtin_effects import (
     ReverbConfig,
     VST3PluginConfig,
 )
-from midi_renderer.effects.chain_builder import (
+from sonitra.effects.chain_builder import (
     build_effects_chain,
     build_effects_chain_from_config,
 )

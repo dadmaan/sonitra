@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from midi_renderer.midi_reader import parse_midi
-from midi_renderer.synth.pedalboard_synth import PedalboardSynth
-from midi_renderer.synth.protocol import SynthesiserProtocol
+from sonitra.midi_reader import parse_midi
+from sonitra.synth.pedalboard_synth import PedalboardSynth
+from sonitra.synth.protocol import SynthesiserProtocol
 
 
 # ── Protocol conformance ─────────────────────────────────────────────

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from midi_renderer.config import (
+from sonitra.config import (
     ConfigError,
     PipelineConfig,
     RenderingMode,

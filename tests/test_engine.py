@@ -1,6 +1,6 @@
 import pytest
 
-from midi_renderer.engine import RendererEngine
+from sonitra.engine import RendererEngine
 
 
 def test_engine_initialises():

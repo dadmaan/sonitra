@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from midi_renderer.api.models import JobStatus
-from midi_renderer.api.worker import run_render_worker
+from sonitra.api.models import JobStatus
+from sonitra.api.worker import run_render_worker
 
 
 @pytest.mark.anyio
@@ -34,7 +34,7 @@ async def test_worker_sets_failed_on_crash(tmp_path, job_store, monkeypatch, mid
     def explode(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("midi_renderer.api.worker.run_pipeline", explode)
+    monkeypatch.setattr("sonitra.api.worker.run_pipeline", explode)
     job_id = job_store.create(midi_dir=str(midi_fixture("test_c4.mid").parent), out_dir=str(tmp_path))
     await run_render_worker(job_id, job_store)
     assert job_store.get(job_id).status == JobStatus.FAILED
