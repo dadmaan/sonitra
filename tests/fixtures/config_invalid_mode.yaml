@@ -1,0 +1,53 @@
+pipeline:
+  rendering_mode: invalid_mode
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: false
+  resume: true
+  max_workers: 4
+  log_level: INFO
+
+io:
+  midi_dir: ./corpus/midi
+  output_dir: ./corpus/audio
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+
+dawdreamer:
+  enabled: true
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  bpm: 120
+  faust_code: null
+  clear_midi_between_renders: true
+
+pedalboard:
+  enabled: true
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects: []
+
+normalisation:
+  enabled: true
+  mode: peak
+  target_db: -1.0
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 0.999
+
+observability:
+  write_manifest: true
+  manifest_path: ./renders.jsonl
+  write_failed_list: true
+  emit_sse_events: true
