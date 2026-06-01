@@ -1,0 +1,28 @@
+[project]
+site_name = "Sonitra"
+site_url = "https://github.com/anomalyco/sonitra"
+site_description = "MIDI-to-audio batch rendering pipeline"
+repo_url = "https://github.com/anomalyco/sonitra"
+repo_name = "anomalyco/sonitra"
+
+nav = [
+  { "Home" = "index.md" },
+  { "Tutorial" = "tutorial.md" },
+  { "Project Structure" = "project_structure.md" },
+  { "CLI Reference" = "cli_reference.md" },
+  { "API Reference" = "api_reference.md" },
+  { "Design Decisions" = "design_decisions.md" },
+  { "Troubleshooting" = "troubleshooting.md" },
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "material/brightness-7"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "material/brightness-4"
+toggle.name = "Switch to light mode"

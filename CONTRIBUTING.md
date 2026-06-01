@@ -22,8 +22,8 @@ Use this format:
 Before opening a PR for non-trivial changes, run:
 
 ```bash
-pip install -e ".[dev,docs]"
-ruff check src/ scripts/ test/
+pip install -e ".[dev]"
+ruff check src/ tests/ scripts/
 ruff format src/ scripts/
 pytest
 ```
