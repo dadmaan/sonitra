@@ -49,7 +49,7 @@ Potential tools and services include:
 - Moises.ai
 - Songsterr (benchmark-only, limited manual use)
 - Demucs or similar stem separation tools
-- Pedalboard for synthesis/effects processing
+- DawDreamer and Pedalboard for synthesis/effects processing
 
 ## Evaluation focus
 
