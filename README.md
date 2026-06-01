@@ -1,10 +1,67 @@
-# midi-renderer
+# Sonitra
 
-> MIDI-to-audio batch rendering pipeline with configurable effects, multiple synthesis backends, and a FastAPI management server.
+> Independent benchmarking for AI music transcription systems.
 
-## Overview
+Sonitra is a research toolkit for evaluating automatic music transcription (AMT) systems across open-source models and commercial APIs. It provides a reproducible pipeline for converting symbolic scores into audio, transcribing the resulting audio back into symbolic form, and comparing the output against ground truth under controlled experimental conditions.
 
-`midi-renderer` is a modular pipeline for rendering MIDI files to audio at scale. It supports two synthesis backends (DawDreamer and Pedalboard), a configurable effects chain, normalisation, quality gates, and multiple output formats. An optional FastAPI server provides job queue management and runtime config reload.
+## Why Sonitra
+
+Automatic music transcription tools are improving quickly, but independent, systematic benchmarks are still rare. Sonitra is designed to assess how well existing transcription systems perform without building new AMT models. The focus is on transparent evaluation, reproducibility, and comparative analysis across tools, datasets, and audio conditions.
+
+## Core pipeline
+
+```text
+MIDI / MusicXML
+    ↓
+Audio synthesis
+    ↓
+Optional stem separation
+    ↓
+Transcription (audio → symbolic)
+    ↓
+Score comparison and analysis
+```
+
+The default workflow is:
+
+1. Start from a symbolic score corpus such as MIDI or MusicXML.
+2. Render audio from the score using synthesis tools.
+3. Apply controlled transformations such as reverb, noise, or style variations.
+4. Run transcription using one or more AMT systems.
+5. Compare transcribed output against the original score using evaluation metrics.
+
+## Research questions
+
+Sonitra is intended to support questions such as:
+
+- How do open-source and commercial AMT tools compare on the same inputs?
+- Which audio conditions degrade transcription quality most strongly?
+- How much does stem separation improve transcription accuracy?
+- Which tools are robust to polyphony, effects, and different musical styles?
+- How can AMT benchmarking be made reproducible and extensible?
+
+## Initial tool targets
+
+Potential tools and services include:
+
+- Basic Pitch
+- klang.io
+- Moises.ai
+- Songsterr (benchmark-only, limited manual use)
+- Demucs or similar stem separation tools
+- Pedalboard for synthesis/effects processing
+
+## Evaluation focus
+
+Sonitra is centered on comparative evaluation rather than model training. Example independent variables include:
+
+- reverb amount
+- audio quality / noise
+- instrument type
+- polyphony level
+- tempo
+- genre or historical style proxy
+- presence or absence of stem separation
 
 ## Repository structure
 
@@ -241,3 +298,7 @@ pytest -m "not skip_if_no_vst"  # skip VST-dependent tests
 ## License
 
 MIT
+
+## Status
+
+This repository is currently in early setup as part of a MishMash seed-funding project on AI transcription of music and the evaluation of state-of-the-art systems.
