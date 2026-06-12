@@ -82,6 +82,7 @@ sonitra/
 │       ├── manifest.py           # renders.jsonl writer
 │       ├── storage.py            # WAV/FLAC/MP3 output
 │       ├── pipeline.py           # Orchestration (config + legacy paths)
+│       ├── midi_writer.py        # Note dicts -> MIDI file (transcription output)
 │       ├── effects/
 │       │   ├── __init__.py
 │       │   ├── base.py           # EffectsChain protocol
@@ -92,6 +93,33 @@ sonitra/
 │       │   ├── protocol.py       # SynthesiserProtocol + make_synth factory
 │       │   ├── dawdreamer_synth.py  # DawDreamer backend wrapper
 │       │   └── pedalboard_synth.py  # Pedalboard instrument renderer
+│       ├── separation/
+│       │   ├── __init__.py
+│       │   ├── protocol.py       # StemSeparatorProtocol + make_separator factory
+│       │   ├── passthrough.py    # No-op separator
+│       │   └── demucs_separator.py  # Demucs backend (optional dep)
+│       ├── transcribe/
+│       │   ├── __init__.py
+│       │   ├── base.py           # TranscriptionResult + errors
+│       │   ├── configs.py        # Pydantic transcriber config models
+│       │   ├── protocol.py       # TranscriberProtocol + registry/factory
+│       │   ├── basic_pitch.py    # Spotify Basic Pitch backend (optional dep)
+│       │   ├── external_command.py  # Any CLI tool via {input}/{output} template
+│       │   └── precomputed.py    # Pre-exported MIDI (commercial tools)
+│       ├── evaluation/
+│       │   ├── __init__.py
+│       │   ├── types.py          # NoteEvent + conversions
+│       │   ├── protocol.py       # SymbolicMetric/AudioMetric + registries
+│       │   ├── builtin_metrics.py# Config -> metric factories
+│       │   ├── note_metrics.py   # Note-level P/R/F1 (mir_eval-compatible)
+│       │   ├── frame_metrics.py  # Frame-level P/R/F1
+│       │   ├── expressive_metrics.py # IOI/KOR/velocity/harmony (mpteval-inspired)
+│       │   └── dtw_metric.py     # DTW audio similarity over chroma
+│       ├── benchmark/
+│       │   ├── __init__.py
+│       │   ├── conditions.py     # Conditions, sweeps, config overrides
+│       │   ├── runner.py         # render -> separate -> transcribe -> evaluate
+│       │   └── results.py        # JSONL records, summaries, degradation tables
 │       └── api/
 │           ├── __init__.py
 │           ├── app.py            # FastAPI application
@@ -148,6 +176,10 @@ sonitra/
 - **Manifest tracking** — Per-file JSONL log with effects chain hashing
 - **FastAPI server** — Job queue, runtime config reload, SSE status stream
 - **Worker constraint** — DawDreamer modes automatically serialised to single worker
+- **Transcription layer** — Pluggable AMT backends: Basic Pitch, any CLI tool, or pre-exported MIDI from commercial services
+- **Stem separation** — Optional Demucs pass between rendering and transcription
+- **Evaluation suite** — Note-level F1 (onset / onset+offset / +velocity, mir_eval-compatible tolerances), frame-level F1, musically informed expressive metrics (timing, articulation, dynamics, harmony), DTW audio similarity
+- **Benchmark orchestration** — Parameter sweeps over any config field, per-condition metrics, degradation-vs-baseline tables
 
 ## Configuration
 
@@ -213,6 +245,45 @@ observability:
   manifest_path: ./renders.jsonl
   write_failed_list: true
   emit_sse_events: true
+
+separation:
+  enabled: false
+  backend: passthrough     # or demucs
+  stem: null               # which stem to transcribe
+
+transcription:
+  transcribers:
+    - type: basic_pitch    # requires `pip install sonitra[basicpitch]`
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+    - type: precomputed    # MIDI exported from a commercial tool
+      name: klangio
+      midi_dir: ./external/klangio
+    - type: external_command  # any CLI transcription tool
+      name: my-tool
+      command: "amt-tool transcribe {input} -o {output}"
+
+evaluation:
+  note_metrics:
+    onset_tolerance_sec: 0.05   # mir_eval-standard tolerances
+    offset_ratio: 0.2
+    velocity_tolerance: 0.1
+  frame_metrics:
+    hop_sec: 0.01
+  expressive_metrics:
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false              # re-synthesises transcriptions for audio DTW
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  sweeps:                       # each value becomes a condition
+    - name: reverb_wet
+      parameter: pedalboard.effects.1.wet_level
+      values: [0.0, 0.3, 0.6]
+  conditions:                   # or hand-crafted override sets
+    - name: separated
+      overrides: {"separation.enabled": true, "separation.backend": "demucs"}
 ```
 
 ## Usage
@@ -228,6 +299,15 @@ sonitra serve --port 8000
 
 # Write a default config.yaml
 sonitra init --config config.yaml
+
+# Transcribe rendered audio with all configured transcribers
+sonitra transcribe --audio corpus/audio --output transcriptions
+
+# Score transcriptions against reference MIDI (paired by file stem)
+sonitra evaluate --reference corpus/midi --estimate transcriptions/basic_pitch
+
+# Run the full benchmark: render, transcribe, evaluate per condition
+sonitra benchmark --corpus corpus/midi --workdir benchmark
 
 # Show version
 sonitra --version
@@ -247,6 +327,25 @@ result = run_pipeline(
     config=cfg,
 )
 print(f"Done: {result.succeeded}, Failed: {result.failed}")
+```
+
+### Benchmark API
+
+```python
+from sonitra.config import load_config
+from sonitra.benchmark import run_benchmark
+from pathlib import Path
+
+cfg = load_config("config.yaml")
+result = run_benchmark(
+    sorted(Path("corpus/midi").glob("*.mid")),
+    work_dir="benchmark",
+    config=cfg,
+)
+for row in result.summary:
+    print(row["condition"], row["transcriber"], row.get("note.onset_f1"))
+for row in result.degradation:   # metric deltas vs the baseline condition
+    print(row["condition"], row.get("delta_note.onset_f1"))
 ```
 
 ### FastAPI server (programmatic)
@@ -278,6 +377,29 @@ pytest tests/ -v               # verbose
 pytest -m "not skip_if_no_vst"  # skip VST-dependent tests
 ```
 
+## Evaluation metrics
+
+The metric suite follows current AMT benchmarking practice (see `research.md`
+for the full literature survey):
+
+| Family | Metrics | Basis |
+|---|---|---|
+| Note-level | onset F1 (±50 ms), onset+offset F1 (20%/50 ms rule), onset+offset+velocity F1 | mir_eval / Hawthorne et al. 2018 |
+| Frame-level | precision/recall/F1 over 10 ms piano-roll frames | MIREX convention |
+| Expressive | onset MAE/bias, IOI correlation (timing), key-overlap-ratio correlation (articulation), velocity correlation (dynamics), windowed pitch-class similarity (harmony) | mpteval / Hu et al. 2024 |
+| Audio | path-normalised DTW distance between rendered audio and re-synthesised transcription, over chroma features | Aria-AMT / Bradshaw et al. 2024 |
+
+All metrics are implemented natively (NumPy/SciPy) with mir_eval-compatible
+matching semantics: bipartite matching with equal pitch, ±50 ms onsets, and
+offsets within max(50 ms, 20% of reference duration). Undefined values (e.g.
+correlations over too few matched notes) are reported as NaN and skipped in
+aggregation.
+
+The benchmark runner produces degradation curves in the style of Edwards et
+al. 2024: define sweeps over any config parameter (reverb wet level, noise,
+sample rate, ...) and read per-condition metric deltas against the clean
+baseline from `summary.json`.
+
 ## Rendering modes
 
 | Mode | Synth backend | Effects |
@@ -294,6 +416,7 @@ pytest -m "not skip_if_no_vst"  # skip VST-dependent tests
 - [mido](https://github.com/mido/mido) — MIDI message parsing
 - [FastAPI](https://fastapi.tiangolo.com/) — API server
 - Optional: VST3 instrument and effect plugins
+- Optional extras: `sonitra[basicpitch]` ([Basic Pitch](https://github.com/spotify/basic-pitch) transcription), `sonitra[demucs]` ([Demucs](https://github.com/adefossez/demucs) stem separation)
 
 ## License
 

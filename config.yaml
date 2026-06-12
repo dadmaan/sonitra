@@ -65,3 +65,61 @@ observability:
   manifest_path: ./renders.jsonl
   write_failed_list: false
   emit_sse_events: false
+
+# Optional stem separation between rendering and transcription.
+separation:
+  enabled: false
+  backend: passthrough   # passthrough or demucs (requires `pip install sonitra[demucs]`)
+  model: htdemucs
+  device: cpu
+  stem: null             # stem to transcribe (e.g. "other"); null = first available
+  output_dir: stems
+
+# AMT systems to benchmark. Types: basic_pitch, external_command, precomputed.
+transcription:
+  output_dir: transcriptions
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+    # Black-box commercial tools: export their MIDI into a directory.
+    # - type: precomputed
+    #   name: klangio
+    #   midi_dir: ./external/klangio
+    # Any CLI tool that reads audio and writes MIDI.
+    # - type: external_command
+    #   name: my-amt-tool
+    #   command: "amt-tool transcribe {input} -o {output}"
+
+# Metric suite (research-standard tolerances by default).
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+
+# Experimental conditions for `sonitra benchmark`. Each sweep value becomes a
+# condition; metrics are reported per condition with deltas vs the baseline.
+benchmark:
+  results_path: benchmark_results.jsonl
+  include_baseline: true
+  baseline_name: baseline
+  conditions: []
+  sweeps:
+    - name: reverb_wet
+      parameter: pedalboard.effects.1.wet_level
+      values: [0.0, 0.3, 0.6]
