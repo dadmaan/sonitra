@@ -22,6 +22,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+basicpitch = [
+    "basic-pitch",
+]
+demucs = [
+    "demucs",
+]
 dev = [
     "pytest",
     "pytest-cov",

@@ -32,6 +32,17 @@ def write_wav(
     return output_path
 
 
+def read_audio(path: Path | str) -> tuple[np.ndarray, int]:
+    """Read an audio file as a (channels, samples) float32 array and its sample rate."""
+    input_path = Path(path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {input_path}")
+    with AudioFile(str(input_path)) as f:
+        audio = f.read(f.frames)
+        sample_rate = int(f.samplerate)
+    return np.asarray(audio, dtype=np.float32), sample_rate
+
+
 def derive_output_path(midi_path: Path | str, *, out_dir: Path | str, ext: str = ".wav") -> Path:
     midi = Path(midi_path)
     out_dir = Path(out_dir)
