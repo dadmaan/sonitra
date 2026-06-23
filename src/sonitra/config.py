@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from sonitra.effects.builtin_effects import EffectConfig
+from sonitra.transcribe.configs import TranscriberConfig
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,91 @@ class ObservabilitySection(BaseModel):
     emit_sse_events: bool = False
 
 
+class SeparationSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    backend: str = "passthrough"
+    model: str = "htdemucs"
+    device: str = "cpu"
+    stem: str | None = None
+    output_dir: Path | str = "stems"
+
+
+class TranscriptionSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transcribers: list[TranscriberConfig] = Field(default_factory=list)
+    output_dir: Path | str = "transcriptions"
+
+
+class NoteMetricsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    onset_tolerance_sec: float = 0.05
+    offset_ratio: float = 0.2
+    offset_min_tolerance_sec: float = 0.05
+    velocity_tolerance: float = 0.1
+
+
+class FrameMetricsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    hop_sec: float = 0.01
+
+
+class ExpressiveMetricsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    harmony_window_sec: float = 2.0
+
+
+class DTWMetricSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    frame_size: int = 4096
+    hop_size: int = 2048
+    max_frames: int = 4000
+
+
+class EvaluationSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note_metrics: NoteMetricsSection = Field(default_factory=NoteMetricsSection)
+    frame_metrics: FrameMetricsSection = Field(default_factory=FrameMetricsSection)
+    expressive_metrics: ExpressiveMetricsSection = Field(default_factory=ExpressiveMetricsSection)
+    dtw: DTWMetricSection = Field(default_factory=DTWMetricSection)
+
+
+class ConditionSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class SweepSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parameter: str
+    values: list[Any]
+    name: str | None = None
+
+
+class BenchmarkSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results_path: Path | str = "benchmark_results.jsonl"
+    include_baseline: bool = True
+    baseline_name: str = "baseline"
+    conditions: list[ConditionSection] = Field(default_factory=list)
+    sweeps: list[SweepSection] = Field(default_factory=list)
+
+
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -121,6 +207,10 @@ class PipelineConfig(BaseModel):
     normalisation: NormalisationSection = Field(default_factory=NormalisationSection)
     quality_gates: QualityGatesSection = Field(default_factory=QualityGatesSection)
     observability: ObservabilitySection = Field(default_factory=ObservabilitySection)
+    separation: SeparationSection = Field(default_factory=SeparationSection)
+    transcription: TranscriptionSection = Field(default_factory=TranscriptionSection)
+    evaluation: EvaluationSection = Field(default_factory=EvaluationSection)
+    benchmark: BenchmarkSection = Field(default_factory=BenchmarkSection)
 
     @classmethod
     def model_validate(cls, obj: Any, *args: Any, **kwargs: Any) -> "PipelineConfig":
