@@ -1,10 +1,24 @@
 import threading
+from pathlib import Path
 
+import dawdreamer as daw
 import numpy as np
 import pytest
 
+from sonitra.engine import RendererEngine
 from sonitra.midi_reader import parse_midi
 from sonitra.renderer import render_notes_faust, render_notes_vst
+
+
+def _dominant_frequency(audio: np.ndarray, sample_rate: int) -> float:
+    """Return the strongest frequency component in the first channel."""
+    signal = audio[0] if audio.ndim > 1 else audio
+    n = len(signal)
+    if n == 0:
+        return 0.0
+    spectrum = np.abs(np.fft.rfft(signal))
+    freqs = np.fft.rfftfreq(n, d=1.0 / sample_rate)
+    return float(freqs[np.argmax(spectrum)])
 
 
 def test_notes_fed_to_faust_processor_produce_audio(session_engine, midi_fixture):
@@ -12,6 +26,9 @@ def test_notes_fed_to_faust_processor_produce_audio(session_engine, midi_fixture
     audio = render_notes_faust(notes, engine=session_engine, duration_sec=3.0)
     assert audio.ndim == 2
     assert audio.shape[1] > 0
+    assert audio.max() > 0.0
+    dominant = _dominant_frequency(audio, sample_rate=44100)
+    np.testing.assert_allclose(dominant, 261.6, rtol=0.05)
 
 
 def test_empty_notes_produces_silence(session_engine):
