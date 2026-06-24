@@ -114,12 +114,13 @@ ENV PATH="$PATH:/home/node/.local/bin"
 
 WORKDIR /workspace
     
-# Install Python packages
-COPY requirements.txt .
+# Install Python packages from pyproject.toml
+COPY pyproject.toml README.md ./
+COPY src ./src
 
 USER node
 RUN pip install --user -U pip \
-    && pip install --user --no-cache-dir -r requirements.txt \
+    && pip install --user --no-cache-dir -e ".[dev]" \
     && pip install --user --no-cache-dir jupyter jupyter-core typing_extensions
 
 USER root
