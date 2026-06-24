@@ -63,6 +63,7 @@ class DawDreamerSection(BaseModel):
     block_size: int = 512
     plugin_path: Path | None = None
     preset_path: Path | None = None
+    soundfont_path: Path | None = None
     bpm: int = 120
     faust_code: str | None = None
     clear_midi_between_renders: bool = True
