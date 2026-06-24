@@ -5,16 +5,18 @@ services:
       dockerfile: .devcontainer/Dockerfile
       args:
         TZ: ${TZ:-America/Los_Angeles}
-    ports:
-      - "8889:8888"
-      - "8051:8050"
-    runtime: nvidia
+    # Uncomment the lines below if you have NVIDIA Container Toolkit installed
+    # and want GPU access inside the container. Sonitra works on CPU by default.
+    # runtime: nvidia
     volumes:
-      - C:\Users\Shayan\Documents\Obsidian\dev\sonitra:/workspace/.local/notes
+      # Mount local notes directory. Set LOCAL_NOTES_DIR env var, or default to
+      # the project-root .local/notes folder relative to this compose file.
+      - ${LOCAL_NOTES_DIR:-../.local/notes}:/workspace/.local/notes
     environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NODE_OPTIONS: --max-old-space-size=4096
+      # NVIDIA_VISIBLE_DEVICES: all
+      NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE:-4096}
+      JUPYTER_ENABLED: ${JUPYTER_ENABLED:-true}
       CLAUDE_CONFIG_DIR: /home/node/workspace/.claude
-      PYTHONPATH: /workspace/midi_renderer
     user: node
-    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace
+    # Keep the container alive; Jupyter is started by devcontainer.json postStartCommand.
+    command: sleep infinity
