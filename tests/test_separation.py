@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from sonitra.config import SeparationSection
 from sonitra.separation.passthrough import PassthroughSeparator
-from sonitra.separation.protocol import make_separator
+from sonitra.separation.protocol import SeparationError, make_separator
 
 
 def test_passthrough_returns_input_as_mix(tmp_path: Path) -> None:
@@ -31,3 +33,12 @@ def test_demucs_backend_is_registered() -> None:
     separator = make_separator(SeparationSection(backend="demucs", model="htdemucs"))
     assert isinstance(separator, DemucsSeparator)
     assert separator.model == "htdemucs"
+
+
+def test_demucs_separator_hints_at_extra(tmp_path: Path) -> None:
+    from sonitra.separation.demucs_separator import DemucsSeparator
+
+    separator = DemucsSeparator()
+    with patch.dict(sys.modules, {"demucs": None, "demucs.api": None}):
+        with pytest.raises(SeparationError, match=r"pip install sonitra\[demucs\]"):
+            separator.separate(tmp_path / "song.wav", tmp_path / "stems")

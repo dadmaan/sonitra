@@ -7,6 +7,14 @@ if TYPE_CHECKING:
     from sonitra.config import SeparationSection
 
 
+class SeparationError(RuntimeError):
+    """Raised when a stem-separation backend cannot complete.
+
+    Typically indicates that the backend's optional dependency (e.g. demucs)
+    is not installed in the current environment.
+    """
+
+
 @runtime_checkable
 class StemSeparatorProtocol(Protocol):
     name: str
