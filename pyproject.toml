@@ -19,11 +19,12 @@ dependencies = [
     "typer",
     "pyyaml",
     "pydantic",
+    "basic-pitch>=0.4.0,<0.5.0",
 ]
 
 [project.optional-dependencies]
 basicpitch = [
-    "basic-pitch",
+    "basic-pitch>=0.4.0,<0.5.0",
 ]
 demucs = [
     "demucs",
@@ -36,10 +37,14 @@ dev = [
     "anyio",
 ]
 
+[project.scripts]
+sonitra = "sonitra.cli:app"
+
 [tool.pytest.ini_options]
 markers = [
     "skip_if_no_vst: requires a real VST plugin path",
     "integration: end-to-end tests requiring a VST",
+    "slow: tests that invoke optional/heavy backends such as basic-pitch",
 ]
 
 [build-system]

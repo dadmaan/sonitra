@@ -186,7 +186,8 @@ sonitra/
 Copy the default config and customise:
 
 ```yaml
-# config.yaml
+# config.yaml — default Sonitra config, works out of the box.
+# Basic Pitch is installed by default; install sonitra[demucs] to use Demucs.
 pipeline:
   rendering_mode: dawdreamer_synth_pedalboard_fx  # or dawdreamer_only, pedalboard_only
   sample_rate: 44100
@@ -227,7 +228,20 @@ pedalboard:
       width: 1.0
       freeze_mode: false
       enabled: true
+    # Optional: add a Limiter here for pre-normalisation dynamics control. It is
+    # NOT required to prevent clipping — post-effects peak normalisation below
+    # already guarantees the output peak is < clip_threshold. If you add it,
+    # note that it shifts later effect indices and would move the reverb_wet
+    # sweep target.
+    # - type: Limiter
+    #   threshold_db: -1.0
+    #   release_ms: 100.0
+    #   enabled: true
 
+# Post-effects peak normalisation is the clipping fix. In peak mode the signal
+# is scaled so its peak == 10^(target_db/20) ≈ 0.891, then clipped to [-1, 1],
+# which is guaranteed below clip_threshold: 1.0. pre_effects: false runs it
+# AFTER the effects chain.
 normalisation:
   enabled: true
   mode: peak
@@ -240,55 +254,71 @@ quality_gates:
   max_duration_deviation_sec: 1.0
   clip_threshold: 1.0
 
+# Observability is disabled in the checked-in default to avoid writing files in
+# the working directory. Enable these explicitly for batch workflows.
 observability:
-  write_manifest: true
+  write_manifest: false
   manifest_path: ./renders.jsonl
-  write_failed_list: true
-  emit_sse_events: true
+  write_failed_list: false
+  emit_sse_events: false
 
 separation:
   enabled: false
-  backend: passthrough     # or demucs
-  stem: null               # which stem to transcribe
+  backend: passthrough     # set to "demucs" only after `pip install sonitra[demucs]`
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
 
 transcription:
+  output_dir: transcriptions
   transcribers:
-    - type: basic_pitch    # requires `pip install sonitra[basicpitch]`
+    - type: basic_pitch    # installed by default
+      enabled: true
       onset_threshold: 0.5
       frame_threshold: 0.3
-    - type: precomputed    # MIDI exported from a commercial tool
-      name: klangio
-      midi_dir: ./external/klangio
-    - type: external_command  # any CLI transcription tool
-      name: my-tool
-      command: "amt-tool transcribe {input} -o {output}"
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+    # - type: precomputed    # MIDI exported from a commercial tool
+    #   name: klangio
+    #   midi_dir: ./external/klangio
+    # - type: external_command  # any CLI transcription tool
+    #   name: my-tool
+    #   command: "amt-tool transcribe {input} -o {output}"
 
 evaluation:
   note_metrics:
+    enabled: true
     onset_tolerance_sec: 0.05   # mir_eval-standard tolerances
     offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
     velocity_tolerance: 0.1
   frame_metrics:
+    enabled: true
     hop_sec: 0.01
   expressive_metrics:
+    enabled: true
     harmony_window_sec: 2.0
   dtw:
     enabled: false              # re-synthesises transcriptions for audio DTW
 
 benchmark:
   results_path: benchmark_results.jsonl
+  include_baseline: true
+  baseline_name: baseline
+  conditions: []
   sweeps:                       # each value becomes a condition
     - name: reverb_wet
       parameter: pedalboard.effects.1.wet_level
       values: [0.0, 0.3, 0.6]
-  conditions:                   # or hand-crafted override sets
-    - name: separated
-      overrides: {"separation.enabled": true, "separation.backend": "demucs"}
 ```
 
 ## Usage
 
 ### CLI
+
+`pip install sonitra` installs the bare `sonitra` command on your PATH. You can also use `python -m sonitra` if the binary is not on PATH.
 
 ```bash
 # Run the pipeline
@@ -297,7 +327,7 @@ sonitra render --corpus corpus/midi --output corpus/audio
 # Start the FastAPI server
 sonitra serve --port 8000
 
-# Write a default config.yaml
+# Write a starter config.yaml
 sonitra init --config config.yaml
 
 # Transcribe rendered audio with all configured transcribers
@@ -415,8 +445,9 @@ baseline from `summary.json`.
 - [pedalboard](https://github.com/spotify/pedalboard) — Pedalboard (audio effects and instrument API)
 - [mido](https://github.com/mido/mido) — MIDI message parsing
 - [FastAPI](https://fastapi.tiangolo.com/) — API server
+- [basic-pitch](https://github.com/spotify/basic-pitch) — installed by default as the default AMT backend; adds a non-trivial transitive ML runtime (TensorFlow/ONNX/CoreML depending on platform)
 - Optional: VST3 instrument and effect plugins
-- Optional extras: `sonitra[basicpitch]` ([Basic Pitch](https://github.com/spotify/basic-pitch) transcription), `sonitra[demucs]` ([Demucs](https://github.com/adefossez/demucs) stem separation)
+- Optional extras: `sonitra[demucs]` ([Demucs](https://github.com/adefossez/demucs) stem separation). The `[basicpitch]` extra remains as a backward-compatible alias.
 
 ## License
 

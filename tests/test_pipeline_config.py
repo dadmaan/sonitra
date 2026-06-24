@@ -1,10 +1,11 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pedalboard
 import pytest
 
-from sonitra.config import RenderingMode, load_config
+from sonitra.config import RenderingMode, default_config_path, load_config
 from sonitra.pipeline import run_pipeline
 from sonitra.synth.dawdreamer_synth import DawDreamerSynth
 from sonitra.synth.pedalboard_synth import PedalboardSynth
@@ -123,3 +124,54 @@ def test_dawdreamer_mode_uses_single_worker(monkeypatch, tmp_path, midi_fixture,
     )
     run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
     assert all(w == 1 for w in worker_counts)
+
+
+# ── Default config regression ─────────────────────────────────────────
+
+def test_default_config_peak_below_clip_threshold(corpus_dir: Path, tmp_path: Path) -> None:
+    cfg = load_config(default_config_path())
+    result = run_pipeline([corpus_dir / "test_c4.mid"], tmp_path, config=cfg)
+    assert result.succeeded == 1
+    succeeded = [entry for entry in result.log if entry["status"] == "succeeded"]
+    assert len(succeeded) == 1
+    flags = succeeded[0]["quality_flags"]
+    assert flags["is_clipped"] is False
+    assert flags["peak"] < 1.0
+
+
+# ── Vital VST3 end-to-end regression ──────────────────────────────────
+
+def test_run_pipeline_dawdreamer_only_with_vital(vital_vst_path, midi_fixture, tmp_path):
+    cfg = load_config("config/dawdreamer_vital.yaml")
+    cfg.io.output_dir = tmp_path
+    cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
+    result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
+    assert result.succeeded == 1
+    assert result.failed == 0
+    assert len(list(tmp_path.glob("*.wav"))) == 1
+
+
+def test_run_pipeline_dawdreamer_vital_with_preset(vital_vst_path, midi_fixture, tmp_path):
+    cfg = load_config("config/dawdreamer_vital_goodies.yaml")
+    cfg.io.output_dir = tmp_path
+    cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
+    result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
+    assert result.succeeded == 1
+    assert result.failed == 0
+    assert len(list(tmp_path.glob("*.wav"))) == 1
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_default_config_transcribes_with_basic_pitch(corpus_dir: Path, tmp_path: Path) -> None:
+    pytest.importorskip("basic_pitch")
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+    from sonitra.transcribe.protocol import make_transcriber
+
+    cfg = load_config(default_config_path())
+    audio_dir = tmp_path / "audio"
+    run_pipeline([corpus_dir / "test_c4.mid"], audio_dir, config=cfg)
+    wav = next(audio_dir.glob("*.wav"))
+    transcriber = make_transcriber(BasicPitchTranscriberConfig())
+    transcription = transcriber.transcribe(wav)
+    assert len(transcription.notes) > 0

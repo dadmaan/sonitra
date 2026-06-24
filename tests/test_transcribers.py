@@ -90,3 +90,35 @@ def test_basic_pitch_builder_defers_import() -> None:
         except ImportError:
             with pytest.raises(TranscriptionError, match="not installed"):
                 transcriber.transcribe("missing.wav")
+
+
+def test_basic_pitch_docstring_reflects_core_dependency() -> None:
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    doc = BasicPitchTranscriber.__doc__ or ""
+    assert "optional" not in doc.lower()
+    assert "pip install sonitra" in doc
+
+
+@pytest.mark.slow
+def test_basic_pitch_transcribes_simple_sine_wave(tmp_path: Path) -> None:
+    pytest.importorskip("basic_pitch")
+    import numpy as np
+    from scipy.io import wavfile
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    duration = 2.0
+    t = np.linspace(0.0, duration, int(sample_rate * duration), endpoint=False)
+    signal = 0.5 * np.sin(2.0 * np.pi * 440.0 * t)
+    audio_path = tmp_path / "a440.wav"
+    wavfile.write(audio_path, sample_rate, signal.astype(np.float32))
+
+    transcriber = BasicPitchTranscriber()
+    result = transcriber.transcribe(audio_path)
+
+    assert result.transcriber == "basic_pitch"
+    assert len(result.notes) >= 1
+    notes_near_440 = [n for n in result.notes if abs(n["pitch"] - 69) <= 1]
+    assert notes_near_440, f"expected a note near A4, got {result.notes}"

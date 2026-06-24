@@ -14,7 +14,7 @@ class _TranscriberBase(BaseModel):
 
 
 class BasicPitchTranscriberConfig(_TranscriberBase):
-    """Spotify Basic Pitch (requires the `basic-pitch` extra)."""
+    """Spotify Basic Pitch (installed by default with `pip install sonitra`)."""
 
     type: Literal["basic_pitch"] = "basic_pitch"
     onset_threshold: float = 0.5

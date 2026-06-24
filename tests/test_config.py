@@ -8,8 +8,10 @@ from sonitra.config import (
     ConfigError,
     PipelineConfig,
     RenderingMode,
+    default_config_path,
     load_config,
 )
+from sonitra.pipeline import run_pipeline
 
 
 def _minimal_config_dict() -> dict:
@@ -156,3 +158,11 @@ def test_config_round_trip_yaml(config_fixture, tmp_path):
     cfg.save(out)
     cfg2 = load_config(out)
     assert cfg == cfg2
+
+
+# ── Default config regression ─────────────────────────────────────────
+
+def test_default_config_renders_fixtures(corpus_dir: Path, tmp_path: Path) -> None:
+    cfg = load_config(default_config_path())
+    result = run_pipeline(sorted(corpus_dir.glob("*.mid")), tmp_path, config=cfg)
+    assert result.succeeded >= 2

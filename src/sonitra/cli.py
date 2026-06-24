@@ -231,28 +231,49 @@ def init(
         "config.yaml", "--config", "-c", help="Output path for default config"
     ),
 ) -> None:
-    """Write a default config.yaml to the given path."""
-    from sonitra.config import PipelineConfig, PipelineSection, RenderingMode
-    from sonitra.config import IOSection, ObservabilitySection
+    """Write a starter config.yaml to the given path."""
+    from sonitra.config import (
+        IOSection,
+        NormalisationSection,
+        ObservabilitySection,
+        PipelineConfig,
+        PipelineSection,
+        QualityGatesSection,
+        RenderingMode,
+        TranscriptionSection,
+    )
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 
     cfg = PipelineConfig(
         pipeline=PipelineSection(
-            rendering_mode=RenderingMode.PEDALBOARD_ONLY,
+            rendering_mode=RenderingMode.DAWDREAMER_ONLY,
             sample_rate=44100,
             bit_depth=24,
             channels=2,
             duration_padding_sec=2.0,
             overwrite=False,
             resume=False,
-            max_workers=4,
+            max_workers=1,
             log_level="INFO",
         ),
         io=IOSection(
             midi_dir="corpus/midi",
             output_dir="corpus/audio",
             output_format="wav",
-            mp3_bitrate_kbps=320,
+            mp3_bitrate_kbps=192,
             file_naming="{stem}",
+        ),
+        normalisation=NormalisationSection(
+            enabled=True,
+            mode="peak",
+            target_db=-1.0,
+            pre_effects=False,
+        ),
+        quality_gates=QualityGatesSection(
+            silence_threshold_rms=0.001,
+            min_duration_sec=0.1,
+            max_duration_deviation_sec=1.0,
+            clip_threshold=1.0,
         ),
         observability=ObservabilitySection(
             write_manifest=True,
@@ -260,9 +281,19 @@ def init(
             write_failed_list=True,
             emit_sse_events=False,
         ),
+        transcription=TranscriptionSection(
+            transcribers=[
+                BasicPitchTranscriberConfig(
+                    enabled=True,
+                    name="basic_pitch",
+                    onset_threshold=0.5,
+                    frame_threshold=0.3,
+                )
+            ]
+        ),
     )
     cfg.save(path)
-    typer.echo(f"Default config written to {path}")
+    typer.echo(f"Starter config written to {path}")
 
 
 @app.callback(invoke_without_command=True)
