@@ -89,7 +89,16 @@ def _get_faust_note_processor(engine: RendererEngine):
     processor = getattr(engine, "_note_processor", None)
     if processor is None:
         processor = engine.engine.make_faust_processor("faust_notes")
-        processor.set_dsp_string("process = os.osc(440), os.osc(440);")
+        processor.set_dsp_string(
+            'declare options "[nvoices:16]";'
+            'import("stdfaust.lib");'
+            'freq = hslider("freq", 440, 20, 20000, 1);'
+            'gain = hslider("gain", 0.5, 0, 1, 0.01);'
+            'gate = button("gate");'
+            'process = os.osc(freq) * gain * gate, os.osc(freq) * gain * gate;'
+            'effect = _, _;'
+        )
+        processor.num_voices = 16
         if not processor.compile():
             raise RuntimeError("Failed to compile Faust note processor.")
         setattr(engine, "_note_processor", processor)
