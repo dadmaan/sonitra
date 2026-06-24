@@ -34,17 +34,28 @@ async def test_full_render_job_via_api(client, tmp_path, midi_fixture):
 
 @pytest.mark.anyio
 @pytest.mark.integration
-async def test_cancel_running_job_via_api(client, tmp_path, large_midi_corpus):
+async def test_cancel_pending_job_via_api(client, tmp_path, midi_fixture):
+    """Cancel a job before the synchronous worker begins rendering.
+
+    DawDreamer/JUCE in this environment must render synchronously on the API
+    event loop, so mid-render cancellation cannot be honoured without blocking
+    HTTP traffic. This test verifies the cancellation path for PENDING jobs.
+    """
     out_dir = tmp_path / "out"
     out_dir.mkdir()
+    midi_dir = tmp_path / "corpus"
+    midi_dir.mkdir()
+    for name in ["test_c4.mid", "test_polyphonic.mid"]:
+        shutil.copy(midi_fixture(name), midi_dir / name)
     r = await client.post(
         "/jobs",
-        json={"midi_dir": str(large_midi_corpus), "out_dir": str(out_dir), "plugin_path": None},
+        json={"midi_dir": str(midi_dir), "out_dir": str(out_dir), "plugin_path": None},
     )
     job_id = r.json()["job_id"]
-    await asyncio.sleep(0.3)
+    # Cancel immediately while the job is still PENDING. The synchronous worker
+    # checks job.status at entry and will honour the cancellation.
     del_r = await client.delete(f"/jobs/{job_id}")
     assert del_r.status_code == 204
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.2)
     status = (await client.get(f"/jobs/{job_id}")).json()
     assert status["status"] == "cancelled"

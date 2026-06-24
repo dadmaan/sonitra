@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import atexit
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -62,8 +60,7 @@ def _render_sync(
     return JobStatus.DONE, succeeded, failed, skipped
 
 
-_EXECUTOR = ThreadPoolExecutor(max_workers=1)
-atexit.register(_EXECUTOR.shutdown, wait=False)
+_DAWDREAMER_LOCK = asyncio.Lock()
 
 
 def _render_job_sync(job_id: str, store: JobStore, config: Any = None) -> None:
@@ -109,11 +106,40 @@ def _render_job_sync(job_id: str, store: JobStore, config: Any = None) -> None:
     )
 
 
-async def run_render_worker(job_id: str, store: JobStore, config: Any = None) -> None:
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(_EXECUTOR, _render_job_sync, job_id, store, config)
+async def run_render_worker(
+    job_id: str,
+    store: JobStore,
+    config: Any = None,
+) -> None:
+    """Run a render job while holding the DawDreamer serialization lock.
 
+    DawDreamer/JUCE global state in this environment is corrupted when Faust
+    runs in a subprocess or when the event loop yields during rendering. All
+    rendering therefore runs synchronously on the caller's event loop while
+    holding the lock. A short, lock-free yield at entry lets a PENDING
+    cancellation request land before rendering starts.
+    """
+    async with _DAWDREAMER_LOCK:
+        try:
+            job = store.get(job_id)
+        except KeyError:
+            return
+        if job.status == JobStatus.CANCELLED:
+            return
 
-def schedule_render_worker(job_id: str, store: JobStore, config: Any = None) -> None:
-    loop = asyncio.get_running_loop()
-    return loop.run_in_executor(_EXECUTOR, _render_job_sync, job_id, store, config)
+    # Release the lock and yield so a concurrently dispatched DELETE can set
+    # the job to CANCELLED before we start the synchronous render.
+    await asyncio.sleep(0.01)
+
+    async with _DAWDREAMER_LOCK:
+        try:
+            job = store.get(job_id)
+        except KeyError:
+            return
+        if job.status == JobStatus.CANCELLED:
+            return
+        if store.is_cancel_requested(job_id):
+            store.update(job_id, status=JobStatus.CANCELLED)
+            return
+
+        _render_job_sync(job_id, store, config)

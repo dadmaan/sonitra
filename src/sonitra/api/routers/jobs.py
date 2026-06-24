@@ -1,8 +1,10 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from sonitra.api.job_store import JobRecord, JobStore
 from sonitra.api.models import JobRequest, JobResponse
-from sonitra.api.worker import schedule_render_worker
+from sonitra.api.worker import run_render_worker
 
 router = APIRouter()
 
@@ -38,9 +40,11 @@ async def create_job(
         rendering_mode=rendering_mode,
         plugin_path=str(payload.plugin_path) if payload.plugin_path else None,
     )
-    future = schedule_render_worker(job_id, store, config=request.app.state.config)
-    request.app.state.worker_futures.add(future)
-    future.add_done_callback(request.app.state.worker_futures.discard)
+    task = asyncio.create_task(
+        run_render_worker(job_id, store, config=request.app.state.config)
+    )
+    request.app.state.worker_futures.add(task)
+    task.add_done_callback(request.app.state.worker_futures.discard)
     return to_response(store.get(job_id))
 
 
