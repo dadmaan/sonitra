@@ -32,7 +32,7 @@ def corpus_dir() -> Path:
     return Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def session_engine():
     from sonitra.engine import RendererEngine
 
@@ -50,6 +50,14 @@ def vst_path() -> Path:
     if not path:
         pytest.skip("VST plugin path not configured")
     return Path(path)
+
+
+@pytest.fixture
+def vital_vst_path() -> Path:
+    path = Path("/workspace/plugin/vital/lib/vst3/Vital.vst3")
+    if not path.exists():
+        pytest.skip("Vital VST3 not found at /workspace/plugin/vital/lib/vst3/Vital.vst3")
+    return path
 
 
 @pytest.fixture

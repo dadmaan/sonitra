@@ -4,6 +4,7 @@ import pytest
 
 from sonitra.api.models import JobStatus
 from sonitra.api.worker import run_render_worker
+from sonitra.pipeline import run_pipeline
 
 
 @pytest.mark.anyio
@@ -65,3 +66,29 @@ async def test_post_job_triggers_background_render(client, tmp_path, midi_fixtur
         if status_r.json()["status"] in {"done", "failed"}:
             break
     assert status_r.json()["status"] == "done"
+
+
+@pytest.mark.anyio
+async def test_worker_does_not_bleed_dawdreamer_state(
+    tmp_path,
+    job_store,
+    midi_fixture,
+):
+    """Regression test for DawDreamer thread state bleed after API worker."""
+    from sonitra.engine import RendererEngine
+
+    job_id = job_store.create(
+        midi_dir=str(midi_fixture("test_c4.mid").parent),
+        out_dir=str(tmp_path / "worker_out"),
+    )
+    await run_render_worker(job_id, job_store)
+    assert job_store.get(job_id).status == JobStatus.DONE
+
+    # Rendering with a fresh engine after the worker must not deadlock.
+    fresh_engine = RendererEngine(sample_rate=44100, block_size=512)
+    result = run_pipeline(
+        [midi_fixture("test_c4.mid")],
+        out_dir=str(tmp_path / "fresh_out"),
+        engine=fresh_engine,
+    )
+    assert result.succeeded == 1

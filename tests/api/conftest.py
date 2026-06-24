@@ -14,12 +14,16 @@ def app():
 
 @pytest.fixture
 async def client(app):
+    from sonitra.config import default_config_path, load_config
+
     app.state.job_store = JobStore()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     if app.state.worker_futures:
         await asyncio.gather(*list(app.state.worker_futures), return_exceptions=True)
         app.state.worker_futures.clear()
+    # Reset config so tests that PUT a different config do not leak state.
+    app.state.config = load_config(default_config_path())
 
 
 @pytest.fixture
