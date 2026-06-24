@@ -10,8 +10,8 @@ from sonitra.transcribe.protocol import register_transcriber
 class BasicPitchTranscriber:
     """Spotify Basic Pitch backend (lightweight multi-pitch baseline).
 
-    Requires the optional `basic-pitch` dependency; install with
-    `pip install sonitra[basicpitch]`.
+    The `basic-pitch` dependency is installed by default with
+    `pip install sonitra`; it is loaded lazily when `transcribe()` is called.
     """
 
     def __init__(
@@ -37,7 +37,7 @@ class BasicPitchTranscriber:
             from basic_pitch.inference import predict
         except ImportError as exc:
             raise TranscriptionError(
-                "basic-pitch is not installed; install with `pip install sonitra[basicpitch]`"
+                "basic-pitch is not installed; it should be present after `pip install sonitra`."
             ) from exc
 
         audio_path = Path(audio_path)
