@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sonitra.separation.protocol import register_separator
+from sonitra.separation.protocol import register_separator, SeparationError
 
 if TYPE_CHECKING:
     from sonitra.config import SeparationSection
@@ -27,7 +27,7 @@ class DemucsSeparator:
         try:
             import demucs.api
         except ImportError as exc:
-            raise RuntimeError(
+            raise SeparationError(
                 "demucs is not installed; install with `pip install sonitra[demucs]`"
             ) from exc
 
