@@ -37,4 +37,5 @@ class DawDreamerSynth:
             engine=self.engine,
             plugin_path=self.plugin_path,
             duration_sec=duration_sec,
+            preset_path=self.preset_path,
         )

@@ -25,10 +25,31 @@ def make_synth(cfg: PipelineConfig) -> SynthesiserProtocol:
             reload_plugin_per_file=instrument.reload_plugin_per_file,
             silence_flush_sec=instrument.silence_flush_sec,
         )
+
+    if cfg.dawdreamer.plugin_path:
+        return DawDreamerSynth(
+            sample_rate=cfg.pipeline.sample_rate,
+            block_size=cfg.dawdreamer.block_size,
+            plugin_path=cfg.dawdreamer.plugin_path,
+            preset_path=cfg.dawdreamer.preset_path,
+            bpm=cfg.dawdreamer.bpm,
+            faust_code=cfg.dawdreamer.faust_code,
+            clear_midi_between_renders=cfg.dawdreamer.clear_midi_between_renders,
+        )
+
+    if cfg.dawdreamer.soundfont_path:
+        from sonitra.synth.fluid_synth import FluidSynth
+
+        return FluidSynth(
+            sample_rate=cfg.pipeline.sample_rate,
+            channels=cfg.pipeline.channels,
+            soundfont_path=cfg.dawdreamer.soundfont_path,
+        )
+
     return DawDreamerSynth(
         sample_rate=cfg.pipeline.sample_rate,
         block_size=cfg.dawdreamer.block_size,
-        plugin_path=cfg.dawdreamer.plugin_path,
+        plugin_path=None,
         preset_path=cfg.dawdreamer.preset_path,
         bpm=cfg.dawdreamer.bpm,
         faust_code=cfg.dawdreamer.faust_code,
