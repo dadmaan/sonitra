@@ -1,0 +1,53 @@
+# =============================================================================
+# Sonitra — Docker Compose
+#
+# Run all commands from the repository root:
+#
+#   cp env.example .env                                    # first-time setup
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Volume layout (relative to repo root):
+#   ./corpus/   MIDI files (input) and rendered audio (intermediate output)
+#   ./config/   Pipeline YAML configs — place your config.yaml here
+#   ./output/   Transcriptions, evaluation results, benchmark outputs
+#
+# CLI one-off commands:
+#   docker compose -f docker/docker-compose.yml run --rm sonitra \
+#       uv run sonitra benchmark --corpus /app/corpus --workdir /app/output
+# =============================================================================
+
+services:
+
+  sonitra:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: sonitra:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../corpus:/app/corpus
+      - ../config:/app/config
+      - ../output:/app/output
+    # Source environment variables from .env when present.
+    # Copy env.example to .env and adjust values before first run.
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Path to the pipeline config YAML inside the container.
+      # The entrypoint symlinks this to /app/config.yaml at startup.
+      SONITRA_CONFIG: ${SONITRA_CONFIG:-/app/config/config.yaml}
+      # Uvicorn log level (used when overriding CMD with uvicorn directly).
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
