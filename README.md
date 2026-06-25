@@ -177,15 +177,17 @@ The fastest way to run Sonitra without installing Python or system dependencies 
 
 ```bash
 cp env.example .env        # create the env file (edit values as needed)
-mkdir -p corpus config output
+mkdir -p corpus/midi config output
 ```
 
-Place your MIDI files under `./corpus/` and a `config.yaml` under `./config/`. Generate a starter config with:
+Place your MIDI files under `./corpus/midi/`. Then generate a starter config — **this step is required before the server can start**:
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm sonitra \
     uv run sonitra init --config /app/config/config.yaml
 ```
+
+> **Why the config is required:** The `./config` volume mount replaces the bundled reference config inside the container. If `./config/config.yaml` (or the path set by `SONITRA_CONFIG`) does not exist when the server starts, it will exit immediately with a file-not-found error. Run `init` once to create it.
 
 ### Start the API server
 
@@ -198,9 +200,13 @@ The REST API is available at `http://localhost:8000`. The `/health` endpoint con
 ### Run CLI commands
 
 ```bash
-# Full benchmark sweep
+# Render MIDI to audio
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra benchmark --corpus /app/corpus --workdir /app/output
+    uv run sonitra render --corpus /app/corpus/midi --output /app/corpus/audio
+
+# Full benchmark sweep (render + transcribe + evaluate per condition)
+docker compose -f docker/docker-compose.yml run --rm sonitra \
+    uv run sonitra benchmark --corpus /app/corpus/midi --workdir /app/output
 
 # Transcribe only
 docker compose -f docker/docker-compose.yml run --rm sonitra \
@@ -216,7 +222,7 @@ docker compose -f docker/docker-compose.yml run --rm sonitra \
 
 | Mount | Host path | Purpose |
 |---|---|---|
-| `/app/corpus` | `./corpus` | MIDI input and rendered audio |
+| `/app/corpus` | `./corpus` | MIDI input (`midi/`) and rendered audio (`audio/`) |
 | `/app/config` | `./config` | Pipeline YAML configs |
 | `/app/output` | `./output` | Transcriptions, evaluation results, benchmarks |
 
