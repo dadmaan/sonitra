@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pedalboard
 import pytest
+import soundfile as sf
 
 from sonitra.config import RenderingMode, default_config_path, load_config
 from sonitra.pipeline import run_pipeline
@@ -159,6 +160,22 @@ def test_run_pipeline_dawdreamer_vital_with_preset(vital_vst_path, midi_fixture,
     assert result.succeeded == 1
     assert result.failed == 0
     assert len(list(tmp_path.glob("*.wav"))) == 1
+
+
+@pytest.mark.slow
+def test_run_pipeline_pedalboard_only_with_vital(vital_vst_path, midi_fixture, tmp_path):
+    """Prove that Pedalboard can render Vital VST3 instrument end-to-end."""
+    cfg = load_config("config/pedalboard_vital.yaml")
+    cfg.io.output_dir = tmp_path
+    cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
+    result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
+    assert result.succeeded == 1
+    assert result.failed == 0
+    wavs = list(tmp_path.glob("*.wav"))
+    assert len(wavs) == 1
+    # Bonus: verify audio is non-silent
+    audio, _ = sf.read(str(wavs[0]))
+    assert np.max(np.abs(audio)) > 0.001
 
 
 @pytest.mark.slow
