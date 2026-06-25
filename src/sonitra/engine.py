@@ -4,11 +4,15 @@ from pathlib import Path
 from typing import Optional
 import threading
 
-import dawdreamer as daw
-
 
 class RendererEngine:
     def __init__(self, sample_rate: int, block_size: int) -> None:
+        # Lazy import: dawdreamer is an optional heavy backend with a native
+        # extension that requires libGL.  Importing it at module level would
+        # force the shared library to be resolved whenever any API router is
+        # imported, even when the DawDreamer backend is not configured.
+        import dawdreamer as daw  # noqa: PLC0415
+
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
         if block_size <= 0:
