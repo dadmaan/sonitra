@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to sonitra.
+Thanks for contributing to Sonitra.
 
 ## Commit Message Convention
 
@@ -8,76 +8,50 @@ Use this format:
 
 `<type>(<scope>): <short imperative summary>`
 
-- Example: `fix(ghsom): honor explicit CLI overrides in sweep agent`
+- Example: `fix(evaluation): skip NaN-only rows in metric aggregation`
 - Keep subject lines concise (target <= 72 characters)
 - Use imperative verbs (`add`, `fix`, `refactor`, `update`)
-- Prefer one clear scope (`ghsom`, `preprocessing`, `training`, `inference`, `evaluation`, `analysis`, `curriculum`, `networks`, `agents`, `scripts`, `utils`, `configs`, `benchmark`, `tui`, `docs`, `tests`)
-- If truly cross-cutting, use `core`
+- Prefer one clear scope:
+  - `pipeline`, `synth`, `effects`, `separation`, `transcribe`, `evaluation`
+  - `benchmark`, `api`, `cli`, `config`, `scripts`, `tests`, `docs`, `ci`, `chore`
+  - If truly cross-cutting, use `core`
 - Recommended types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, `ci`, `revert`
 - Add a short body for non-trivial changes to explain why and any contract/config impact
-- Add `BREAKING CHANGE:` footer when behavior or interfaces are not backward compatible
+- Add `BREAKING CHANGE:` footer when behaviour or interfaces are not backward compatible
 
 ## Local Quality Workflow
 
-Before opening a PR for non-trivial changes, run:
+`pytest` is the quality gate — there is no ruff or mypy config in this project.
+
+Before opening a PR for non-trivial changes:
 
 ```bash
 pip install -e ".[dev]"
-ruff check src/ tests/ scripts/
-ruff format src/ scripts/
 pytest
 ```
 
-If your change affects docs surfaces (`docs/**`, `.readthedocs.yaml`, `.github/workflows/docs.yml`, `docs/conf.py`) or API docstrings in `src/**`, also run:
+To skip slow tests (Basic Pitch TF inference) during iteration:
 
 ```bash
-cd docs
-LC_ALL=C.UTF-8 LANG=C.UTF-8 make html
-LC_ALL=C.UTF-8 LANG=C.UTF-8 make strict
+pytest -m "not slow"
 ```
 
-## Pre-commit Hooks
-
-Phase 5 introduces a staged baseline `.pre-commit-config.yaml` focused on active docs/versioning and policy-diagnosis quality surfaces. Expand scope incrementally as legacy formatting/lint debt is reduced.
-
-Install once per clone:
+To skip tests that require a VST plugin:
 
 ```bash
-pip install pre-commit
-pre-commit install
+pytest -m "not skip_if_no_vst"
 ```
 
-Run before pushing broad/cross-cutting changes:
+## Changelog
 
-```bash
-pre-commit run --all-files
-```
+Sonitra keeps one changelog file per release under `CHANGELOG/`. For user-visible changes (features, fixes, behaviour shifts), add an entry to the appropriate file or create a new one for an upcoming version.
 
-## Docstring and Docs Enforcement (Staged Ratchet)
-
-ARIA uses staged enforcement rather than a one-shot project-wide strict jump:
-
-1. New/changed files must not introduce new docs build warnings.
-2. Stage A: enforce docstring checks on changed files only.
-3. Stage B (current): enforce `ruff check --select D --ignore D1` on high-value paths:
-   - `src/aria/analysis/policy_diagnosis/`
-   - `src/aria/utils/experiment_loading/`
-   - `scripts/evaluation/run_mir_evaluation.py`
-   - `scripts/benchmark/run_policy_diagnosis_batch.py`
-4. Stage C: broaden coverage based on cleanup backlog and repository readiness.
-
-The staged policy is additive: never enable project-wide D-rules in one pass.
-
-## Changelog and Versioning Expectations
-
-For user-visible changes (features, fixes, behavior shifts, docs workflow policy updates), update `CHANGELOG.md` under `## [Unreleased]`.
-
-- Prefer `Added` / `Changed` / `Fixed` categories.
-- Explain impact/contract changes briefly.
-- Version bumps and release tags are release-governance actions, not routine feature-PR actions.
+- Use `Added` / `Changed` / `Fixed` categories.
+- Briefly explain impact and any contract/config changes.
+- Version bumps and release tags are release-governance actions, not routine PR actions.
 
 ## Branch and PR Expectations
 
-- Default integration target is `dev` unless a scoped execution plan specifies a different branch.
-- For plan-driven work, follow the phase order and branch workflow defined in the plan artifacts.
-- Keep PRs reviewable by splitting broad work into logical commits (for example, API doc cleanup vs CI policy changes).
+- Default integration target is `main`.
+- Keep PRs reviewable by splitting broad work into logical commits (e.g. new backend vs. its tests vs. config schema change).
+- New config fields must be added to the `PipelineConfig` Pydantic tree with `extra="forbid"` maintained on the affected section.
