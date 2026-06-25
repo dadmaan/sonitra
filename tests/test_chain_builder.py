@@ -141,6 +141,13 @@ def test_vst3_effect_loads_into_chain(vst_path):
     assert len(board) == 1
 
 
+def test_vst3_effect_guard_rejects_instrument(vital_vst_path):
+    """Loading an instrument VST3 as VST3PluginConfig must raise ValueError."""
+    cfg = [VST3PluginConfig(plugin_path=str(vital_vst_path), enabled=True)]
+    with pytest.raises(ValueError, match="not an effect"):
+        build_effects_chain(cfg)
+
+
 # ── Factory from full config ─────────────────────────────────────────
 
 def test_build_from_pipeline_config(config_fixture):
