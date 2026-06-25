@@ -14,7 +14,7 @@ set -e
 
 CONFIG_SRC="${SONITRA_CONFIG:-/app/config/config.yaml}"
 if [ -f "$CONFIG_SRC" ]; then
-    ln -sf "$CONFIG_SRC" /app/config.yaml
+    ln -sf "$CONFIG_SRC" /app/config/source.yaml
 fi
 
 exec "$@"
