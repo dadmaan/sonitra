@@ -7,13 +7,16 @@ For each config:
   2. sonitra evaluate    -> corpus/eval_results/<config>.jsonl
 
 After all configs:
-  corpus/eval_results/summary.jsonl  -- one line per config, mean of per-file metrics
+  corpus/eval_results/summary.jsonl   -- one line per config, mean of per-file metrics
+  corpus/eval_results/summary.csv     -- same data as summary.jsonl, CSV format
+  corpus/eval_results/all_results.csv -- flat table: one row per (config, file)
 
 Usage:
     python scripts/run_transcribe_eval.py
 """
 from __future__ import annotations
 
+import csv
 import json
 import math
 import subprocess
@@ -63,6 +66,18 @@ def _dump_jsonl(rows: list[dict], path: Path) -> None:
             fh.write(json.dumps({k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in row.items()}) + "\n")
 
 
+def _dump_csv(rows: list[dict], path: Path) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0].keys())
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: ("" if isinstance(v, float) and math.isnan(v) else ("" if v is None else v)) for k, v in row.items()})
+
+
 def main() -> int:
     TRANSCRIPTION_DIR.mkdir(parents=True, exist_ok=True)
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,6 +89,7 @@ def main() -> int:
 
     failures: list[str] = []
     summary_rows: list[dict] = []
+    all_rows: list[dict] = []
 
     for config_path in configs:
         name = config_path.stem
@@ -138,6 +154,7 @@ def main() -> int:
         rows = _load_jsonl(eval_out)
         means = _mean_metrics(rows)
         summary_rows.append({"config": name, **means})
+        all_rows.extend({"config": name, **r} for r in rows)
 
         onset_f1_key = next((k for k in means if "onset_f1" in k), None)
         if onset_f1_key and means[onset_f1_key] is not None:
@@ -149,13 +166,21 @@ def main() -> int:
     summary_path = EVAL_DIR / "summary.jsonl"
     _dump_jsonl(summary_rows, summary_path)
 
+    summary_csv_path = EVAL_DIR / "summary.csv"
+    _dump_csv(summary_rows, summary_csv_path)
+
+    all_results_csv_path = EVAL_DIR / "all_results.csv"
+    _dump_csv(all_rows, all_results_csv_path)
+
     print(f"\n{'=' * 60}")
     print(f"Done. {len(summary_rows)} configs processed, {len(failures)} failed.")
     if failures:
         print("Failed steps:")
         for f in failures:
             print(f"  {f}")
-    print(f"Summary -> {summary_path}")
+    print(f"Summary    -> {summary_path}")
+    print(f"Summary    -> {summary_csv_path}")
+    print(f"All results-> {all_results_csv_path}")
 
     return 1 if failures else 0
 
