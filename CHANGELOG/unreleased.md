@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `env.example` with documented `SONITRA_CONFIG` and `LOG_LEVEL` environment variables for container setup
 - Core audio engine, MIDI reader, Faust/VST renderer, and multi-format storage (WAV/FLAC/MP3)
 - `SynthesiserProtocol` with `DawDreamerSynth` wrapper and `make_synth` factory
 - `PedalboardSynth` for MIDI-to-audio rendering via pedalboard instrument plugins
@@ -54,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `RendererEngine`: dawdreamer import moved from module level into `__init__` to avoid loading the native shared library (which requires `libGL`) at import time when DawDreamer is not configured
+- Dockerfile: copy `config/` from repo into the build so the reference config is available in the runtime image; add `libgl1` runtime dependency; set `UV_CACHE_DIR` to `/app/.cache/uv`; use `--chown` in `COPY --from=builder` to set ownership in a single pass; scope `chown` to specific directory mounts instead of the entire app tree; create `/app/.cache/uv` directory for uv's runtime cache
+- Docker quick-start guide in `README.md`: `mkdir` creates `corpus/midi` structure; new note explaining config pre-init requirement before server start; added `sonitra render` CLI example; benchmark command path updated to `/app/corpus/midi`; volume mount table clarifies `midi/` subdirectory
 - Default `config.yaml` now uses post-effects peak normalisation (`target_db: -1.0`) as the sole clipping guarantee; the `Limiter` is removed from the default effects chain and shown only as a commented optional effect
 - `sonitra init` now writes a working starter config using `dawdreamer_only`, enabled normalisation, and a `basic_pitch` transcriber
 - `BasicPitchTranscriber` docstring and error text describe `basic-pitch` as installed by default
@@ -82,3 +86,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full `pytest` suite no longer deadlocks after API worker tests
 - `sonitra` binary is available on PATH after `pip install -e .`
 - API integration test now passes with the fixed default config
+- Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
