@@ -40,6 +40,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy source and complete the install (editable install of sonitra itself).
 COPY src/ src/
+# config/source.yaml is the reference config read by default_config_path().
+COPY config/ config/
 RUN uv sync --frozen --no-dev
 
 # ---------------------------------------------------------------------------
@@ -59,6 +61,7 @@ RUN apt-get update \
         libfftw3-double3 \
         fluidsynth \
         libgomp1 \
+        libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring uv into the runtime image — it is used by the default CMD.
@@ -71,14 +74,21 @@ RUN groupadd --system --gid 1001 sonitra \
 
 WORKDIR /app
 
-# Copy the fully-built project tree from the builder stage.
-COPY --from=builder /app /app
+# Redirect uv's cache away from the (non-existent) home directory so it
+# writes to /app/.cache/uv, which is owned by the sonitra user.
+ENV UV_CACHE_DIR=/app/.cache/uv
 
-# Create named volume mount-points and hand ownership to the non-root user.
+# Copy the fully-built project tree from the builder stage, setting ownership
+# in a single pass via --chown (avoids a slow chown -R on a large tree).
+COPY --from=builder --chown=sonitra:sonitra /app /app
+
+# Create named volume mount-points owned by the non-root user.
 # These directories are intended to be bind-mounted at runtime; they exist
 # in the image so the container starts cleanly even without mounts.
-RUN mkdir -p /app/corpus /app/output /app/config \
-    && chown -R sonitra:sonitra /app
+# /app/.cache/uv is created here so uv can write its runtime cache without
+# requiring a home directory.
+RUN mkdir -p /app/corpus /app/output /app/config /app/.cache/uv \
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/config /app/.cache/uv
 
 # Entrypoint script lives in docker/ in the repo; build context is repo root.
 COPY docker/entrypoint.sh /entrypoint.sh
