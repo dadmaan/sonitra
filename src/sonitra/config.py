@@ -237,7 +237,7 @@ class PipelineConfig(BaseModel):
 
 
 def default_config_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "config.yaml"
+    return Path(__file__).resolve().parents[2] / "config" / "source.yaml"
 
 
 def load_config(path: Path | str) -> PipelineConfig:
