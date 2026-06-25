@@ -1,6 +1,7 @@
-# DawDreamer rendering with Vital VST3 instrument + Pedalboard effects chain.
+# Pedalboard-only rendering with Vital VST3 instrument.
+# Renders MIDI → audio using Pedalboard's VST3 instrument host.
 pipeline:
-  rendering_mode: dawdreamer_synth_pedalboard_fx
+  rendering_mode: pedalboard_only
   sample_rate: 44100
   bit_depth: 24
   channels: 2
@@ -12,7 +13,7 @@ pipeline:
 
 io:
   midi_dir: ./corpus/midi
-  output_dir: ./corpus/audio/dawdreamer_vital_pedalboard
+  output_dir: ./corpus/audio/pedalboard_vital
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
@@ -20,7 +21,7 @@ io:
 dawdreamer:
   enabled: true
   block_size: 512
-  plugin_path: /workspace/plugin/vital/lib/vst3/Vital.vst3
+  plugin_path: null
   preset_path: null
   soundfont_path: null
   bpm: 120
@@ -30,25 +31,11 @@ dawdreamer:
 pedalboard:
   enabled: true
   instrument:
-    plugin_path: null
+    plugin_path: /workspace/plugin/vital/lib/vst3/Vital.vst3
     preset_path: null
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
-  effects:
-    - type: Compressor
-      threshold_db: -30.0
-      ratio: 10.0
-      attack_ms: 1.0
-      release_ms: 500.0
-      enabled: true
-    - type: Reverb
-      room_size: 0.8
-      damping: 0.3
-      wet_level: 0.5
-      dry_level: 0.5
-      width: 1.0
-      freeze_mode: false
-      enabled: true
+  effects: []
 
 normalisation:
   enabled: true
@@ -64,7 +51,7 @@ quality_gates:
 
 observability:
   write_manifest: true
-  manifest_path: ./corpus/audio/dawdreamer_vital_pedalboard/renders.jsonl
+  manifest_path: ./corpus/audio/pedalboard_vital/renders.jsonl
   write_failed_list: true
   emit_sse_events: false
 

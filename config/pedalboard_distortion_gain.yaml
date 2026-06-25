@@ -36,17 +36,14 @@ pedalboard:
     silence_flush_sec: 0.5
   effects:
     - type: Distortion
-      drive_db: 25.0
-      enabled: true
-    - type: Gain
-      gain_db: -6.0
+      drive_db: 50.0
       enabled: true
 
 normalisation:
   enabled: true
   mode: peak
   target_db: -1.0
-  pre_effects: false
+  pre_effects: true
 
 quality_gates:
   silence_threshold_rms: 0.001
