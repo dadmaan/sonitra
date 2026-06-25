@@ -5,7 +5,7 @@
 Sonitra is a research toolkit for benchmarking automatic music transcription (AMT) systems. It does not train models. The core loop renders symbolic scores to audio, optionally separates stems and applies audio effects, transcribes that audio back to symbolic form with one or more AMT backends, and scores the result against the ground-truth score.
 
 ```
-MIDI → audio synthesis → (stem separation) → transcription → evaluation vs. reference
+MIDI → audio synthesis → transcription → evaluation vs. reference
 ```
 
 ## Dataset
@@ -15,55 +15,147 @@ The pipeline is currently aimed at testing with the [MAESTRO V3.0.0](https://mag
 ## Requirements
 
 - Python >= 3.11
+- [uv](https://docs.astral.sh/uv/) (recommended package manager — install once, works everywhere)
 - [fluidsynth](https://www.fluidsynth.org/) CLI (optional, for SoundFont-based synthesis — see platform notes below)
 - A VST3 plugin (optional, for synthesis and effects)
 
 ## Installation
 
+[uv](https://docs.astral.sh/uv/) is the recommended way to install Sonitra. It resolves dependencies from the checked-in `uv.lock` for reproducible installs and is faster than pip. If you prefer pip, see the fallback note at the end of this section.
+
 ### Linux
 
 ```bash
+# One-time: install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Install fluidsynth if you want SoundFont synthesis (optional)
 sudo apt install fluidsynth
 
-# Install Sonitra
-pip install -e ".[dev]"
-
-# Optional: add Demucs stem separation
-pip install -e ".[demucs]"
+# Install Sonitra with dev dependencies
+uv sync --extra dev
 ```
 
 ### macOS
 
 ```bash
+# One-time: install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Install fluidsynth if you want SoundFont synthesis (optional)
 brew install fluid-synth
 
-# Install Sonitra
-pip install -e ".[dev]"
-
-# Optional: add Demucs stem separation
-pip install -e ".[demucs]"
+# Install Sonitra with dev dependencies
+uv sync --extra dev
 ```
 
 ### Windows
 
+```powershell
+# One-time: install uv
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
 ```bash
 # Install fluidsynth if you want SoundFont synthesis (optional)
 # Download from https://github.com/nicowillis/fluidsynth-builds
-# or install via msys2: pacman -S mingw-w64-x86_64-fluidsynth
+# or via msys2: pacman -S mingw-w64-x86_64-fluidsynth
 # or via Chocolatey: choco install fluidsynth
 
-# Install Sonitra
-pip install -e ".[dev]"
-
-# Optional: add Demucs stem separation
-pip install -e ".[demucs]"
+# Install Sonitra with dev dependencies
+uv sync --extra dev
 ```
 
 > **Windows note:** DawDreamer rendering modes are not parallel-safe. Sonitra automatically enforces `max_workers=1` when a DawDreamer mode is active.
 
-After installation the `sonitra` command is available on your PATH. `python -m sonitra` also works.
+> **WSL2 note:** If your repo lives on the Windows filesystem (e.g., a devcontainer mount), `uv sync` may fail with an I/O error when installing TensorFlow's deep CUDA headers. Avoid this by cloning on the Linux filesystem (e.g., `~/projects/sonitra`), or redirect the venv: `UV_PROJECT_ENVIRONMENT=~/.venvs/sonitra uv sync --extra dev`.
+
+### Running commands
+
+`uv run` invokes any command inside the managed venv without activating it:
+
+```bash
+uv run sonitra --version
+uv run pytest
+```
+
+Or activate the venv once and use commands directly:
+
+```bash
+source .venv/bin/activate   # Linux / macOS / WSL
+.venv\Scripts\activate      # Windows (cmd / PowerShell)
+sonitra --version
+```
+
+> **pip fallback:** `pip install -e ".[dev]"` still works if you prefer not to use uv.
+
+## Data and plugins
+
+### MIDI input files
+
+Place your MIDI files under `corpus/midi/`:
+
+```
+corpus/
+  midi/
+    piece1.mid
+    piece2.mid
+```
+
+The pipeline reads from this directory by default (`io.midi_dir` in your config).
+
+### VST3 plugin (optional)
+
+Sonitra supports any VST3 instrument plugin for synthesis. [Vital](https://vital.audio/) is the tested, recommended free option.
+
+1. Download Vital from [vital.audio](https://vital.audio/) and extract the archive.
+2. Place the extracted plugin folder under `plugin/`:
+
+```
+plugin/
+  vital/
+    lib/
+      vst3/
+        Vital.vst3
+```
+
+3. Set `dawdreamer.plugin_path` in your config:
+
+```yaml
+dawdreamer:
+  plugin_path: plugin/vital/lib/vst3/Vital.vst3
+```
+
+### Presets (optional)
+
+VST3 preset files (e.g. `.vital` files for Vital) go under `preset/`:
+
+```
+preset/
+  vital/
+    MyPreset.vital
+```
+
+Set `dawdreamer.preset_path` in your config:
+
+```yaml
+dawdreamer:
+  preset_path: preset/vital/MyPreset.vital
+```
+
+### SoundFont fallback (optional)
+
+For SoundFont-based synthesis without a VST3 plugin:
+
+```bash
+# Linux
+sudo apt install fluid-soundfont-gm
+
+# macOS
+brew install fluid-synth
+```
+
+Then set `dawdreamer.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2` (or the path on your system).
 
 ### Core dependencies installed automatically
 
@@ -76,6 +168,59 @@ After installation the `sonitra` command is available on your PATH. `python -m s
 | `fastapi` + `uvicorn` | REST API server |
 | `pydantic` + `pyyaml` | Config validation and loading |
 | `numpy` + `scipy` | Evaluation metric computation |
+
+## Docker
+
+The fastest way to run Sonitra without installing Python or system dependencies locally. Docker files live under `docker/`; all commands are run from the **repository root**.
+
+### Prerequisites
+
+```bash
+cp env.example .env        # create the env file (edit values as needed)
+mkdir -p corpus config output
+```
+
+Place your MIDI files under `./corpus/` and a `config.yaml` under `./config/`. Generate a starter config with:
+
+```bash
+docker compose -f docker/docker-compose.yml run --rm sonitra \
+    uv run sonitra init --config /app/config/config.yaml
+```
+
+### Start the API server
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+The REST API is available at `http://localhost:8000`. The `/health` endpoint confirms the server is ready.
+
+### Run CLI commands
+
+```bash
+# Full benchmark sweep
+docker compose -f docker/docker-compose.yml run --rm sonitra \
+    uv run sonitra benchmark --corpus /app/corpus --workdir /app/output
+
+# Transcribe only
+docker compose -f docker/docker-compose.yml run --rm sonitra \
+    uv run sonitra transcribe --audio /app/corpus/audio --output /app/output/transcriptions
+
+# Evaluate transcriptions against reference MIDI
+docker compose -f docker/docker-compose.yml run --rm sonitra \
+    uv run sonitra evaluate \
+    --reference /app/corpus/midi --estimate /app/output/transcriptions/basic_pitch
+```
+
+### Volume and environment reference
+
+| Mount | Host path | Purpose |
+|---|---|---|
+| `/app/corpus` | `./corpus` | MIDI input and rendered audio |
+| `/app/config` | `./config` | Pipeline YAML configs |
+| `/app/output` | `./output` | Transcriptions, evaluation results, benchmarks |
+
+Set `SONITRA_CONFIG` in `.env` to point at a different config path inside the container (default: `/app/config/config.yaml`).
 
 ## Quick start
 
@@ -110,11 +255,13 @@ sonitra --version
 
 ## Configuration
 
-Copy the default `config.yaml` and customise it. The file is validated by Pydantic — unknown keys are hard errors.
+`config/source.yaml` in the repository is the fully-annotated reference config documenting every available parameter. Copy it as a starting point, or generate a minimal starter config with:
 
 ```bash
 sonitra init --config config.yaml
 ```
+
+The config file is validated by Pydantic — unknown keys are hard errors.
 
 Key sections and their purpose:
 
@@ -126,7 +273,6 @@ Key sections and their purpose:
 | `pedalboard` | Instrument plugin path, effects chain |
 | `normalisation` | Peak or RMS normalisation, target dB, pre/post effects |
 | `quality_gates` | Silence, clipping, and minimum duration checks |
-| `separation` | Enable Demucs stem separation, model and device selection |
 | `transcription` | Transcriber backends, output directory, per-backend thresholds |
 | `evaluation` | Metric families to enable, tolerance values |
 | `benchmark` | Conditions, parameter sweeps, baseline name |
@@ -214,6 +360,10 @@ pytest -m integration               # only end-to-end VST tests
 ```
 
 Set `VST_PATH` or `VST3_PATH` in your environment to enable VST-dependent tests.
+
+## Author
+
+**Shayan Dadman** — [dadman.shayan@gmail.com](mailto:dadman.shayan@gmail.com)
 
 ## License
 
