@@ -14,17 +14,17 @@ MIDI → synthesise audio → (stem separation) → transcribe (audio→MIDI) �
 
 ```bash
 pip install -e ".[dev]"          # editable install + test deps
-pip install -e ".[basicpitch]"   # optional: Basic Pitch transcriber backend
 pip install -e ".[demucs]"       # optional: Demucs stem separation backend
 
-pytest                           # run the suite
-pytest tests/test_pipeline.py -v # single file
-pytest tests/test_pipeline.py::test_name   # single test
+pytest                                # run the suite
+pytest tests/test_pipeline_config.py -v  # single file
+pytest tests/test_pipeline_config.py::test_name  # single test
 pytest -m "not skip_if_no_vst"   # skip tests needing a real VST plugin path
 pytest -m integration            # only end-to-end VST tests
+pytest -m "not slow"             # skip tests that invoke heavy backends (basic-pitch)
 ```
 
-Test markers (`pyproject.toml`): `skip_if_no_vst` and `integration` both require a real VST. VST-dependent fixtures read the plugin path from the `VST_PATH` / `VST3_PATH` env vars and `pytest.skip` when unset.
+Test markers (`pyproject.toml`): `skip_if_no_vst` and `integration` both require a real VST. `slow` marks tests that invoke optional/heavy backends such as basic-pitch (TensorFlow inference). VST-dependent fixtures read the plugin path from the `VST_PATH` / `VST3_PATH` env vars and `pytest.skip` when unset.
 
 CLI entry points (Typer, also `python -m sonitra`):
 
@@ -37,7 +37,7 @@ sonitra serve --port 8000
 sonitra init --config config.yaml
 ```
 
-> Note: `CONTRIBUTING.md` is partly inherited from another project (ARIA) and references paths/tooling that do not exist here (`src/aria/`, `docs/`, ghsom scopes, ruff `--select D` ratchet). There is **no ruff/black/mypy config in `pyproject.toml`** — `pytest` is the real quality gate. Treat the commit-message convention in CONTRIBUTING as advisory, not its specific scope list.
+> There is **no ruff/black/mypy config in `pyproject.toml`** — `pytest` is the real quality gate.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ Every swappable component — synthesisers, stem separators, transcribers, evalu
 2. A **registry + decorator** keyed by a config discriminator — `@register_transcriber("basic_pitch")`, `@register_symbolic_metric("note")`.
 3. A **`make_*` factory** that reads config and returns instances — `make_synth(cfg)`, `make_transcriber(cfg)`, `make_separator(cfg)`, `make_symbolic_metrics(section)`.
 
-Crucially, factories **lazily import backend modules inside the function body** so registration happens on first use and optional dependencies (basic-pitch, demucs, dawdreamer VST) are never imported at package load time. When adding a backend: define it in its subpackage, decorate it with the registry decorator, and ensure the factory's lazy import covers the new module. Don't import backends at module top level.
+Crucially, factories **lazily import backend modules inside the function body** so registration happens on first use and optional dependencies (demucs, dawdreamer VST) are never imported at package load time. When adding a backend: define it in its subpackage, decorate it with the registry decorator, and ensure the factory's lazy import covers the new module. Don't import backends at module top level.
 
 ### Config (`config.py`)
 
@@ -57,9 +57,19 @@ Single Pydantic `PipelineConfig` tree, one nested section per concern (`pipeline
 
 `validate_worker_constraint()` forces `max_workers=1` for any DawDreamer rendering mode (DawDreamer is not safe to run concurrently). Call it before parallelising work.
 
+### Synth backends (`synth/`)
+
+`make_synth(cfg)` in `synth/protocol.py` selects among three synthesis backends:
+
+- **`PedalboardSynth`** — used when `rendering_mode == pedalboard_only`; renders via a pedalboard instrument plugin.
+- **`FluidSynth`** — used when `dawdreamer.soundfont_path` is set and `rendering_mode != pedalboard_only`; invokes the `fluidsynth` CLI against the named `.sf2` SoundFont file. Lazily imported from `synth/fluid_synth.py`.
+- **`DawDreamerSynth`** — the default for all other cases; uses DawDreamer with a Faust oscillator or a VST3 plugin.
+
+The routing logic: `pedalboard_only` → `PedalboardSynth`; `soundfont_path` non-null → `FluidSynth` (lazy import); otherwise → `DawDreamerSynth`.
+
 ### Pipeline (`pipeline.py`)
 
-`run_pipeline` has **two code paths**: the config-driven path (when `config=` is passed — this is the real one) and a legacy `engine=`-based path kept for the older API/tests. New work goes through the config path. The pipeline is fail-soft: each MIDI file is rendered in a try/except that logs a per-file record and continues; it never aborts the batch. Per-file outcomes are written to a JSONL manifest (`renders.jsonl`) plus an optional `.failed.txt`. Order within a file: parse MIDI → synth.render → pre-normalise → effects chain (skipped for `dawdreamer_only`) → post-normalise → quality gate → write.
+`run_pipeline` has **two code paths**: the config-driven path (when `config=` is passed — this is the real one) and a legacy `engine=`-based path kept for the older API/tests. New work goes through the config path. The pipeline is fail-soft: each MIDI file is rendered in a try/except that logs a per-file record and continues; it never aborts the batch. Per-file outcomes are written to a JSONL manifest (`renders.jsonl`) plus an optional `.failed.txt`. Note that some setup steps, such as building the effects chain from config, currently run before the per-file loop and can abort the batch if they fail (e.g., a VST3 plugin cannot be loaded). Order within a file: parse MIDI → synth.render → pre-normalise → effects chain (skipped for `dawdreamer_only`) → post-normalise → quality gate → write.
 
 ### Benchmark (`benchmark/`)
 
@@ -73,9 +83,25 @@ Metrics implemented natively in NumPy/SciPy with mir_eval-compatible matching se
 
 FastAPI app (`create_app`) with a `JobStore`, a `ThreadPoolExecutor` worker (`worker.py`) running `run_pipeline` per job, runtime config reload via `PUT /config`, and an SSE status stream. Config is loaded into `app.state.config` at startup. Routers are split by concern under `api/routers/`. `tests/api/openapi_snapshot.json` is a checked-in OpenAPI snapshot — schema changes will require regenerating it (see `tests/api/test_openapi.py`).
 
+### Scripts (`scripts/`)
+
+`scripts/run_transcribe_eval.py` is a batch runner that iterates over every YAML file in `config/`, runs `sonitra transcribe` then `sonitra evaluate` for each, and writes results to `corpus/eval_results/`:
+
+- `corpus/eval_results/<config>.jsonl` — per-file evaluation records for each config
+- `corpus/eval_results/summary.jsonl` — one line per config, mean of per-file metrics
+- `corpus/eval_results/summary.csv` — same data as `summary.jsonl` in CSV format
+- `corpus/eval_results/all_results.csv` — flat table with one row per (config, file)
+
+NaN values are written as `null` in JSONL and as empty cells `""` in CSV.
+
+### Config directory (`config/`)
+
+`config/` holds the preset YAML configurations used by `scripts/run_transcribe_eval.py` and the roundtrip tests. These are not test fixtures (those live in `tests/fixtures/`). Current configs cover: `pedalboard_baseline`, `pedalboard_no_effects`, `pedalboard_all_effects`, `pedalboard_extreme_reverb`, `pedalboard_heavy_compression`, `pedalboard_chorus_delay`, `pedalboard_distortion_gain`, `pedalboard_vital`, `dawdreamer_soundfont`, `dawdreamer_faust`, `dawdreamer_vital`, `dawdreamer_vital_pedalboard`, `dawdreamer_vital_goodies`, `dawdreamer_vital_goodies_pedalboard`, `dawdreamer_vital_delayed_flight`, and `dawdreamer_vital_delayed_flight_pedalboard`.
+
 ## Conventions
 
 - `from __future__ import annotations` at the top of every module; type everything.
 - New tunable behaviour goes through the Pydantic config tree, not function kwargs — keep `extra="forbid"` working by updating the relevant section.
 - Pipeline/benchmark/CLI loops are fail-soft: log a structured per-item record and continue rather than raising out of a batch.
 - `research.md` is the literature survey backing the metric choices; cite it when changing metric definitions.
+- `basic-pitch` is a **core dependency** (in `dependencies`, not just extras). The `[basicpitch]` extra remains as a backward-compatible alias only.
