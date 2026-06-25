@@ -7,21 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Sonitra is a research toolkit for **benchmarking automatic music transcription (AMT) systems**. It does not train models. The core loop renders symbolic scores to audio, optionally degrades/separates that audio, transcribes it back to symbolic form with one or more AMT backends, and scores the result against the ground-truth score.
 
 ```
-MIDI → synthesise audio → (stem separation) → transcribe (audio→MIDI) → evaluate vs reference
+MIDI → synthesise audio → transcribe (audio→MIDI) → evaluate vs reference
 ```
 
 ## Commands
 
 ```bash
-pip install -e ".[dev]"          # editable install + test deps
-pip install -e ".[demucs]"       # optional: Demucs stem separation backend
+uv sync --extra dev              # preferred: editable install + test deps (lockfile)
+pip install -e ".[dev]"          # fallback if uv is unavailable
 
-pytest                                # run the suite
-pytest tests/test_pipeline_config.py -v  # single file
-pytest tests/test_pipeline_config.py::test_name  # single test
-pytest -m "not skip_if_no_vst"   # skip tests needing a real VST plugin path
-pytest -m integration            # only end-to-end VST tests
-pytest -m "not slow"             # skip tests that invoke heavy backends (basic-pitch)
+uv run pytest                         # run the suite (no venv activation needed)
+uv run pytest tests/test_pipeline_config.py -v  # single file
+uv run pytest tests/test_pipeline_config.py::test_name  # single test
+uv run pytest -m "not skip_if_no_vst"   # skip tests needing a real VST plugin path
+uv run pytest -m integration            # only end-to-end VST tests
+uv run pytest -m "not slow"             # skip tests that invoke heavy backends (basic-pitch)
 ```
 
 Test markers (`pyproject.toml`): `skip_if_no_vst` and `integration` both require a real VST. `slow` marks tests that invoke optional/heavy backends such as basic-pitch (TensorFlow inference). VST-dependent fixtures read the plugin path from the `VST_PATH` / `VST3_PATH` env vars and `pytest.skip` when unset.
@@ -43,17 +43,17 @@ sonitra init --config config.yaml
 
 ### Pluggable-backend pattern (the central idiom)
 
-Every swappable component — synthesisers, stem separators, transcribers, evaluation metrics — follows the same three-part shape:
+Every swappable component — synthesisers, transcribers, evaluation metrics — follows the same three-part shape:
 
 1. A **`Protocol`** (`runtime_checkable`) defining the interface — e.g. `TranscriberProtocol.transcribe()`, `SymbolicMetric.compute()`, `SynthesiserProtocol`.
 2. A **registry + decorator** keyed by a config discriminator — `@register_transcriber("basic_pitch")`, `@register_symbolic_metric("note")`.
-3. A **`make_*` factory** that reads config and returns instances — `make_synth(cfg)`, `make_transcriber(cfg)`, `make_separator(cfg)`, `make_symbolic_metrics(section)`.
+3. A **`make_*` factory** that reads config and returns instances — `make_synth(cfg)`, `make_transcriber(cfg)`, `make_symbolic_metrics(section)`.
 
-Crucially, factories **lazily import backend modules inside the function body** so registration happens on first use and optional dependencies (demucs, dawdreamer VST) are never imported at package load time. When adding a backend: define it in its subpackage, decorate it with the registry decorator, and ensure the factory's lazy import covers the new module. Don't import backends at module top level.
+Crucially, factories **lazily import backend modules inside the function body** so registration happens on first use and optional dependencies (e.g. dawdreamer VST) are never imported at package load time. When adding a backend: define it in its subpackage, decorate it with the registry decorator, and ensure the factory's lazy import covers the new module. Don't import backends at module top level.
 
 ### Config (`config.py`)
 
-Single Pydantic `PipelineConfig` tree, one nested section per concern (`pipeline`, `io`, `dawdreamer`, `pedalboard`, `separation`, `transcription`, `evaluation`, `benchmark`, ...). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `RenderingMode` is the enum that selects the synthesis/effects path.
+Single Pydantic `PipelineConfig` tree, one nested section per concern (`pipeline`, `io`, `dawdreamer`, `pedalboard`, `transcription`, `evaluation`, `benchmark`, ...). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `RenderingMode` is the enum that selects the synthesis/effects path. `config/source.yaml` is the fully-annotated reference documenting every parameter; `default_config_path()` in `config.py` points there.
 
 `validate_worker_constraint()` forces `max_workers=1` for any DawDreamer rendering mode (DawDreamer is not safe to run concurrently). Call it before parallelising work.
 
