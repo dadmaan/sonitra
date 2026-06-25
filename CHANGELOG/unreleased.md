@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Regression tests verifying the default config renders without clipping, `sonitra init` emits a working starter config, and `basic_pitch` can transcribe rendered fixtures
 - `config/` directory with preset configuration files for Vital VST3, SoundFont, and pedalboard effect chains
 - `scripts/run_transcribe_eval.py` — batch runner that iterates over all configs in `config/`, runs `sonitra transcribe` + `sonitra evaluate`, and writes `summary.jsonl`, `summary.csv`, and `all_results.csv` to `corpus/eval_results/`
+- `ARCHITECTURE.md` with Mermaid flowchart documenting the pipeline data flow
+- `config/pedalboard_vital.yaml` — Pedalboard-only rendering preset using Vital VST3 instrument with no effects chain
+- `test_vst3_effect_guard_rejects_instrument` — ensures instrument VST3 plugins raise `ValueError` when loaded as effects in `build_effects_chain`
+- `test_run_pipeline_pedalboard_only_with_vital` — end-to-end Pedalboard + Vital VST3 render test with non-silent audio verification
+- `uv.lock` for reproducible dependency resolution via `uv`
 
 ### Changed
 
@@ -55,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API renderer VST processor cache key now includes `preset_path` so different presets are correctly cached as separate processors
 - `session_engine` test fixture changed from session-scoped to function-scoped to prevent DawDreamer state bleed across tests
 - `test_cancel_running_job_via_api` replaced by `test_cancel_pending_job_via_api` to reflect the synchronous worker model where mid-render cancellation is not supported
+- `README.md` fully rewritten: concise pipeline overview, platform-specific install steps, quick-start workflow, configuration reference, and testing guidance
+- `CONTRIBUTING.md` stripped of inherited ARIA-specific content (ghsom, ruff D-ratchet, pre-commit, docs build stages); scoped to Sonitra conventions, scopes, and pytest-based quality workflow
+- `CLAUDE.md` updated with synth backend routing documentation (PedalboardSynth / FluidSynth / DawDreamerSynth dispatch), scripts output layout, and config directory listing; removed inherited-project note
+- `config/dawdreamer_vital_pedalboard.yaml` — compressor threshold reduced to −30 dB, ratio raised to 10:1, attack/release tightened; reverb wet level increased to 0.5, room size to 0.8, damping reduced
+- `config/pedalboard_distortion_gain.yaml` — Gain effect removed, Distortion drive increased from 25 dB to 50 dB, normalisation moved to pre-effects
+- `config/pedalboard_heavy_compression.yaml` — compressor threshold reduced to −50 dB, ratio raised to 20:1, normalisation moved to pre-effects
 
 ### Fixed
 
