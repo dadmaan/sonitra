@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_vst3_effect_guard_rejects_instrument` — ensures instrument VST3 plugins raise `ValueError` when loaded as effects in `build_effects_chain`
 - `test_run_pipeline_pedalboard_only_with_vital` — end-to-end Pedalboard + Vital VST3 render test with non-silent audio verification
 - `uv.lock` for reproducible dependency resolution via `uv`
+- `config/source.yaml` — fully-annotated reference config documenting every available parameter with commentary, replacing the deleted root-level `config.yaml`
+- Docker Compose setup under `docker/` with multi-stage `Dockerfile`, `docker-compose.yml`, and `entrypoint.sh` for containerised operation; exposes the REST API on port 8000, supports CLI one-off commands, and bundles system deps (libsndfile, fluidsynth, FFTW)
+- `ROADMAP.md` tracking planned features: stem separation, additional datasets/instruments, and additional AMT backends
 
 ### Changed
 
@@ -66,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config/dawdreamer_vital_pedalboard.yaml` — compressor threshold reduced to −30 dB, ratio raised to 10:1, attack/release tightened; reverb wet level increased to 0.5, room size to 0.8, damping reduced
 - `config/pedalboard_distortion_gain.yaml` — Gain effect removed, Distortion drive increased from 25 dB to 50 dB, normalisation moved to pre-effects
 - `config/pedalboard_heavy_compression.yaml` — compressor threshold reduced to −50 dB, ratio raised to 20:1, normalisation moved to pre-effects
+- Root `config.yaml` replaced by `config/source.yaml` annotated reference; `default_config_path()` in `config.py` now points to `config/source.yaml`
+- `README.md` fully rewritten: uv-based install instructions with platform-specific commands, Docker quick-start section, data/plugins setup guide (MIDI corpus layout, VST3 plugin placement, presets, SoundFont), author attribution; Demucs references removed
+- `CLAUDE.md` commands updated from pip to uv (`uv sync --extra dev`, `uv run pytest`); Demucs/stem separation references trimmed; `config/source.yaml` documented as the annotated reference
+- Project description changed from "MIDI-to-audio batch rendering pipeline" to "Automatic music transcription (AMT) benchmark"
+- Project author updated from `copilot-swe-agent[bot]` to **Shayan Dadman**
+- `LICENSE` copyright year updated to 2026 and author name corrected
 
 ### Fixed
 
