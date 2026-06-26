@@ -111,3 +111,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonitra` binary is available on PATH after `pip install -e .`
 - API integration test now passes with the fixed default config
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
+- Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve
+  the relative subpath from the corpus root in all output paths. Two files in different
+  subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no
+  longer overwrite each other on disk or silently cross-pair during evaluation.
+  (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to
+  `None` so all existing flat-corpus workflows are unaffected.)
