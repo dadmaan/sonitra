@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-Transcribe + evaluate all configs in config/ against pre-rendered audio in corpus/audio/.
+Render, transcribe and evaluate all configs in config/ against the corpus.
 
 For each config:
-  1. sonitra transcribe  -> corpus/transcription/<config>/<backend>/*.mid
-  2. sonitra evaluate    -> corpus/eval_results/<config>.jsonl
+  1. sonitra render      -> corpus/{dataset}/audio/<config>/*.wav
+  2. sonitra transcribe  -> corpus/{dataset}/transcription/<config>/<backend>/*.mid
+  3. sonitra evaluate    -> corpus/{dataset}/eval_results/<config>.jsonl
 
 After all configs:
-  corpus/eval_results/summary.jsonl   -- one line per config, mean of per-file metrics
-  corpus/eval_results/summary.csv     -- same data as summary.jsonl, CSV format
-  corpus/eval_results/all_results.csv -- flat table: one row per (config, file)
+  corpus/{dataset}/eval_results/summary.jsonl   -- one line per config, mean of per-file metrics
+  corpus/{dataset}/eval_results/summary.csv     -- same data as summary.jsonl, CSV format
+  corpus/{dataset}/eval_results/all_results.csv -- flat table: one row per (config, file)
 
 Usage:
     python scripts/run_transcribe_eval.py
+    python scripts/run_transcribe_eval.py --dataset maestro
+    python scripts/run_transcribe_eval.py --dataset test --skip-render
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import math
@@ -25,12 +29,53 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CONFIGS_DIR = REPO / "config"
-AUDIO_DIR = REPO / "corpus" / "audio"
-TRANSCRIPTION_DIR = REPO / "corpus" / "transcription"
-EVAL_DIR = REPO / "corpus" / "eval_results"
-MIDI_REF_DIR = REPO / "corpus" / "midi"
 
 PYTHON = sys.executable
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Render, transcribe and evaluate all configs against the corpus."
+    )
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Optional dataset name.  When set, all corpus paths are scoped under "
+            "corpus/{dataset}/midi|audio|transcription|eval_results/."
+        ),
+    )
+    parser.add_argument(
+        "--skip-render",
+        action="store_true",
+        default=False,
+        help="Skip the render step and use already-rendered audio.",
+    )
+    return parser.parse_args()
+
+
+def _resolve_dirs(dataset: str | None) -> tuple[Path, Path, Path, Path]:
+    """Return (AUDIO_DIR, TRANSCRIPTION_DIR, EVAL_DIR, MIDI_REF_DIR).
+
+    Args:
+        dataset: Dataset name from ``--dataset``, or ``None`` for the default
+            (non-scoped) layout.
+
+    Returns:
+        Four :class:`pathlib.Path` objects for the audio, transcription,
+        evaluation results, and MIDI reference directories respectively.
+        All paths follow the dataset-first layout:
+        ``corpus/{dataset}/audio``, ``corpus/{dataset}/transcription``, etc.
+    """
+    root = REPO / "corpus"
+    base = root / dataset if dataset is not None else root
+    return (
+        base / "audio",
+        base / "transcription",
+        base / "eval_results",
+        base / "midi",
+    )
 
 
 def _run(cmd: list[str]) -> int:
@@ -79,10 +124,14 @@ def _dump_csv(rows: list[dict], path: Path) -> None:
 
 
 def main() -> int:
+    args = _parse_args()
+    AUDIO_DIR, TRANSCRIPTION_DIR, EVAL_DIR, MIDI_REF_DIR = _resolve_dirs(args.dataset)
+
     TRANSCRIPTION_DIR.mkdir(parents=True, exist_ok=True)
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
-    configs = sorted(CONFIGS_DIR.glob("*.yaml"))
+    # source.yaml is the annotated reference config, not a runnable pipeline config.
+    configs = sorted(c for c in CONFIGS_DIR.glob("*.yaml") if c.stem != "source")
     if not configs:
         print(f"No configs found in {CONFIGS_DIR}", file=sys.stderr)
         return 1
@@ -99,6 +148,18 @@ def main() -> int:
         print(f"\n{bar}")
         print(f"CONFIG: {name}")
 
+        # ── Step 1: render ──────────────────────────────────────────────────
+        if not args.skip_render:
+            print(f"  step 1: render     -> {audio_dir}/")
+            rc = _run([
+                PYTHON, "-m", "sonitra", "render",
+                "--config", str(config_path),
+            ])
+            if rc != 0:
+                print(f"  FAIL  — render exited {rc}")
+                failures.append(f"{name}:render")
+                continue
+
         if not audio_dir.exists():
             print(f"  SKIP — no audio dir at {audio_dir}")
             continue
@@ -110,9 +171,9 @@ def main() -> int:
 
         print(f"  audio : {audio_dir}  ({len(wavs)} WAVs)")
 
-        # ── Step 1: transcribe ──────────────────────────────────────────────
+        # ── Step 2: transcribe ──────────────────────────────────────────────
         transcription_out = TRANSCRIPTION_DIR / name
-        print(f"  step 1: transcribe -> {transcription_out}/")
+        print(f"  step 2: transcribe -> {transcription_out}/")
         rc = _run([
             PYTHON, "-m", "sonitra", "transcribe",
             "--config", str(config_path),
@@ -124,7 +185,7 @@ def main() -> int:
             failures.append(f"{name}:transcribe")
             continue
 
-        # ── Step 2: find backend subdir ─────────────────────────────────────
+        # ── Step 3: find backend subdir ─────────────────────────────────────
         estimate_dir = transcription_out / "basic_pitch"
         if not estimate_dir.exists():
             subdirs = [d for d in transcription_out.iterdir() if d.is_dir()]
@@ -135,9 +196,9 @@ def main() -> int:
             estimate_dir = sorted(subdirs)[0]
         print(f"  midis : {estimate_dir}/")
 
-        # ── Step 3: evaluate ────────────────────────────────────────────────
+        # ── Step 4: evaluate ────────────────────────────────────────────────
         eval_out = EVAL_DIR / f"{name}.jsonl"
-        print(f"  step 2: evaluate   -> {eval_out}")
+        print(f"  step 3: evaluate   -> {eval_out}")
         rc = _run([
             PYTHON, "-m", "sonitra", "evaluate",
             "--config",    str(config_path),
@@ -150,7 +211,7 @@ def main() -> int:
             failures.append(f"{name}:evaluate")
             continue
 
-        # ── Step 4: accumulate summary ──────────────────────────────────────
+        # ── Step 5: accumulate summary ──────────────────────────────────────
         rows = _load_jsonl(eval_out)
         means = _mean_metrics(rows)
         summary_rows.append({"config": name, **means})
