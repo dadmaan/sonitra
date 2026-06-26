@@ -1,19 +1,11 @@
 [project]
 site_name = "Sonitra"
-site_url = "https://github.com/anomalyco/sonitra"
-site_description = "MIDI-to-audio batch rendering pipeline"
-repo_url = "https://github.com/anomalyco/sonitra"
-repo_name = "anomalyco/sonitra"
+site_url = "https://github.com/dadmaan/sonitra"
+site_description = "Sonitra: A Controlled Benchmarking Toolkit for Automatic Music Transcription"
+repo_url = "https://github.com/dadmaan/sonitra"
+repo_name = "dadmaan/sonitra"
 
-nav = [
-  { "Home" = "index.md" },
-  { "Tutorial" = "tutorial.md" },
-  { "Project Structure" = "project_structure.md" },
-  { "CLI Reference" = "cli_reference.md" },
-  { "API Reference" = "api_reference.md" },
-  { "Design Decisions" = "design_decisions.md" },
-  { "Troubleshooting" = "troubleshooting.md" },
-]
+# Navigation pages are not yet written; see ROADMAP.md for planned documentation.
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
