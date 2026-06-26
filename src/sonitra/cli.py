@@ -257,8 +257,7 @@ def init(
             log_level="INFO",
         ),
         io=IOSection(
-            midi_dir="corpus/midi",
-            output_dir="corpus/audio",
+            corpus_root="corpus",
             output_format="wav",
             mp3_bitrate_kbps=192,
             file_naming="{stem}",

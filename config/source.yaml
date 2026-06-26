@@ -22,11 +22,11 @@ pipeline:
   log_level: INFO          # DEBUG | INFO | WARNING | ERROR
 
 io:
-  midi_dir: ./corpus/midi    # input MIDI files (place files here; directory is gitignored)
-  output_dir: ./corpus/audio # rendered audio output (WAV/FLAC/MP3)
+  corpus_root: ./corpus  # root directory for all corpus data; midi at {corpus_root}/{dataset}/midi/, audio at {corpus_root}/{dataset}/audio/{config}/
   output_format: wav         # wav | flac | mp3
   mp3_bitrate_kbps: 192      # only applies when output_format: mp3
   file_naming: "{stem}"      # output filename template; {stem} = MIDI filename without extension
+  dataset: null              # optional: scope paths to {corpus_root}/{dataset}/midi|audio|transcription|eval_results/
 
 dawdreamer:
   enabled: true

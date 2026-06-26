@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 import logging
 from pathlib import Path
@@ -12,6 +13,14 @@ from sonitra.effects.builtin_effects import EffectConfig
 from sonitra.transcribe.configs import TranscriberConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CorpusPaths:
+    midi: Path
+    audio: Path
+    transcription: Path
+    eval_results: Path
 
 
 class ConfigError(RuntimeError):
@@ -41,11 +50,11 @@ class PipelineSection(BaseModel):
 class IOSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    midi_dir: Path | str
-    output_dir: Path | str
+    corpus_root: Path | str = "corpus"
     output_format: str
     mp3_bitrate_kbps: int
     file_naming: str
+    dataset: str | None = None
 
     @field_validator("output_format")
     @classmethod
@@ -238,6 +247,48 @@ class PipelineConfig(BaseModel):
 
 def default_config_path() -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "source.yaml"
+
+
+def resolve_corpus_paths(
+    cfg: PipelineConfig,
+    config_name: str | None = None,
+) -> CorpusPaths:
+    """Return corpus subdirectory paths derived from ``cfg.io.corpus_root``.
+
+    Args:
+        cfg: Loaded pipeline configuration.
+        config_name: Stem of the YAML config filename (e.g. ``"pedalboard_baseline"``
+            for ``config/pedalboard_baseline.yaml``).  When provided, the audio and
+            transcription directories gain a per-config suffix so different render
+            configurations are kept separate.
+
+    Returns:
+        A :class:`CorpusPaths` instance with ``midi``, ``audio``, ``transcription``,
+        and ``eval_results`` attributes as :class:`pathlib.Path` objects.
+
+        With ``dataset="test"``, ``corpus_root="./corpus"``, and
+        ``config_name="pedalboard_baseline"``:
+
+        - ``midi``          → ``corpus/test/midi``
+        - ``audio``         → ``corpus/test/audio/pedalboard_baseline``
+        - ``transcription`` → ``corpus/test/transcription/pedalboard_baseline``
+        - ``eval_results``  → ``corpus/test/eval_results``
+
+        Without ``dataset``:
+
+        - ``midi``          → ``corpus/midi``
+        - ``audio``         → ``corpus/audio/pedalboard_baseline``
+        - ``transcription`` → ``corpus/transcription/pedalboard_baseline``
+        - ``eval_results``  → ``corpus/eval_results``
+    """
+    root = Path(cfg.io.corpus_root)
+    base = root / cfg.io.dataset if cfg.io.dataset else root
+    return CorpusPaths(
+        midi=base / "midi",
+        audio=(base / "audio" / config_name) if config_name else base / "audio",
+        transcription=(base / "transcription" / config_name) if config_name else base / "transcription",
+        eval_results=base / "eval_results",
+    )
 
 
 def load_config(path: Path | str) -> PipelineConfig:
