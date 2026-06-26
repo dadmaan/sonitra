@@ -26,6 +26,13 @@ Use this format:
 Before opening a PR for non-trivial changes:
 
 ```bash
+uv sync --extra dev     # recommended: install with dev deps (uses lockfile)
+uv run pytest           # run the full suite
+```
+
+If uv is unavailable, fall back to pip:
+
+```bash
 pip install -e ".[dev]"
 pytest
 ```
