@@ -8,16 +8,30 @@ import typer
 app = typer.Typer(name="sonitra")
 
 
+def _apply_dataset(cfg: PipelineConfig, dataset: str | None, config: Path) -> None:
+    """Inject *dataset* into *cfg* when provided.
+
+    Args:
+        cfg: Loaded pipeline configuration to mutate in place.
+        dataset: Dataset name supplied via the CLI ``--dataset`` flag, or
+            ``None`` when the flag was not set.
+        config: Path to the YAML config file (kept for symmetry; unused here
+            but documents the call-site contract).
+    """
+    if dataset is not None:
+        cfg.io.dataset = dataset
+
+
 @app.command()
 def render(
     config: Path = typer.Option(
         "config.yaml", "--config", "-c", help="Path to pipeline config YAML"
     ),
-    corpus: Path = typer.Option(
-        ..., "--corpus", "-i", help="Directory of MIDI files to render"
+    corpus: Optional[Path] = typer.Option(
+        None, "--corpus", "-i", help="Directory of MIDI files to render"
     ),
-    output: Path = typer.Option(
-        "output", "--output", "-o", help="Output audio directory"
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output audio directory"
     ),
     overwrite: bool = typer.Option(
         True, "--overwrite/--no-overwrite", help="Overwrite existing output files"
@@ -25,19 +39,33 @@ def render(
     workers: Optional[int] = typer.Option(
         None, "--workers", "-w", help="Number of parallel workers (overrides config)"
     ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-d",
+        help=(
+            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
+            "outputs to corpus/{subdir}/{dataset}/{config}/"
+        ),
+    ),
 ) -> None:
     """Run the MIDI-to-audio rendering pipeline."""
-    from sonitra.config import load_config
+    from sonitra.config import load_config, resolve_corpus_paths
     from sonitra.pipeline import run_pipeline
 
     cfg = load_config(config)
+    _apply_dataset(cfg, dataset, config)
+    paths = resolve_corpus_paths(cfg, config_name=config.stem)
 
-    midi_paths = sorted(corpus.glob("*.mid"))
+    actual_corpus = corpus if corpus is not None else paths.midi
+    actual_output = output if output is not None else paths.audio
+
+    midi_paths = sorted(actual_corpus.glob("*.mid"))
     if not midi_paths:
-        typer.echo(f"No .mid files found in {corpus}")
+        typer.echo(f"No .mid files found in {actual_corpus}")
         raise typer.Exit(code=1)
 
-    result = run_pipeline(midi_paths, out_dir=output, config=cfg)
+    result = run_pipeline(midi_paths, out_dir=actual_output, config=cfg)
     typer.echo(
         f"Done: {result.succeeded} succeeded, {result.failed} failed, "
         f"{result.skipped} skipped ({result.elapsed_seconds:.2f}s)"
@@ -51,22 +79,49 @@ def transcribe(
     config: Path = typer.Option(
         "config.yaml", "--config", "-c", help="Path to pipeline config YAML"
     ),
-    audio: Path = typer.Option(
-        ..., "--audio", "-i", help="Directory of audio files to transcribe"
+    audio: Optional[Path] = typer.Option(
+        None, "--audio", "-i", help="Directory of audio files to transcribe"
     ),
-    output: Path = typer.Option(
-        "transcriptions", "--output", "-o", help="Output MIDI directory"
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output MIDI directory"
     ),
     transcriber: Optional[str] = typer.Option(
         None, "--transcriber", "-t", help="Only run the transcriber with this name/type"
     ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-d",
+        help=(
+            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
+            "outputs to corpus/{subdir}/{dataset}/{config}/"
+        ),
+    ),
 ) -> None:
     """Transcribe audio files to MIDI with the configured transcribers."""
-    from sonitra.config import load_config
+    from sonitra.config import load_config, resolve_corpus_paths
     from sonitra.midi_writer import write_midi
     from sonitra.transcribe.protocol import make_transcriber
 
     cfg = load_config(config)
+    _apply_dataset(cfg, dataset, config)
+    paths = resolve_corpus_paths(cfg, config_name=config.stem)
+
+    if audio is not None:
+        actual_audio = audio
+    elif dataset is not None:
+        actual_audio = paths.audio
+    else:
+        typer.echo("--audio or --dataset must be provided")
+        raise typer.Exit(code=1)
+
+    if output is not None:
+        actual_output = output
+    elif dataset is not None:
+        actual_output = paths.transcription
+    else:
+        actual_output = Path("transcriptions")
+
     transcriber_configs = [t for t in cfg.transcription.transcribers if t.enabled]
     if transcriber is not None:
         transcriber_configs = [
@@ -77,17 +132,17 @@ def transcribe(
         raise typer.Exit(code=1)
 
     audio_paths = sorted(
-        path for ext in ("*.wav", "*.flac", "*.mp3") for path in audio.glob(ext)
+        path for ext in ("*.wav", "*.flac", "*.mp3") for path in actual_audio.glob(ext)
     )
     if not audio_paths:
-        typer.echo(f"No audio files found in {audio}")
+        typer.echo(f"No audio files found in {actual_audio}")
         raise typer.Exit(code=1)
 
     failures = 0
     for transcriber_cfg in transcriber_configs:
         backend = make_transcriber(transcriber_cfg)
         for audio_path in audio_paths:
-            midi_path = output / backend.name / f"{audio_path.stem}.mid"
+            midi_path = actual_output / backend.name / f"{audio_path.stem}.mid"
             try:
                 result = backend.transcribe(audio_path)
                 write_midi(result.notes, midi_path)
@@ -101,11 +156,11 @@ def transcribe(
 
 @app.command()
 def evaluate(
-    reference: Path = typer.Option(
-        ..., "--reference", "-r", help="Directory of reference MIDI files"
+    reference: Optional[Path] = typer.Option(
+        None, "--reference", "-r", help="Directory of reference MIDI files"
     ),
-    estimate: Path = typer.Option(
-        ..., "--estimate", "-e", help="Directory of estimated/transcribed MIDI files"
+    estimate: Optional[Path] = typer.Option(
+        None, "--estimate", "-e", help="Directory of estimated/transcribed MIDI files"
     ),
     config: Optional[Path] = typer.Option(
         None, "--config", "-c", help="Pipeline config YAML (for metric settings)"
@@ -113,24 +168,80 @@ def evaluate(
     output: Optional[Path] = typer.Option(
         None, "--output", "-o", help="Write per-file results to this JSONL path"
     ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-d",
+        help=(
+            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
+            "outputs to corpus/{subdir}/{dataset}/{config}/"
+        ),
+    ),
 ) -> None:
     """Score estimated MIDI against reference MIDI, paired by file stem."""
     import json
     import math
 
-    from sonitra.config import EvaluationSection, load_config
+    from sonitra.config import EvaluationSection, load_config, resolve_corpus_paths
     from sonitra.evaluation.protocol import evaluate_notes, make_symbolic_metrics
     from sonitra.evaluation.types import notes_from_dicts
     from sonitra.midi_reader import parse_midi
 
-    section = load_config(config).evaluation if config else EvaluationSection()
+    # Derive metric settings and dataset-scoped paths in one config load.
+    if dataset is not None and config is not None:
+        full_cfg = load_config(config)
+        full_cfg.io.dataset = dataset
+        section = full_cfg.evaluation
+        eval_paths = resolve_corpus_paths(full_cfg, config_name=config.stem)
+        midi_dir: Path | None = eval_paths.midi
+        first_transcriber = (
+            full_cfg.transcription.transcribers[0].name
+            if full_cfg.transcription.transcribers
+            else "basic_pitch"
+        )
+        transcription_dir: Path | None = eval_paths.transcription
+        config_stem: str | None = config.stem
+    elif dataset is not None:
+        # No config provided; use defaults for metric settings and path bases.
+        section = EvaluationSection()
+        midi_dir = Path("corpus") / dataset / "midi"
+        first_transcriber = "basic_pitch"
+        transcription_dir = Path("corpus") / dataset / "transcription"
+        config_stem = None
+    else:
+        section = load_config(config).evaluation if config else EvaluationSection()
+        midi_dir = None
+        first_transcriber = None
+        transcription_dir = None
+        config_stem = None
+
     metrics = make_symbolic_metrics(section)
 
+    # Resolve reference path.
+    actual_reference: Path
+    if reference is not None:
+        actual_reference = reference
+    elif dataset is not None:
+        actual_reference = midi_dir  # type: ignore[assignment]
+    else:
+        typer.echo("--reference is required when --dataset is not set")
+        raise typer.Exit(code=1)
+
+    # Resolve estimate path.
+    actual_estimate: Path
+    if estimate is not None:
+        actual_estimate = estimate
+    elif dataset is not None:
+        actual_estimate = transcription_dir / first_transcriber  # type: ignore[operator]
+    else:
+        typer.echo("--estimate is required when --dataset is not set")
+        raise typer.Exit(code=1)
+
     reference_paths = sorted(
-        path for ext in ("*.mid", "*.midi") for path in reference.glob(ext)
+        path for ext in ("*.mid", "*.midi") for path in actual_reference.glob(ext)
     )
     if not reference_paths:
-        typer.echo(f"No MIDI files found in {reference}")
+        typer.echo(f"No MIDI files found in {actual_reference}")
         raise typer.Exit(code=1)
 
     rows = []
@@ -139,7 +250,7 @@ def evaluate(
             (
                 candidate
                 for ext in (".mid", ".midi")
-                if (candidate := estimate / f"{ref_path.stem}{ext}").exists()
+                if (candidate := actual_estimate / f"{ref_path.stem}{ext}").exists()
             ),
             None,
         )
@@ -176,24 +287,44 @@ def benchmark(
     config: Path = typer.Option(
         "config.yaml", "--config", "-c", help="Path to pipeline config YAML"
     ),
-    corpus: Path = typer.Option(
-        ..., "--corpus", "-i", help="Directory of reference MIDI files"
+    corpus: Optional[Path] = typer.Option(
+        None, "--corpus", "-i", help="Directory of reference MIDI files"
     ),
-    workdir: Path = typer.Option(
-        "benchmark", "--workdir", "-w", help="Working directory for audio/transcriptions/results"
+    workdir: Optional[Path] = typer.Option(
+        None, "--workdir", "-w", help="Working directory for audio/transcriptions/results"
+    ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-d",
+        help=(
+            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
+            "outputs to corpus/{subdir}/{dataset}/{config}/"
+        ),
     ),
 ) -> None:
     """Run the full AMT benchmark: render, transcribe, and evaluate per condition."""
     from sonitra.benchmark.runner import run_benchmark
-    from sonitra.config import load_config
+    from sonitra.config import load_config, resolve_corpus_paths
 
     cfg = load_config(config)
-    midi_paths = sorted(corpus.glob("*.mid"))
+    _apply_dataset(cfg, dataset, config)
+    paths = resolve_corpus_paths(cfg, config_name=config.stem)
+
+    actual_corpus = corpus if corpus is not None else paths.midi
+    if workdir is not None:
+        actual_workdir = workdir
+    elif dataset is not None:
+        actual_workdir = Path(cfg.io.corpus_root) / dataset / "benchmark"
+    else:
+        actual_workdir = Path("benchmark")
+
+    midi_paths = sorted(actual_corpus.glob("*.mid"))
     if not midi_paths:
-        typer.echo(f"No .mid files found in {corpus}")
+        typer.echo(f"No .mid files found in {actual_corpus}")
         raise typer.Exit(code=1)
 
-    result = run_benchmark(midi_paths, workdir, cfg)
+    result = run_benchmark(midi_paths, actual_workdir, cfg)
     succeeded = sum(1 for record in result.records if record.status == "succeeded")
     typer.echo(
         f"Benchmark finished: {succeeded}/{len(result.records)} evaluations succeeded "
