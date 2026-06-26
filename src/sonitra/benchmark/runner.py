@@ -54,6 +54,7 @@ def run_benchmark(
     midi_paths: Iterable[Path | str],
     work_dir: Path | str,
     config: PipelineConfig,
+    corpus_root: Path | None = None,
 ) -> BenchmarkResult:
     """Run the full benchmark: render -> (separate) -> transcribe -> evaluate.
 
@@ -101,6 +102,7 @@ def run_benchmark(
                 audio_metrics,
                 work_dir,
                 writer,
+                corpus_root=corpus_root,
             )
         )
 
@@ -131,9 +133,10 @@ def _run_condition(
     audio_metrics: Sequence[AudioMetric],
     work_dir: Path,
     writer: ResultsWriter,
+    corpus_root: Path | None = None,
 ) -> list[BenchmarkRecord]:
     audio_dir = work_dir / "audio" / condition.slug
-    render_result = run_pipeline(midi_paths, audio_dir, config=condition_config)
+    render_result = run_pipeline(midi_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
     render_log = {entry["midi"]: entry for entry in render_result.log}
     separator = (
         make_separator(condition_config.separation)
@@ -193,6 +196,7 @@ def _run_condition(
                     audio_metrics,
                     work_dir,
                     writer,
+                    corpus_root=corpus_root,
                 )
             )
     return records
@@ -210,16 +214,18 @@ def _evaluate_one(
     audio_metrics: Sequence[AudioMetric],
     work_dir: Path,
     writer: ResultsWriter,
+    corpus_root: Path | None = None,
 ) -> BenchmarkRecord:
     try:
         result = transcriber.transcribe(transcribe_input)
         estimate = notes_from_dicts(result.notes)
+        rel = midi_path.relative_to(corpus_root) if corpus_root is not None else Path(midi_path.stem)
         transcription_path = (
             work_dir
             / "transcriptions"
             / condition.slug
             / transcriber.name
-            / f"{midi_path.stem}.mid"
+            / rel.with_suffix(".mid")
         )
         write_midi(result.notes, transcription_path)
 
