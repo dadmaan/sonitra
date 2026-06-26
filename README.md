@@ -8,9 +8,26 @@ Sonitra is a research toolkit for benchmarking automatic music transcription (AM
 MIDI → audio synthesis → transcription → evaluation vs. reference
 ```
 
-## Dataset
+## Datasets
 
-The pipeline is currently aimed at testing with the [MAESTRO V3.0.0](https://magenta.withgoogle.com/datasets/maestro) dataset, a collection of ~200 hours of virtuosic piano performances with aligned MIDI. The corpus will grow to cover additional datasets and instruments in future phases.
+Sonitra includes a standalone download script for standard AMT benchmark datasets:
+
+```bash
+python scripts/download_datasets.py --list          # show available datasets
+python scripts/download_datasets.py maestro-v3         # download MAESTRO V3.0.0 MIDI (~57 MB)
+python scripts/download_datasets.py --all           # download everything
+python scripts/download_datasets.py maestro-v3 --output-dir /data/corpus  # custom path
+```
+
+The script is stdlib-only (no venv required) and idempotent — re-running it skips datasets that are already present.
+
+Currently supported:
+
+| Key | Dataset | Files |
+|---|---|---|
+| `maestro-v3` | [MAESTRO V3.0.0](https://magenta.withgoogle.com/datasets/maestro) MIDI-only | ~1,276 piano MIDI files |
+
+Downloaded files land under `corpus/{dataset}/midi/` following the dataset-first layout (e.g. `corpus/maestro-v3/midi/2004/…`). The corpus will grow to cover additional datasets and instruments in future phases.
 
 ## Requirements
 
@@ -97,18 +114,22 @@ Sonitra uses a dataset-first corpus layout. Place your MIDI files under `corpus/
 
 ```
 corpus/
-  test/
+  maestro-v3/
     midi/
-      piece1.mid
-      piece2.mid
+      2004/
+        piece.midi      # .midi extension supported
+      2008/
+        another.mid
 ```
+
+Both `.mid` and `.midi` extensions are recognised. Discovery is recursive — any depth of subdirectories is handled automatically, so datasets with year-organised folders (e.g. MAESTRO) work without any extra configuration.
 
 Set `io.corpus_root` and `io.dataset` in your config and all artifact paths (audio, transcriptions, evaluation results) are derived automatically:
 
 ```yaml
 io:
   corpus_root: ./corpus
-  dataset: test          # scopes everything under corpus/test/
+  dataset: maestro-v3   # scopes everything under corpus/maestro-v3/
   output_format: wav
 ```
 
@@ -238,17 +259,30 @@ Set `SONITRA_CONFIG` in `.env` to point at a different config path inside the co
 ## Quick start
 
 ```bash
+# 0. Download a dataset (stdlib-only, no venv required)
+python scripts/download_datasets.py maestro-v3
+# → corpus/maestro-v3/midi/2004/…  (1,276 MIDI files)
+
 # 1. Write a starter config
 sonitra init --config config.yaml
-# Edit config.yaml: set io.corpus_root and io.dataset, then place MIDI files at corpus/{dataset}/midi/
+# Edit config.yaml: set io.corpus_root and io.dataset
 
 # 2. Render + transcribe + evaluate all configs in one command
-python scripts/run_transcribe_eval.py --dataset test
+python scripts/run_transcribe_eval.py --dataset maestro-v3
+
+# Smoke-test with a 4-file subset (reproducible via --seed)
+python scripts/run_transcribe_eval.py --dataset maestro-v3 --limit 4 --seed 123
+
+# Run only specific configs
+python scripts/run_transcribe_eval.py --dataset maestro-v3 --config pedalboard_baseline pedalboard_no_effects
 
 # --- or run each step individually ---
 
-# 2a. Render MIDI to audio (paths come from config's corpus_root + dataset)
-sonitra render --config config/pedalboard_baseline.yaml
+# 2a. Render MIDI to audio (recursive discovery, both .mid and .midi)
+sonitra render --config config/pedalboard_baseline.yaml --dataset maestro-v3
+
+# Render only 4 files for a quick smoke test
+sonitra render --config config/pedalboard_baseline.yaml --dataset maestro-v3 --limit 4 --seed 123
 
 # 2b. Transcribe the rendered audio
 sonitra transcribe --config config/pedalboard_baseline.yaml
@@ -267,14 +301,18 @@ sonitra evaluate --reference corpus/test/midi --estimate corpus/test/transcripti
 ## CLI reference
 
 ```bash
-sonitra init     --config FILE                                       # write a starter config.yaml
-sonitra render   --config FILE [--corpus DIR] [--output DIR] [--dataset NAME] [--workers N]
+sonitra init     --config FILE                                                              # write a starter config.yaml
+sonitra render   --config FILE [--corpus DIR] [--output DIR] [--dataset NAME] [--workers N] [--limit N] [--seed N]
 sonitra transcribe --config FILE [--audio DIR] [--output DIR] [--dataset NAME] [--transcriber NAME]
 sonitra evaluate --config FILE [--reference DIR] [--estimate DIR] [--dataset NAME] [--output FILE]
 sonitra benchmark --config FILE [--corpus DIR] [--workdir DIR] [--dataset NAME]
-sonitra serve    --port 8000                                         # start the FastAPI server
+sonitra serve    --port 8000                                                                # start the FastAPI server
 sonitra --version
 ```
+
+`--limit N` renders a reproducible random subset of N MIDI files (useful for smoke testing). `--seed` controls the random draw (default: 123). Both flags are also available on the batch runner (`scripts/run_transcribe_eval.py`).
+
+The batch runner additionally accepts `--config NAME [NAME …]` to run only the named preset configs instead of all configs under `config/`.
 
 When `--dataset` is set on the CLI it overrides `io.dataset` from the config file. When `--corpus`/`--audio`/`--reference`/`--estimate` are omitted, the paths are resolved from `io.corpus_root` and `io.dataset` in the config.
 
@@ -350,8 +388,12 @@ paths = resolve_corpus_paths(cfg, config_name="pedalboard_baseline")
 # paths.transcription → corpus/test/transcription/pedalboard_baseline
 # paths.eval_results  → corpus/test/eval_results
 
+midi_files = sorted(
+    p for p in paths.midi.rglob("*")
+    if p.is_file() and p.suffix.lower() in {".mid", ".midi"}
+)
 result = run_pipeline(
-    sorted(paths.midi.glob("*.mid")),
+    midi_files,
     out_dir=paths.audio,
     config=cfg,
 )
