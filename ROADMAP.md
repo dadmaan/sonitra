@@ -36,6 +36,22 @@ further datasets.
 
 Beyond Basic Pitch and the generic `external_command` backend, native integrations with other AMT systems (e.g. MT3, Omnizart) are under consideration.
 
+## User-facing documentation site (Zensical)
+
+**Status:** Not yet started.
+
+Planned pages for a Zensical-generated documentation site (`zensical.toml` config exists):
+
+- **Home (`index.md`)** — landing page with quick-start links
+- **Tutorial (`tutorial.md`)** — step-by-step walkthrough of a full benchmark run
+- **Project Structure (`project_structure.md`)** — directory layout and key file roles
+- **CLI Reference (`cli_reference.md`)** — all commands, flags, and examples
+- **API Reference (`api_reference.md`)** — Python API documentation for library use
+- **Design Decisions (`design_decisions.md`)** — architectural rationale and trade-offs
+- **Troubleshooting (`troubleshooting.md`)** — common issues and solutions
+
+The nav section in `zensical.toml` is commented out until pages are written.
+
 ## Real-audio transcription mode
 
 **Status:** Not yet started.
