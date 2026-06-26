@@ -93,16 +93,24 @@ sonitra --version
 
 ### MIDI input files
 
-Place your MIDI files under `corpus/midi/`:
+Sonitra uses a dataset-first corpus layout. Place your MIDI files under `corpus/{dataset}/midi/`:
 
 ```
 corpus/
-  midi/
-    piece1.mid
-    piece2.mid
+  test/
+    midi/
+      piece1.mid
+      piece2.mid
 ```
 
-The pipeline reads from this directory by default (`io.midi_dir` in your config).
+Set `io.corpus_root` and `io.dataset` in your config and all artifact paths (audio, transcriptions, evaluation results) are derived automatically:
+
+```yaml
+io:
+  corpus_root: ./corpus
+  dataset: test          # scopes everything under corpus/test/
+  output_format: wav
+```
 
 ### VST3 plugin (optional)
 
@@ -177,10 +185,10 @@ The fastest way to run Sonitra without installing Python or system dependencies 
 
 ```bash
 cp env.example .env        # create the env file (edit values as needed)
-mkdir -p corpus/midi config output
+mkdir -p corpus/test/midi config
 ```
 
-Place your MIDI files under `./corpus/midi/`. Then generate a starter config — **this step is required before the server can start**:
+Place your MIDI files under `./corpus/{dataset}/midi/` (e.g. `./corpus/test/midi/`). Then generate a starter config — **this step is required before the server can start**:
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm sonitra \
@@ -200,29 +208,28 @@ The REST API is available at `http://localhost:8000`. The `/health` endpoint con
 ### Run CLI commands
 
 ```bash
-# Render MIDI to audio
+# Render MIDI to audio (paths resolved from config's corpus_root + dataset)
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra render --corpus /app/corpus/midi --output /app/corpus/audio
+    uv run sonitra render --config /app/config/config.yaml
 
 # Full benchmark sweep (render + transcribe + evaluate per condition)
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra benchmark --corpus /app/corpus/midi --workdir /app/output
+    uv run sonitra benchmark --config /app/config/config.yaml
 
 # Transcribe only
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra transcribe --audio /app/corpus/audio --output /app/output/transcriptions
+    uv run sonitra transcribe --config /app/config/config.yaml
 
 # Evaluate transcriptions against reference MIDI
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra evaluate \
-    --reference /app/corpus/midi --estimate /app/output/transcriptions/basic_pitch
+    uv run sonitra evaluate --config /app/config/config.yaml
 ```
 
 ### Volume and environment reference
 
 | Mount | Host path | Purpose |
 |---|---|---|
-| `/app/corpus` | `./corpus` | MIDI input (`midi/`) and rendered audio (`audio/`) |
+| `/app/corpus` | `./corpus` | Dataset-first corpus root: `{dataset}/midi/`, `{dataset}/audio/`, `{dataset}/transcription/`, `{dataset}/eval_results/` |
 | `/app/config` | `./config` | Pipeline YAML configs |
 | `/app/output` | `./output` | Transcriptions, evaluation results, benchmarks |
 
@@ -233,31 +240,43 @@ Set `SONITRA_CONFIG` in `.env` to point at a different config path inside the co
 ```bash
 # 1. Write a starter config
 sonitra init --config config.yaml
+# Edit config.yaml: set io.corpus_root and io.dataset, then place MIDI files at corpus/{dataset}/midi/
 
-# 2. Render your MIDI corpus to audio
-sonitra render --corpus corpus/midi --output corpus/audio
+# 2. Render + transcribe + evaluate all configs in one command
+python scripts/run_transcribe_eval.py --dataset test
 
-# 3. Transcribe the rendered audio
-sonitra transcribe --audio corpus/audio --output transcriptions
+# --- or run each step individually ---
 
-# 4. Score transcriptions against reference MIDI
-sonitra evaluate --reference corpus/midi --estimate transcriptions/basic_pitch
+# 2a. Render MIDI to audio (paths come from config's corpus_root + dataset)
+sonitra render --config config/pedalboard_baseline.yaml
 
-# 5. Run a full benchmark sweep (render + transcribe + evaluate per condition)
-sonitra benchmark --corpus corpus/midi --workdir benchmark
+# 2b. Transcribe the rendered audio
+sonitra transcribe --config config/pedalboard_baseline.yaml
+
+# 2c. Score transcriptions against reference MIDI
+sonitra evaluate --config config/pedalboard_baseline.yaml
+
+# 2d. Run a full benchmark sweep (render + transcribe + evaluate per condition)
+sonitra benchmark --config config/pedalboard_baseline.yaml
+
+# --- explicit path overrides still work ---
+sonitra render --config config.yaml --corpus corpus/test/midi --output corpus/test/audio/my_run
+sonitra evaluate --reference corpus/test/midi --estimate corpus/test/transcription/pedalboard_baseline/basic_pitch
 ```
 
 ## CLI reference
 
 ```bash
-sonitra init --config config.yaml          # write a starter config.yaml
-sonitra render --corpus DIR --output DIR   # synthesise audio from MIDI
-sonitra transcribe --audio DIR --output DIR [--transcriber NAME]
-sonitra evaluate --reference DIR --estimate DIR
-sonitra benchmark --corpus DIR --workdir DIR
-sonitra serve --port 8000                  # start the FastAPI server
+sonitra init     --config FILE                                       # write a starter config.yaml
+sonitra render   --config FILE [--corpus DIR] [--output DIR] [--dataset NAME] [--workers N]
+sonitra transcribe --config FILE [--audio DIR] [--output DIR] [--dataset NAME] [--transcriber NAME]
+sonitra evaluate --config FILE [--reference DIR] [--estimate DIR] [--dataset NAME] [--output FILE]
+sonitra benchmark --config FILE [--corpus DIR] [--workdir DIR] [--dataset NAME]
+sonitra serve    --port 8000                                         # start the FastAPI server
 sonitra --version
 ```
+
+When `--dataset` is set on the CLI it overrides `io.dataset` from the config file. When `--corpus`/`--audio`/`--reference`/`--estimate` are omitted, the paths are resolved from `io.corpus_root` and `io.dataset` in the config.
 
 ## Configuration
 
@@ -274,7 +293,7 @@ Key sections and their purpose:
 | Section | Controls |
 |---|---|
 | `pipeline` | Rendering mode, sample rate, bit depth, channels, parallelism |
-| `io` | Input/output directories, file format (`wav`, `flac`, `mp3`) |
+| `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template |
 | `dawdreamer` | Faust script path, VST3 plugin path, SoundFont path |
 | `pedalboard` | Instrument plugin path, effects chain |
 | `normalisation` | Peak or RMS normalisation, target dB, pre/post effects |
@@ -320,14 +339,20 @@ Metrics are implemented in NumPy/SciPy with mir_eval-compatible bipartite matchi
 ## Python API
 
 ```python
-from sonitra.config import load_config
+from sonitra.config import load_config, resolve_corpus_paths
 from sonitra.pipeline import run_pipeline
 from pathlib import Path
 
-cfg = load_config("config.yaml")
+cfg = load_config("config/pedalboard_baseline.yaml")
+paths = resolve_corpus_paths(cfg, config_name="pedalboard_baseline")
+# paths.midi          → corpus/test/midi
+# paths.audio         → corpus/test/audio/pedalboard_baseline
+# paths.transcription → corpus/test/transcription/pedalboard_baseline
+# paths.eval_results  → corpus/test/eval_results
+
 result = run_pipeline(
-    sorted(Path("corpus/midi").glob("*.mid")),
-    out_dir="corpus/audio",
+    sorted(paths.midi.glob("*.mid")),
+    out_dir=paths.audio,
     config=cfg,
 )
 print(f"Done: {result.succeeded}, Failed: {result.failed}")
