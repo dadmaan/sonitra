@@ -44,11 +44,10 @@ pytest -m "not skip_if_no_vst"
 
 ## Changelog
 
-Sonitra keeps one changelog file per release under `CHANGELOG/`. For user-visible changes (features, fixes, behaviour shifts), add an entry to the appropriate file or create a new one for an upcoming version.
+Sonitra keeps a single changelog at `CHANGELOG.md` following the [Keep a Changelog](https://keepachangelog.com/) format. For every user-visible change (feature, fix, behaviour shift), add an entry under the `[Unreleased]` section using the `Added` / `Changed` / `Fixed` categories.
 
-- Use `Added` / `Changed` / `Fixed` categories.
-- Briefly explain impact and any contract/config changes.
-- Version bumps and release tags are release-governance actions, not routine PR actions.
+- Each entry should briefly explain the impact and any contract/config changes.
+- When a new version is released, the `[Unreleased]` heading is renamed to the version number and dated; an empty `[Unreleased]` section is added for the next cycle.
 
 ## Branch and PR Expectations
 
