@@ -91,7 +91,7 @@ def render(
         raise typer.Exit(code=1)
     midi_paths = _apply_subset(midi_paths, limit, seed)
 
-    result = run_pipeline(midi_paths, out_dir=actual_output, config=cfg)
+    result = run_pipeline(midi_paths, out_dir=actual_output, config=cfg, corpus_root=actual_corpus)
     typer.echo(
         f"Done: {result.succeeded} succeeded, {result.failed} failed, "
         f"{result.skipped} skipped ({result.elapsed_seconds:.2f}s)"
@@ -158,7 +158,7 @@ def transcribe(
         raise typer.Exit(code=1)
 
     audio_paths = sorted(
-        path for ext in ("*.wav", "*.flac", "*.mp3") for path in actual_audio.glob(ext)
+        path for ext in ("*.wav", "*.flac", "*.mp3") for path in actual_audio.rglob(ext)
     )
     if not audio_paths:
         typer.echo(f"No audio files found in {actual_audio}")
@@ -168,7 +168,8 @@ def transcribe(
     for transcriber_cfg in transcriber_configs:
         backend = make_transcriber(transcriber_cfg)
         for audio_path in audio_paths:
-            midi_path = actual_output / backend.name / f"{audio_path.stem}.mid"
+            rel = audio_path.relative_to(actual_audio)
+            midi_path = actual_output / backend.name / rel.with_suffix(".mid")
             try:
                 result = backend.transcribe(audio_path)
                 write_midi(result.notes, midi_path)
@@ -272,23 +273,24 @@ def evaluate(
     # Pairs by stem; assumes globally unique filenames across the reference corpus.
     # See .local/notes/TODO.md for the known limitation with nested datasets.
     for ref_path in reference_paths:
+        rel = ref_path.relative_to(actual_reference)
         est_path = next(
             (
                 candidate
                 for ext in (".mid", ".midi")
-                if (candidate := actual_estimate / f"{ref_path.stem}{ext}").exists()
+                if (candidate := actual_estimate / rel.with_suffix(ext)).exists()
             ),
             None,
         )
         if est_path is None:
-            typer.echo(f"{ref_path.stem}: no estimate found, skipping")
+            typer.echo(f"{rel}: no estimate found, skipping")
             continue
         values = evaluate_notes(
             notes_from_dicts(parse_midi(ref_path)),
             notes_from_dicts(parse_midi(est_path)),
             metrics,
         )
-        rows.append({"stem": ref_path.stem, **values})
+        rows.append({"file": str(rel), **values})
 
     if not rows:
         typer.echo("No reference/estimate pairs evaluated")
@@ -300,7 +302,7 @@ def evaluate(
             for row in rows:
                 handle.write(json.dumps(row) + "\n")
 
-    metric_names = sorted({key for row in rows for key in row if key != "stem"})
+    metric_names = sorted({key for row in rows for key in row if key != "file"})
     typer.echo(f"Evaluated {len(rows)} pairs (mean over files):")
     for name in metric_names:
         values = [row[name] for row in rows if name in row and not math.isnan(row[name])]
@@ -350,7 +352,7 @@ def benchmark(
         typer.echo(f"No MIDI files found in {actual_corpus}")
         raise typer.Exit(code=1)
 
-    result = run_benchmark(midi_paths, actual_workdir, cfg)
+    result = run_benchmark(midi_paths, actual_workdir, cfg, corpus_root=actual_corpus)
     succeeded = sum(1 for record in result.records if record.status == "succeeded")
     typer.echo(
         f"Benchmark finished: {succeeded}/{len(result.records)} evaluations succeeded "
