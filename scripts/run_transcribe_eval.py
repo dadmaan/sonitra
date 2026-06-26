@@ -113,7 +113,7 @@ def _run(cmd: list[str]) -> int:
 def _mean_metrics(rows: list[dict]) -> dict[str, float | None]:
     if not rows:
         return {}
-    keys = [k for k in rows[0] if k != "stem"]
+    keys = [k for k in rows[0] if k != "file"]
     result: dict[str, float | None] = {}
     for key in keys:
         vals = [r[key] for r in rows if key in r and not math.isnan(r[key])]
@@ -232,7 +232,7 @@ def main() -> int:
             print(f"  SKIP — no audio dir at {audio_dir}")
             continue
 
-        wavs = sorted(audio_dir.glob("*.wav"))
+        wavs = sorted(audio_dir.rglob("*.wav"))
         if not wavs:
             print(f"  SKIP — no WAV files in {audio_dir}")
             continue
