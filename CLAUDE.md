@@ -26,18 +26,20 @@ uv run pytest -m "not slow"             # skip tests that invoke heavy backends 
 
 Test markers (`pyproject.toml`): `skip_if_no_vst` and `integration` both require a real VST. `slow` marks tests that invoke optional/heavy backends such as basic-pitch (TensorFlow inference). VST-dependent fixtures read the plugin path from the `VST_PATH` / `VST3_PATH` env vars and `pytest.skip` when unset.
 
-CLI entry points (Typer, also `python -m sonitra`):
+CLI entry points (Typer, also `python -m sonitra`). The recommended invocation style uses `--config` + `--dataset`:
 
 ```bash
-sonitra render  --corpus corpus/test/midi --output corpus/test/audio/pedalboard_baseline
-# or with dataset flag:
-sonitra render  --dataset test --config config/pedalboard_baseline.yaml
-sonitra transcribe --audio corpus/test/audio/pedalboard_baseline --output corpus/test/transcription/pedalboard_baseline [--transcriber NAME]
-sonitra evaluate --reference corpus/test/midi --estimate corpus/test/transcription/pedalboard_baseline/basic_pitch
-sonitra benchmark --corpus corpus/test/midi --workdir corpus/test/benchmark
-sonitra serve --port 8000
-sonitra init --config config.yaml
+sonitra init       --config FILE                                          # write a starter config
+sonitra render     --config FILE [--dataset NAME] [--limit N] [--seed N]
+sonitra transcribe --config FILE [--dataset NAME] [--transcriber NAME]
+sonitra evaluate   --config FILE [--dataset NAME]
+sonitra benchmark  --config FILE [--dataset NAME]
+sonitra serve      --port 8000
+sonitra --version
 ```
+
+Explicit path overrides also work (`--corpus`, `--output`, `--audio`, `--reference`, `--estimate`).
+Batch runner script: `python scripts/run_transcribe_eval.py` (see Scripts section below).
 
 > There is **no ruff/black/mypy config in `pyproject.toml`** — `pytest` is the real quality gate.
 
@@ -55,7 +57,7 @@ Crucially, factories **lazily import backend modules inside the function body** 
 
 ### Config (`config.py`)
 
-Single Pydantic `PipelineConfig` tree, one nested section per concern (`pipeline`, `io`, `dawdreamer`, `pedalboard`, `transcription`, `evaluation`, `benchmark`, ...). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `RenderingMode` is the enum that selects the synthesis/effects path. `config/source.yaml` is the fully-annotated reference documenting every parameter; `default_config_path()` in `config.py` points there.
+Single Pydantic `PipelineConfig` tree, one nested section per concern (`pipeline`, `io`, `dawdreamer`, `pedalboard`, `normalisation`, `quality_gates`, `transcription`, `evaluation`, `benchmark`, `observability`, ...). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `RenderingMode` is the enum that selects the synthesis/effects path. `config/source.yaml` is the fully-annotated reference documenting every parameter; `default_config_path()` in `config.py` points there.
 
 `validate_worker_constraint()` forces `max_workers=1` for any DawDreamer rendering mode (DawDreamer is not safe to run concurrently). Call it before parallelising work.
 
@@ -83,7 +85,7 @@ Metrics implemented natively in NumPy/SciPy with mir_eval-compatible matching se
 
 ### API (`api/`)
 
-FastAPI app (`create_app`) with a `JobStore`, a `ThreadPoolExecutor` worker (`worker.py`) running `run_pipeline` per job, runtime config reload via `PUT /config`, and an SSE status stream. Config is loaded into `app.state.config` at startup. Routers are split by concern under `api/routers/`. `tests/api/openapi_snapshot.json` is a checked-in OpenAPI snapshot — schema changes will require regenerating it (see `tests/api/test_openapi.py`).
+FastAPI app (`create_app`) with a `JobStore`, a synchronous render worker (`worker.py`) running `run_pipeline` on the event loop while holding an `asyncio.Lock` (DawDreamer/JUCE global state is not safe to run concurrently), runtime config reload via `PUT /config`, and an SSE status stream. Config is loaded into `app.state.config` at startup. Routers are split by concern under `api/routers/`. `tests/api/openapi_snapshot.json` is a checked-in OpenAPI snapshot — schema changes will require regenerating it (see `tests/api/test_openapi.py`).
 
 ### Scripts (`scripts/`)
 
