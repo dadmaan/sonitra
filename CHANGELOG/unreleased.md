@@ -52,8 +52,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config/source.yaml` — fully-annotated reference config documenting every available parameter with commentary, replacing the deleted root-level `config.yaml`
 - Docker Compose setup under `docker/` with multi-stage `Dockerfile`, `docker-compose.yml`, and `entrypoint.sh` for containerised operation; exposes the REST API on port 8000, supports CLI one-off commands, and bundles system deps (libsndfile, fluidsynth, FFTW)
 - `ROADMAP.md` tracking planned features: stem separation, additional datasets/instruments, and additional AMT backends
+- `CorpusPaths` frozen dataclass and `resolve_corpus_paths()` helper for deriving dataset-scoped midi/audio/transcription/eval_results subdirectory paths from `corpus_root` and optional `dataset`
+- `--dataset` / `-d` CLI flag on `render`, `transcribe`, `evaluate`, and `benchmark` commands; all four commands derive default corpus paths from config when `--dataset` is set
+- `_apply_dataset()` helper for injecting `dataset` into config before pipeline execution
+- `--skip-render` flag to `scripts/run_transcribe_eval.py` for resuming from transcription on already-rendered audio
+- `config/source.yaml` now documents the optional `dataset` field
+- Dataset support test suite (`tests/test_dataset_support.py`) covering `IOSection` field acceptance, `resolve_corpus_paths` path derivation with/without dataset/config_name, YAML round-trip, and backward-compatibility error on removed keys
 
 ### Changed
+
+- `IOSection`: `midi_dir` and `output_dir` fields replaced by single `corpus_root` (default: `"corpus"`) with optional `dataset` field (BREAKING: old keys raise `ConfigError` at load time via `extra="forbid"`)
+- All preset configs and test fixtures updated from `midi_dir`/`output_dir` to `corpus_root`; most presets gain `dataset: test` for dataset-first output layout
+- `manifest_path` in all preset configs simplified to `renders.jsonl` (now relative to dataset-scoped output directories)
+- `sonitra init` template now emits `corpus_root` instead of `midi_dir`/`output_dir`
+- `scripts/run_transcribe_eval.py`: added render step (step 1) before transcribe; skips `source.yaml`; reorganised path resolution with `_resolve_dirs()` for dataset-scoped layout; step numbering updated
+- `CLAUDE.md`: CLI examples updated for dataset-first paths; script runner documented with dataset-first layout
 
 - `RendererEngine`: dawdreamer import moved from module level into `__init__` to avoid loading the native shared library (which requires `libGL`) at import time when DawDreamer is not configured
 - Dockerfile: copy `config/` from repo into the build so the reference config is available in the runtime image; add `libgl1` runtime dependency; set `UV_CACHE_DIR` to `/app/.cache/uv`; use `--chown` in `COPY --from=builder` to set ownership in a single pass; scope `chown` to specific directory mounts instead of the entire app tree; create `/app/.cache/uv` directory for uv's runtime cache
