@@ -15,6 +15,7 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
+  dataset: test
 
 dawdreamer:
   enabled: true
@@ -63,7 +64,7 @@ quality_gates:
 
 observability:
   write_manifest: true
-  manifest_path: ./corpus/audio/dawdreamer_vital_pedalboard/renders.jsonl
+  manifest_path: renders.jsonl
   write_failed_list: true
   emit_sse_events: false
 

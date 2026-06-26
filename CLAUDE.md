@@ -29,10 +29,12 @@ Test markers (`pyproject.toml`): `skip_if_no_vst` and `integration` both require
 CLI entry points (Typer, also `python -m sonitra`):
 
 ```bash
-sonitra render --corpus corpus/midi --output corpus/audio
-sonitra transcribe --audio corpus/audio --output transcriptions [--transcriber NAME]
-sonitra evaluate --reference corpus/midi --estimate transcriptions/basic_pitch
-sonitra benchmark --corpus corpus/midi --workdir benchmark
+sonitra render  --corpus corpus/test/midi --output corpus/test/audio/pedalboard_baseline
+# or with dataset flag:
+sonitra render  --dataset test --config config/pedalboard_baseline.yaml
+sonitra transcribe --audio corpus/test/audio/pedalboard_baseline --output corpus/test/transcription/pedalboard_baseline [--transcriber NAME]
+sonitra evaluate --reference corpus/test/midi --estimate corpus/test/transcription/pedalboard_baseline/basic_pitch
+sonitra benchmark --corpus corpus/test/midi --workdir corpus/test/benchmark
 sonitra serve --port 8000
 sonitra init --config config.yaml
 ```
