@@ -70,8 +70,7 @@ pipeline:
   max_workers: 1
   log_level: INFO
 io:
-  midi_dir: ./corpus/midi
-  output_dir: ./corpus/audio
+  corpus_root: ./corpus
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{{stem}}"
@@ -204,8 +203,7 @@ pipeline:
   max_workers: 1
   log_level: INFO
 io:
-  midi_dir: ./corpus/midi
-  output_dir: ./corpus/audio
+  corpus_root: ./corpus
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{{stem}}"

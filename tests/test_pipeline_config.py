@@ -144,7 +144,6 @@ def test_default_config_peak_below_clip_threshold(corpus_dir: Path, tmp_path: Pa
 
 def test_run_pipeline_dawdreamer_only_with_vital(vital_vst_path, midi_fixture, tmp_path):
     cfg = load_config("config/dawdreamer_vital.yaml")
-    cfg.io.output_dir = tmp_path
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
     assert result.succeeded == 1
@@ -154,7 +153,6 @@ def test_run_pipeline_dawdreamer_only_with_vital(vital_vst_path, midi_fixture, t
 
 def test_run_pipeline_dawdreamer_vital_with_preset(vital_vst_path, midi_fixture, tmp_path):
     cfg = load_config("config/dawdreamer_vital_goodies.yaml")
-    cfg.io.output_dir = tmp_path
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
     assert result.succeeded == 1
@@ -166,7 +164,6 @@ def test_run_pipeline_dawdreamer_vital_with_preset(vital_vst_path, midi_fixture,
 def test_run_pipeline_pedalboard_only_with_vital(vital_vst_path, midi_fixture, tmp_path):
     """Prove that Pedalboard can render Vital VST3 instrument end-to-end."""
     cfg = load_config("config/pedalboard_vital.yaml")
-    cfg.io.output_dir = tmp_path
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
     assert result.succeeded == 1

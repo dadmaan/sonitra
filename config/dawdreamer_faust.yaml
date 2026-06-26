@@ -1,100 +1,100 @@
 # DawDreamer rendering with MIDI-responsive Faust fallback oscillator.
 pipeline:
-  rendering_mode: dawdreamer_only
-  sample_rate: 44100
-  bit_depth: 24
-  channels: 2
-  duration_padding_sec: 2.0
-  overwrite: true
-  resume: false
-  max_workers: 1
-  log_level: INFO
+    rendering_mode: dawdreamer_only
+    sample_rate: 44100
+    bit_depth: 24
+    channels: 2
+    duration_padding_sec: 2.0
+    overwrite: true
+    resume: false
+    max_workers: 1
+    log_level: INFO
 
 io:
-  midi_dir: ./corpus/midi
-  output_dir: ./corpus/audio/dawdreamer_faust
-  output_format: wav
-  mp3_bitrate_kbps: 192
-  file_naming: "{stem}"
+    corpus_root: ./corpus
+    output_format: wav
+    mp3_bitrate_kbps: 192
+    file_naming: "{stem}"
+    dataset: test
 
 dawdreamer:
-  enabled: true
-  block_size: 512
-  plugin_path: null
-  preset_path: null
-  soundfont_path: null
-  bpm: 120
-  faust_code: null
-  clear_midi_between_renders: true
-
-pedalboard:
-  enabled: true
-  instrument:
+    enabled: true
+    block_size: 512
     plugin_path: null
     preset_path: null
-    reload_plugin_per_file: false
-    silence_flush_sec: 0.5
-  effects: []
+    soundfont_path: null
+    bpm: 120
+    faust_code: null
+    clear_midi_between_renders: true
+
+pedalboard:
+    enabled: true
+    instrument:
+        plugin_path: null
+        preset_path: null
+        reload_plugin_per_file: false
+        silence_flush_sec: 0.5
+    effects: []
 
 normalisation:
-  enabled: true
-  mode: peak
-  target_db: -1.0
-  pre_effects: false
+    enabled: true
+    mode: peak
+    target_db: -1.0
+    pre_effects: false
 
 quality_gates:
-  silence_threshold_rms: 0.001
-  min_duration_sec: 0.1
-  max_duration_deviation_sec: 1.0
-  clip_threshold: 1.0
+    silence_threshold_rms: 0.001
+    min_duration_sec: 0.1
+    max_duration_deviation_sec: 1.0
+    clip_threshold: 1.0
 
 observability:
-  write_manifest: true
-  manifest_path: ./corpus/audio/dawdreamer_faust/renders.jsonl
-  write_failed_list: true
-  emit_sse_events: false
+    write_manifest: true
+    manifest_path: renders.jsonl
+    write_failed_list: true
+    emit_sse_events: false
 
 separation:
-  enabled: false
-  backend: passthrough
-  model: htdemucs
-  device: cpu
-  stem: null
-  output_dir: stems
+    enabled: false
+    backend: passthrough
+    model: htdemucs
+    device: cpu
+    stem: null
+    output_dir: stems
 
 transcription:
-  output_dir: transcriptions
-  transcribers:
-    - type: basic_pitch
-      enabled: true
-      onset_threshold: 0.5
-      frame_threshold: 0.3
-      minimum_note_length_ms: 127.7
-      minimum_frequency_hz: null
-      maximum_frequency_hz: null
+    output_dir: transcriptions
+    transcribers:
+        - type: basic_pitch
+          enabled: true
+          onset_threshold: 0.5
+          frame_threshold: 0.3
+          minimum_note_length_ms: 127.7
+          minimum_frequency_hz: null
+          maximum_frequency_hz: null
 
 evaluation:
-  note_metrics:
-    enabled: true
-    onset_tolerance_sec: 0.05
-    offset_ratio: 0.2
-    offset_min_tolerance_sec: 0.05
-    velocity_tolerance: 0.1
-  frame_metrics:
-    enabled: true
-    hop_sec: 0.01
-  expressive_metrics:
-    enabled: true
-    harmony_window_sec: 2.0
-  dtw:
-    enabled: false
-    frame_size: 4096
-    hop_size: 2048
-    max_frames: 4000
+    note_metrics:
+        enabled: true
+        onset_tolerance_sec: 0.05
+        offset_ratio: 0.2
+        offset_min_tolerance_sec: 0.05
+        velocity_tolerance: 0.1
+    frame_metrics:
+        enabled: true
+        hop_sec: 0.01
+    expressive_metrics:
+        enabled: true
+        harmony_window_sec: 2.0
+    dtw:
+        enabled: false
+        frame_size: 4096
+        hop_size: 2048
+        max_frames: 4000
 
 benchmark:
-  results_path: benchmark_results.jsonl
-  include_baseline: true
-  baseline_name: baseline
-  conditions: []
-  sweeps: []
+    results_path: benchmark_results.jsonl
+    include_baseline: true
+    baseline_name: baseline
+    conditions: []
+    sweeps: []
