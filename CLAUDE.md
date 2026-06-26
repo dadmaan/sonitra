@@ -87,12 +87,14 @@ FastAPI app (`create_app`) with a `JobStore`, a `ThreadPoolExecutor` worker (`wo
 
 ### Scripts (`scripts/`)
 
-`scripts/run_transcribe_eval.py` is a batch runner that iterates over every YAML file in `config/`, runs `sonitra transcribe` then `sonitra evaluate` for each, and writes results to `corpus/eval_results/`:
+`scripts/run_transcribe_eval.py` is a batch runner that iterates over every YAML file in `config/`, runs `sonitra transcribe` then `sonitra evaluate` for each, and writes results under a dataset-first layout:
 
-- `corpus/eval_results/<config>.jsonl` — per-file evaluation records for each config
-- `corpus/eval_results/summary.jsonl` — one line per config, mean of per-file metrics
-- `corpus/eval_results/summary.csv` — same data as `summary.jsonl` in CSV format
-- `corpus/eval_results/all_results.csv` — flat table with one row per (config, file)
+- `corpus/{dataset}/eval_results/<config>.jsonl` — per-file evaluation records for each config
+- `corpus/{dataset}/eval_results/summary.jsonl` — one line per config, mean of per-file metrics
+- `corpus/{dataset}/eval_results/summary.csv` — same data as `summary.jsonl` in CSV format
+- `corpus/{dataset}/eval_results/all_results.csv` — flat table with one row per (config, file)
+
+When no `--dataset` is passed the paths collapse to `corpus/eval_results/`, `corpus/audio/`, etc.
 
 NaN values are written as `null` in JSONL and as empty cells `""` in CSV.
 
