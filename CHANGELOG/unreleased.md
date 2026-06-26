@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--skip-render` flag to `scripts/run_transcribe_eval.py` for resuming from transcription on already-rendered audio
 - `config/source.yaml` now documents the optional `dataset` field
 - Dataset support test suite (`tests/test_dataset_support.py`) covering `IOSection` field acceptance, `resolve_corpus_paths` path derivation with/without dataset/config_name, YAML round-trip, and backward-compatibility error on removed keys
+- `_discover_midi_files()` helper for recursive `.mid`/`.midi` discovery via `rglob` with case-insensitive extension matching
+- `_apply_subset()` helper for reproducible random subset sampling with configurable seed
+- `--limit` / `--seed` CLI flags on `sonitra render` for quick smoke tests on large corpora
+- `--config NAME [NAME ...]` filter on `scripts/run_transcribe_eval.py` to run only named preset configs instead of all configs under `config/`
+- `--limit` / `--seed` passthrough from `scripts/run_transcribe_eval.py` to the render subprocess
+- `scripts/download_datasets.py` — self-contained stdlib-only dataset download script supporting MAESTRO V3.0.0 MIDI, with `--list`, `--all`, and `--output-dir` options; idempotent (skips already-present datasets)
+- Corpus discovery and subset test suite (`tests/test_corpus_discovery.py`) covering `_discover_midi_files` (flat/recursive/case-insensitive/non-MIDI filtering/directory-as-file), `_apply_subset` (deterministic bounded sampling), and CLI smoke tests for nested directory rendering and `--limit` enforcement
 
 ### Changed
 
@@ -67,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonitra init` template now emits `corpus_root` instead of `midi_dir`/`output_dir`
 - `scripts/run_transcribe_eval.py`: added render step (step 1) before transcribe; skips `source.yaml`; reorganised path resolution with `_resolve_dirs()` for dataset-scoped layout; step numbering updated
 - `CLAUDE.md`: CLI examples updated for dataset-first paths; script runner documented with dataset-first layout
+- CLI `render`, `evaluate`, and `benchmark` commands now use recursive MIDI discovery via `rglob`, supporting both `.mid` and `.midi` extensions at any subdirectory depth (previously only flat `*.mid` globbing)
+- `scripts/run_transcribe_eval.py`: added `--limit`, `--seed`, and `--config NAME [NAME ...]` flags; `--dataset` now forwarded to the render subprocess (previously ignored)
 
 - `RendererEngine`: dawdreamer import moved from module level into `__init__` to avoid loading the native shared library (which requires `libGL`) at import time when DawDreamer is not configured
 - Dockerfile: copy `config/` from repo into the build so the reference config is available in the runtime image; add `libgl1` runtime dependency; set `UV_CACHE_DIR` to `/app/.cache/uv`; use `--chown` in `COPY --from=builder` to set ownership in a single pass; scope `chown` to specific directory mounts instead of the entire app tree; create `/app/.cache/uv` directory for uv's runtime cache
@@ -92,6 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project description changed from "MIDI-to-audio batch rendering pipeline" to "Automatic music transcription (AMT) benchmark"
 - Project author updated from `copilot-swe-agent[bot]` to **Shayan Dadman**
 - `LICENSE` copyright year updated to 2026 and author name corrected
+- `README.md` updated with dataset download documentation, `--limit`/`--seed` CLI examples, recursive MIDI discovery notes, and `--config` batch runner usage
+- `ROADMAP.md` updated with `scripts/download_datasets.py` reference and planned real-audio transcription mode
 
 ### Fixed
 
