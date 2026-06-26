@@ -46,6 +46,7 @@ def run_pipeline(
     *,
     overwrite: bool = True,
     config: PipelineConfig | None = None,
+    corpus_root: Path | None = None,
 ) -> PipelineResult:
     start = time.perf_counter()
     out_dir = Path(out_dir)
@@ -75,7 +76,7 @@ def run_pipeline(
 
         for midi_path in midi_paths:
             midi_path = Path(midi_path)
-            output_path = _resolve_output_path(midi_path, out_dir, cfg)
+            output_path = _resolve_output_path(midi_path, out_dir, cfg, corpus_root)
             if output_path.exists() and not cfg.pipeline.overwrite:
                 skipped += 1
                 log.append({"midi": str(midi_path), "output": str(output_path), "status": "skipped"})
@@ -231,10 +232,13 @@ def _compute_duration(notes: Iterable[Dict[str, Any]], padding_sec: float) -> fl
     return max(0.0, last + float(padding_sec))
 
 
-def _resolve_output_path(midi_path: Path, out_dir: Path, cfg: PipelineConfig) -> Path:
+def _resolve_output_path(midi_path: Path, out_dir: Path, cfg: PipelineConfig, corpus_root: Path | None = None) -> Path:
     ext = f".{cfg.io.output_format}"
     stem = midi_path.stem
     name = cfg.io.file_naming.format(stem=stem)
+    if corpus_root is not None:
+        rel = midi_path.relative_to(corpus_root)
+        return out_dir / rel.parent / f"{name}{ext}"
     return out_dir / f"{name}{ext}"
 
 
