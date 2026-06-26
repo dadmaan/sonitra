@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(no changes yet)
+
+## [0.1.0] - 2026-06-26
+
 ### Added
 
 - `env.example` with documented `SONITRA_CONFIG` and `LOG_LEVEL` environment variables for container setup
@@ -117,3 +121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer overwrite each other on disk or silently cross-pair during evaluation.
   (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to
   `None` so all existing flat-corpus workflows are unaffected.)
+
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.1.0
