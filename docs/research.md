@@ -2,26 +2,26 @@
 
 ## Executive overview
 
-Automatic music transcription (AMT) for audio-to-MIDI remains most mature for solo piano and, increasingly, multi-instrument settings; state-of-the-art models are predominantly deep neural networks (Onsets & Frames, Kong-style regression models, Transformers such as MT3 and hFT, and new seq2seq approaches like Aria-AMT).[^1][^2][^3][^4]
+Automatic music transcription (AMT) for audio-to-MIDI is most established for solo piano and, increasingly, multi-instrument settings; state-of-the-art models are predominantly deep neural networks (Onsets & Frames, Kong-style regression models, Transformers such as MT3 and hFT, and new seq2seq approaches like Aria-AMT).[^1][^2][^3][^4]
 
-Evaluation practice is dominated by information-retrieval (IR) style metrics at frame and note level (precision/recall/F1) with specific onset/offset tolerances, but there is a growing recognition that these are musically impoverished and insufficient for expressive/notation-level use cases.[^2][^5][^1]
+Evaluation practice is dominated by information-retrieval (IR) style metrics at frame and note level (precision/recall/F1) with specific onset/offset tolerances, but researchers increasingly recognize these as musically impoverished and insufficient for expressive and notation-level use cases.[^2][^5][^1]
 
-For a synthetic-pipeline study that perturbs rendered audio (reverb, noise, EQ, style), suitable metrics fall into three families: (1) standard IR metrics (frame, note, note-with-offset, velocity); (2) musically informed performance metrics (timing/articulation/harmony/dynamics correlations, notation edit distances); and (3) robustness metrics versus controlled augmentations (F1 degradation curves, sensitivity to individual transforms, DTW-based similarity of audio vs re-synthesized transcription).[^6][^7][^5][^4][^2]
+For a study perturbing rendered audio (reverb, noise, EQ, style), suitable metrics fall into three families: (1) standard IR metrics (frame, note, note-with-offset, velocity); (2) musically informed performance metrics (timing/articulation/harmony/dynamics correlations, notation edit distances); and (3) robustness metrics versus controlled augmentations (F1 degradation curves, sensitivity to individual transforms, DTW-based similarity of audio vs re-synthesized transcription).[^6][^7][^5][^4][^2]
 
-Several recent AMT and robustness/augmentation studies (Hawthorne et al. 2018, Kong et al. 2021, Edwards et al. 2024, Hu et al. 2024, Bradshaw et al. 2024) give concrete designs for augmentation pipelines (pitch shift, reverberation, background noise, EQ, synthetic re-performances) and show which metrics are sensitive to these manipulations.[^8][^5][^4][^6][^2]
+Several recent AMT and robustness/augmentation studies (Hawthorne et al. 2018, Kong et al. 2021, Edwards et al. 2024, Hu et al. 2024, Bradshaw et al. 2024) describe augmentation pipelines (pitch shift, reverberation, background noise, EQ, synthetic re-performances) and show which metrics are sensitive to these manipulations.[^8][^5][^4][^6][^2]
 
-The most relevant systems to include in a contemporary benchmark that matches your proposed pipeline are: classic strong piano baselines (Onsets & Frames, Kong’s regression model), modern multi-instrument Transformers (MT3, T5-style models, hFT), efficient open-source general tools (Basic Pitch), and new robust seq2seq systems such as Aria-AMT; commercial tools like AnthemScore, Melodyne, ScoreCloud, and AudioScore can act as additional black-box baselines.[^9][^3][^10][^11][^12][^1]
+For a benchmark matching your pipeline, the most relevant systems span: classic piano baselines (Onsets & Frames, Kong’s regression model), modern multi-instrument Transformers (MT3, T5-style models, hFT), efficient open-source tools (Basic Pitch), and robust seq2seq systems such as Aria-AMT. Commercial tools like AnthemScore, Melodyne, ScoreCloud, and AudioScore serve as additional black-box baselines.[^9][^3][^10][^11][^12][^1]
 
 
 ## 1. State of the art AMT in context of synthetic perturbation
 
 ### 1.1 Canonical overviews and problem decomposition
 
-Benetos et al. (2019) provide a widely cited high-level overview of AMT, decomposing it into frame-level (multi-pitch estimation), note-level (note tracking), stream-level (voice/instrument grouping), and notation-level transcription, and emphasizing the persistent challenges of polyphony, overlapping harmonics, expressive timing, annotation scarcity, and robustness across acoustic conditions.[^1]
+Benetos et al. (2019) survey AMT by decomposing it into frame-level (multi-pitch estimation), note-level (note tracking), stream-level (voice/instrument grouping), and notation-level transcription, emphasizing persistent challenges: polyphony, overlapping harmonics, expressive timing, annotation scarcity, and robustness across acoustic conditions.[^1]
 
-This survey notes that evaluation traditionally focuses on MIREX-style tasks—multi-F0 estimation and note tracking—with IR metrics over carefully curated datasets (e.g., MAPS), and explicitly flags the gap between parametric output (piano-rolls) and genuine music-notation-level quality, where suitable metrics are still largely open.[^1]
+The survey notes that evaluation traditionally focuses on MIREX-style tasks—multi-F0 estimation and note tracking—with IR metrics over carefully curated datasets (e.g., MAPS), and flags the gap between parametric output (piano-rolls) and actual music-notation-level quality, where suitable metrics remain open.[^1]
 
-A newer systematic survey (2024) reiterates these levels and highlights the dominance of two method families (NMF and neural networks), the central role of MAESTRO and MAPS, and the importance of data augmentation (time-stretch, pitch shift) and dataset integration (MAESTRO + GiantMIDI) for current ML-based AMT.[^13]
+A newer systematic survey (2024) covers the same levels and notes the dominance of two method families (NMF and neural networks), the centrality of MAESTRO and MAPS, and the role of data augmentation (time-stretch, pitch shift) and dataset integration (MAESTRO + GiantMIDI) for current ML-based AMT.[^13]
 
 
 ### 1.2 Modern piano transcription architectures
@@ -36,7 +36,7 @@ They evaluate on MAPS with:
 - Note-with-offset F1 requiring offsets within 20% of duration or 50 ms (whichever larger).
 - Velocity-augmented note metrics that add a velocity tolerance of 0.1 in normalized velocity space.[^2]
 
-The authors argue that note-with-offset (and velocity) F1 correlates better with perceptual quality than frame- or onset-only metrics and recommend using this as a primary metric.[^2]
+The authors argue that note-with-offset (and velocity) F1 correlates better with perceptual quality than frame- or onset-only metrics and recommend it as a primary metric.[^2]
 
 #### High-resolution regression model (Kong et al.)
 
@@ -48,7 +48,7 @@ The model uses CNN + recurrent layers with regression heads for onset/offset tim
 
 MT3 (Multi-Task Multitrack Music Transcription) uses a T5-style sequence-to-sequence Transformer to jointly transcribe multiple instruments and datasets, emphasizing multi-task learning and low-resource instruments.[^3][^14]
 
-MT3 is evaluated with note-level F1 metrics (frame, onset, onset+offset, note-with-instrument), and the authors explicitly call out limitations of heterogeneous evaluation metrics across datasets, arguing for more consistent evaluation.[^14][^15]
+MT3 is evaluated with note-level F1 metrics (frame, onset, onset+offset, note-with-instrument), and the authors call out limitations of heterogeneous evaluation metrics across datasets, arguing for more consistent evaluation.[^14][^15]
 
 More recent work from Toyama et al. (hFT: hierarchical frequency-time Transformer) achieves very high note-level F1 on MAESTRO and MAPS using Transformer architecture specialized over frequency and time axes.[^4]
 
@@ -61,7 +61,7 @@ They report state-of-the-art F1 scores on MAESTRO and MAPS (including augmented 
 
 ### 1.3 Multi-modal and notation-level directions
 
-Recent work explores multimodal AMT combining audio with score images (MUSCAT) and visual piano transcription; these broaden the transcription context but still fall back on standard IR metrics (note F1) and are less central to a synthetic audio-perturbation pipeline.[^16][^1]
+Recent work explores multimodal AMT combining audio with score images (MUSCAT) and visual piano transcription; these broaden the transcription context but still rely on standard IR metrics (note F1) and are less central to an audio-perturbation pipeline.[^16][^1]
 
 For true notation-level evaluation, Cogliati & Duan (2017) propose a metric that treats music notation as a sequence of sets of musical objects aligned over time and defines an edit distance over 12 aspects: barlines, clefs, key signatures, time signatures, notes, spelling, durations, stem directions, beaming/groupings, rests, rest durations, and staff assignment.[^7]
 
@@ -88,9 +88,9 @@ Note-level metrics treat notes as tuples of (onset time, offset time, pitch[, ve
 Standard variants include:
 - **Onset-only note F1**: onsets must lie within ±50 ms of reference onset; offsets ignored.
 - **Onset+offset note F1**: onset condition above plus offsets within max(20% of reference duration, 50 ms).
-- **Onset+offset+velocity F1**: above plus velocity within tolerance (typically 0.1 in normalized  velocity after linear rescaling).[^13][^5][^2]
+- **Onset+offset+velocity F1**: above plus velocity within tolerance (typically 0.1 in normalized velocity after linear rescaling).[^13][^5][^2]
 
-These metrics are computed per piece and then averaged; they are the core reporting metrics in Onsets & Frames, Kong et al., MT3, Toyama’s hFT, and most MAESTRO-based work.[^3][^8][^5][^2]
+These metrics are computed per piece and averaged; they are the core reporting metrics in Onsets & Frames, Kong et al., MT3, Toyama’s hFT, and most MAESTRO-based work.[^3][^8][^5][^2]
 
 Note-level metrics are more musically meaningful than frame metrics, but still treat all note errors uniformly and ignore aspects like voice assignment, spelling, or musical role (melody vs accompaniment).[^5]
 
@@ -107,7 +107,7 @@ Metrics are defined as correlations between time series extracted from reference
 - **Harmony**: Cloud Diameter and Cloud Momentum based on Chew’s spiral array tonal model, evaluated over sliding windows.[^5]
 - **Dynamics**: Loudness ratio between melody and bass using a simple velocity-to-loudness model.[^5]
 
-These metrics yield correlation scores in [−1, 1]; Hu et al. show that models which look similar on F1 can differ substantially in timing/articulation/dynamics quality, and that these metrics are more discriminative under audio perturbations (reverb, noise) than IR metrics.[^5]
+These metrics yield correlation scores in [−1, 1]; Hu et al. show that models which look similar on F1 can differ markedly in timing/articulation/dynamics quality, and that these metrics are more discriminative under audio perturbations (reverb, noise) than IR metrics.[^5]
 
 #### 2.2.2 Notation accuracy metric (Cogliati–Duan)
 
@@ -128,7 +128,7 @@ While PEAMT is not yet standard, it may be useful as an additional reference for
 
 #### 2.3.1 Out-of-distribution F1 and degradation analysis
 
-Edwards et al. (2024) focus explicitly on robustness and data augmentation. They retrain Kong et al.’s regression model on a re-recorded MAESTRO (Studio MAESTRO) and augmented variants, and evaluate out-of-distribution note-onset F1 on MAPS without training on MAPS.[^6][^8]
+Edwards et al. (2024) focus on robustness and data augmentation. They retrain Kong et al.’s regression model on a re-recorded MAESTRO (Studio MAESTRO) and augmented variants, and evaluate out-of-distribution note-onset F1 on MAPS without training on MAPS.[^6][^8]
 
 Key practices and metrics:
 - Report note-onset F1 on both in-distribution (MAESTRO, Studio MAESTRO) and OOD (MAPS) test sets.
@@ -160,7 +160,7 @@ They demonstrate that:
 - DTW correlates well with mir_eval F1 metrics, particularly onset F1.[^4]
 - DTW is surprisingly robust to recording quality (reverb, noise) in piano recordings, likely because the onset structure dominates.[^4]
 
-DTW is thus a promising complementary metric for your augmentation pipeline, especially to analyze how much the perturbed audio diverges (after transcription and re-synthesis) from the original reference.
+DTW is thus a useful complementary metric for your augmentation pipeline, especially for analyzing how much the perturbed audio diverges (after transcription and re-synthesis) from the original reference.
 
 
 ## 3. Data augmentation in AMT and their metrics
@@ -207,7 +207,7 @@ These patterns suggest that for an augmentation study, the main axes are: absolu
 
 ## 4. Recommended metric set for your pipeline
 
-Given your core pipeline (symbolic → synthesis → perturbation → transcription → score analysis, plus parameter influence), and existing practice, a metric suite can be defined at three levels:
+Given your pipeline (symbolic → synthesis → perturbation → transcription → score analysis) and existing practice, a metric suite at three levels captures the main concerns:
 
 ### 4.1 Symbolic equivalence level (core AMT metrics)
 
@@ -244,18 +244,18 @@ For full notation and global quality/robustness:
 - **Notation edit metric** (Cogliati–Duan) applied to MusicXML scores generated from reference and predicted MIDI via the same quantization and engraving pipeline, if you care about notation readability and high-level correctness (key signatures, beaming, staff assignment).[^17][^7]
 - **DTW-based similarity** between original synthesized audio and re-synthesized transcription, used as a scalar measure that captures both pitch and rhythmic mismatches at the waveform/spectral level.[^4]
 
-This DTW measure can (a) be used to help filter pathologically bad transcriptions in large-scale experiments, and (b) complement F1 when investigating effect of augmentations that might alter spectral properties without dramatically affecting IR metrics.
+This DTW measure can (a) help filter pathologically bad transcriptions in large-scale experiments, and (b) complement F1 when investigating how augmentations alter spectral properties without dramatically affecting IR metrics.
 
 
 ### 4.4 Sensitivity and parameter influence analysis
 
-To explicitly study "audio synthesis parameter influence":
+To study "audio synthesis parameter influence":
 
 - Define controlled axes (e.g., SNR, RT60, EQ tilt, modulation depth) and measure **F1 and musically informed metric degradation curves** across parameter sweeps.
 - Compute **partial derivatives** or effect sizes (e.g., F1 drop per dB noise, per 0.1 semitone random detune) to quantify robustness.
 - If using DTW, analyze DTW vs parameter curves alongside F1 to examine whether some perturbations primarily affect perceptual similarity but not frame/note metrics.
 
-These analyses follow the pattern of Edwards et al. (data degradation and ablation tables) and Hu et al. (grid search over reverb and noise combination levels).[^6][^5]
+This follows the approach of Edwards et al. (data degradation and ablation tables) and Hu et al. (grid search over reverb and noise combination levels).[^6][^5]
 
 
 ## 5. Augmentation methods and metrics in literature
@@ -280,10 +280,10 @@ These analyses follow the pattern of Edwards et al. (data degradation and ablati
 
 ### 5.2 Takeaways for your study
 
-From these works, the following metric-related conclusions emerge:
+These works suggest the following conclusions:
 - Note-onset and note-with-offset F1 remain the primary benchmark for parametric correctness, especially for piano and MAESTRO/MAPS-style data.[^8][^2][^6]
 - Musically informed metrics are valuable when the research question involves expressive performance aspects or when the audio perturbations may subtly affect timing/articulation rather than gross note correctness.[^5]
-- DTW can effectively complement symbolic metrics in large-scale and robustness settings, especially when scoring synthetic vs perturbed audio.[^4]
+- DTW complements symbolic metrics in large-scale and robustness settings, especially when scoring synthetic vs perturbed audio.[^4]
 - Reporting OOD performance (e.g., training on one corpus, testing on another, or on re-recorded/perturbed audio) is essential to avoid overfitting to specific acoustics.[^6][^5]
 
 
@@ -291,7 +291,7 @@ From these works, the following metric-related conclusions emerge:
 
 ### 6.1 Open-source research systems
 
-For a research-grade evaluation, including representative systems across architecture families is recommended:
+For a research-grade evaluation, include representative systems across architecture families:
 
 - **Onsets & Frames** (Magenta / Google Brain implementation): canonical piano baseline, strong on MAESTRO/MAPS, well-known metrics and open code.[^9][^2]
 - **Kong et al.’s high-resolution regression model** (Bytedance piano transcription): strong piano performance and used in robustness studies.[^8][^6]
@@ -317,7 +317,7 @@ Including one or two of these as external baselines would allow comparison of re
 
 ### 6.3 Practical selection tailored to your pipeline
 
-Given the synthetic-piano-centric nature of your pipeline (MIDI/MusicXML → synthesis → perturbation → transcription), systems that focus on piano and multitrack symbolic output make the most sense:
+Given the synthetic-piano focus of your pipeline (MIDI/MusicXML → synthesis → perturbation → transcription), piano-focused and multitrack symbolic systems work best:
 - At least one strong piano-optimized model (Kong, Onsets & Frames, or Edwards’ re-trained variant).[^2][^8][^6]
 - At least one multi-instrument model (MT3 or hFT) to test generalization beyond piano synthesis, especially if you later include non-piano instruments.[^3][^4]
 - A lightweight open-source general-purpose model (Basic Pitch) as a fast baseline.[^11]
