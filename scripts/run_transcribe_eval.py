@@ -14,9 +14,14 @@ After all configs:
 
 Usage:
     python scripts/run_transcribe_eval.py
-    python scripts/run_transcribe_eval.py --dataset maestro
+    python scripts/run_transcribe_eval.py --dataset maestro-v3
     python scripts/run_transcribe_eval.py --dataset test --skip-render
+    python scripts/run_transcribe_eval.py --dataset maestro-v3 --limit 10
+    python scripts/run_transcribe_eval.py --dataset maestro-v3 --limit 10 --seed 42
+    python scripts/run_transcribe_eval.py --config pedalboard_baseline
+    python scripts/run_transcribe_eval.py --config pedalboard_baseline pedalboard_no_effects
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,6 +56,29 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Skip the render step and use already-rendered audio.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Render at most N MIDI files per config (random subset; passed to sonitra render).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=123,
+        help="RNG seed for --limit sampling (passed to sonitra render). Default: 123.",
+    )
+    parser.add_argument(
+        "--config",
+        nargs="+",
+        metavar="NAME",
+        default=None,
+        help=(
+            "Run only the named config(s) (stem without .yaml). "
+            "Omit to run all configs under config/."
+        ),
     )
     return parser.parse_args()
 
@@ -108,7 +136,15 @@ def _dump_jsonl(rows: list[dict], path: Path) -> None:
     with path.open("w", encoding="utf-8") as fh:
         for row in rows:
             # json.dumps does not support NaN; replace with null.
-            fh.write(json.dumps({k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in row.items()}) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        k: (None if isinstance(v, float) and math.isnan(v) else v)
+                        for k, v in row.items()
+                    }
+                )
+                + "\n"
+            )
 
 
 def _dump_csv(rows: list[dict], path: Path) -> None:
@@ -120,7 +156,16 @@ def _dump_csv(rows: list[dict], path: Path) -> None:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: ("" if isinstance(v, float) and math.isnan(v) else ("" if v is None else v)) for k, v in row.items()})
+            writer.writerow(
+                {
+                    k: (
+                        ""
+                        if isinstance(v, float) and math.isnan(v)
+                        else ("" if v is None else v)
+                    )
+                    for k, v in row.items()
+                }
+            )
 
 
 def main() -> int:
@@ -135,6 +180,18 @@ def main() -> int:
     if not configs:
         print(f"No configs found in {CONFIGS_DIR}", file=sys.stderr)
         return 1
+
+    if args.config is not None:
+        available = {c.stem for c in configs}
+        unknown = [n for n in args.config if n not in available]
+        if unknown:
+            print(
+                f"error: unknown config(s): {', '.join(unknown)}. "
+                f"Available: {', '.join(sorted(available))}",
+                file=sys.stderr,
+            )
+            return 1
+        configs = [c for c in configs if c.stem in set(args.config)]
 
     failures: list[str] = []
     summary_rows: list[dict] = []
@@ -151,10 +208,21 @@ def main() -> int:
         # ── Step 1: render ──────────────────────────────────────────────────
         if not args.skip_render:
             print(f"  step 1: render     -> {audio_dir}/")
-            rc = _run([
-                PYTHON, "-m", "sonitra", "render",
-                "--config", str(config_path),
-            ])
+            render_cmd = [
+                PYTHON,
+                "-m",
+                "sonitra",
+                "render",
+                "--config",
+                str(config_path),
+            ]
+            if args.dataset is not None:
+                render_cmd += ["--dataset", args.dataset]
+            if args.limit is not None:
+                render_cmd += ["--limit", str(args.limit)]
+            if args.seed is not None:
+                render_cmd += ["--seed", str(args.seed)]
+            rc = _run(render_cmd)
             if rc != 0:
                 print(f"  FAIL  — render exited {rc}")
                 failures.append(f"{name}:render")
@@ -174,12 +242,20 @@ def main() -> int:
         # ── Step 2: transcribe ──────────────────────────────────────────────
         transcription_out = TRANSCRIPTION_DIR / name
         print(f"  step 2: transcribe -> {transcription_out}/")
-        rc = _run([
-            PYTHON, "-m", "sonitra", "transcribe",
-            "--config", str(config_path),
-            "--audio",  str(audio_dir),
-            "--output", str(transcription_out),
-        ])
+        rc = _run(
+            [
+                PYTHON,
+                "-m",
+                "sonitra",
+                "transcribe",
+                "--config",
+                str(config_path),
+                "--audio",
+                str(audio_dir),
+                "--output",
+                str(transcription_out),
+            ]
+        )
         if rc != 0:
             print(f"  FAIL  — transcribe exited {rc}")
             failures.append(f"{name}:transcribe")
@@ -190,7 +266,9 @@ def main() -> int:
         if not estimate_dir.exists():
             subdirs = [d for d in transcription_out.iterdir() if d.is_dir()]
             if not subdirs:
-                print(f"  FAIL  — no transcription output subdir found under {transcription_out}")
+                print(
+                    f"  FAIL  — no transcription output subdir found under {transcription_out}"
+                )
                 failures.append(f"{name}:evaluate")
                 continue
             estimate_dir = sorted(subdirs)[0]
@@ -199,13 +277,22 @@ def main() -> int:
         # ── Step 4: evaluate ────────────────────────────────────────────────
         eval_out = EVAL_DIR / f"{name}.jsonl"
         print(f"  step 3: evaluate   -> {eval_out}")
-        rc = _run([
-            PYTHON, "-m", "sonitra", "evaluate",
-            "--config",    str(config_path),
-            "--reference", str(MIDI_REF_DIR),
-            "--estimate",  str(estimate_dir),
-            "--output",    str(eval_out),
-        ])
+        rc = _run(
+            [
+                PYTHON,
+                "-m",
+                "sonitra",
+                "evaluate",
+                "--config",
+                str(config_path),
+                "--reference",
+                str(MIDI_REF_DIR),
+                "--estimate",
+                str(estimate_dir),
+                "--output",
+                str(eval_out),
+            ]
+        )
         if rc != 0:
             print(f"  FAIL  — evaluate exited {rc}")
             failures.append(f"{name}:evaluate")
