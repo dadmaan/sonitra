@@ -3,9 +3,28 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import random
 import typer
 
 app = typer.Typer(name="sonitra")
+
+_MIDI_SUFFIXES: frozenset[str] = frozenset({".mid", ".midi"})
+
+
+def _discover_midi_files(directory: Path) -> list[Path]:
+    return sorted(
+        p for p in directory.rglob("*")
+        if p.is_file() and p.suffix.lower() in _MIDI_SUFFIXES
+    )
+
+
+def _apply_subset(
+    files: list[Path], limit: int | None, seed: int | None
+) -> list[Path]:
+    if limit is None or limit >= len(files):
+        return files
+    rng = random.Random(seed)
+    return sorted(rng.sample(files, limit))
 
 
 def _apply_dataset(cfg: PipelineConfig, dataset: str | None, config: Path) -> None:
@@ -48,6 +67,12 @@ def render(
             "outputs to corpus/{subdir}/{dataset}/{config}/"
         ),
     ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-n", help="Maximum MIDI files to render (random subset)."
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="RNG seed for --limit sampling."
+    ),
 ) -> None:
     """Run the MIDI-to-audio rendering pipeline."""
     from sonitra.config import load_config, resolve_corpus_paths
@@ -60,10 +85,11 @@ def render(
     actual_corpus = corpus if corpus is not None else paths.midi
     actual_output = output if output is not None else paths.audio
 
-    midi_paths = sorted(actual_corpus.glob("*.mid"))
+    midi_paths = _discover_midi_files(actual_corpus)
     if not midi_paths:
-        typer.echo(f"No .mid files found in {actual_corpus}")
+        typer.echo(f"No MIDI files found in {actual_corpus}")
         raise typer.Exit(code=1)
+    midi_paths = _apply_subset(midi_paths, limit, seed)
 
     result = run_pipeline(midi_paths, out_dir=actual_output, config=cfg)
     typer.echo(
@@ -237,14 +263,14 @@ def evaluate(
         typer.echo("--estimate is required when --dataset is not set")
         raise typer.Exit(code=1)
 
-    reference_paths = sorted(
-        path for ext in ("*.mid", "*.midi") for path in actual_reference.glob(ext)
-    )
+    reference_paths = _discover_midi_files(actual_reference)
     if not reference_paths:
         typer.echo(f"No MIDI files found in {actual_reference}")
         raise typer.Exit(code=1)
 
     rows = []
+    # Pairs by stem; assumes globally unique filenames across the reference corpus.
+    # See .local/notes/TODO.md for the known limitation with nested datasets.
     for ref_path in reference_paths:
         est_path = next(
             (
@@ -319,9 +345,9 @@ def benchmark(
     else:
         actual_workdir = Path("benchmark")
 
-    midi_paths = sorted(actual_corpus.glob("*.mid"))
+    midi_paths = _discover_midi_files(actual_corpus)
     if not midi_paths:
-        typer.echo(f"No .mid files found in {actual_corpus}")
+        typer.echo(f"No MIDI files found in {actual_corpus}")
         raise typer.Exit(code=1)
 
     result = run_benchmark(midi_paths, actual_workdir, cfg)
