@@ -18,6 +18,7 @@ class PedalboardSynth:
         preset_path: Path | str | None = None,
         reload_plugin_per_file: bool = False,
         silence_flush_sec: float = 0.0,
+        bpm: int = 120,
     ) -> None:
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
@@ -25,6 +26,7 @@ class PedalboardSynth:
         self.preset_path = Path(preset_path) if preset_path else None
         self.reload_plugin_per_file = reload_plugin_per_file
         self.silence_flush_sec = float(silence_flush_sec)
+        self.bpm = int(bpm)
         self._plugin = None
 
     def render(self, notes: Iterable[dict], duration_sec: float) -> np.ndarray:

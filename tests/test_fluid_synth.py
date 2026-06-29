@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from unittest.mock import patch
+
 from sonitra.midi_reader import parse_midi
 from sonitra.synth.fluid_synth import FluidSynth
 from sonitra.synth.protocol import SynthesiserProtocol
@@ -72,3 +74,31 @@ def test_fluid_synth_renders_c4_with_soundfont(midi_fixture) -> None:
         np.allclose(dominant, 262.0, rtol=0.05)
         or np.allclose(dominant, 523.0, rtol=0.05)
     )
+
+
+def test_fluid_synth_accepts_bpm_in_constructor(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2, bpm=90)
+    assert fs.bpm == 90
+
+
+def test_fluid_synth_bpm_defaults_to_120(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2)
+    assert fs.bpm == 120
+
+
+def test_fluid_synth_render_passes_bpm_to_write_notes(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2, bpm=100)
+    with patch("sonitra.synth.fluid_synth._write_notes_to_midi") as mock_write:
+        with patch("sonitra.synth.fluid_synth._run_fluidsynth"):
+            with patch("sonitra.synth.fluid_synth.wavfile.read") as mock_read:
+                mock_read.return_value = (44100, __import__("numpy").zeros((132300, 2), dtype=np.int16))
+                mock_write.return_value = None
+                fs.render([], duration_sec=1.0)
+    _, call_kwargs = mock_write.call_args
+    assert call_kwargs.get("bpm") == 100

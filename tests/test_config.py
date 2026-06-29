@@ -6,8 +6,9 @@ import pytest
 
 from sonitra.config import (
     ConfigError,
+    EffectsChain,
     PipelineConfig,
-    RenderingMode,
+    SynthBackend,
     default_config_path,
     load_config,
 )
@@ -17,7 +18,8 @@ from sonitra.pipeline import run_pipeline
 def _minimal_config_dict() -> dict:
     return {
         "pipeline": {
-            "rendering_mode": "dawdreamer_only",
+            "synth_backend": "dawdreamer_faust",
+            "effects_chain": "none",
             "sample_rate": 44100,
             "bit_depth": 24,
             "channels": 2,
@@ -60,37 +62,43 @@ def test_load_malformed_yaml_raises(tmp_path):
         load_config(bad)
 
 
-# ── Rendering mode ───────────────────────────────────────────────────
+# ── Synth backend ───────────────────────────────────────────────────
 
-def test_rendering_mode_parsed_as_enum(config_fixture):
+def test_synth_backend_parsed_as_enum(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    assert cfg.pipeline.rendering_mode == RenderingMode.DAWDREAMER_SYNTH_PEDALBOARD_FX
+    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
 
 
-def test_invalid_rendering_mode_raises(config_fixture):
+def test_invalid_synth_backend_raises(config_fixture):
     with pytest.raises(ConfigError):
         load_config(config_fixture("config_invalid_mode.yaml"))
 
 
-def test_all_rendering_modes_valid():
-    for mode in RenderingMode:
+def test_all_synth_backends_valid():
+    for backend in SynthBackend:
+        extra: dict = {}
+        if backend == SynthBackend.FLUIDSYNTH:
+            extra = {"fluidsynth": {"soundfont_path": "/tmp/dummy.sf2"}}
+        elif backend == SynthBackend.DAWDREAMER_VST:
+            extra = {"dawdreamer": {"plugin_path": "/tmp/dummy.vst3"}}
         cfg = PipelineConfig.model_validate(
             {
                 **_minimal_config_dict(),
                 "pipeline": {
                     **_minimal_config_dict()["pipeline"],
-                    "rendering_mode": mode.value,
+                    "synth_backend": backend.value,
                 },
+                **extra,
             }
         )
-        assert cfg.pipeline.rendering_mode == mode
+        assert cfg.pipeline.synth_backend == backend
 
 
 # ── max_workers clamp ────────────────────────────────────────────────
 
 def test_dawdreamer_mode_forces_max_workers_1(config_fixture, caplog):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.rendering_mode = RenderingMode.DAWDREAMER_ONLY
+    cfg.pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
     cfg.pipeline.max_workers = 8
     validated = cfg.validate_worker_constraint()
     assert validated.pipeline.max_workers == 1

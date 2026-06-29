@@ -33,7 +33,7 @@ class JobRequest(BaseModel):
 class JobResponse(BaseModel):
     job_id: str
     status: JobStatus
-    rendering_mode: str = ""
+    synth_backend: str = ""
     total: int
     succeeded: int
     failed: int

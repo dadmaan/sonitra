@@ -12,7 +12,7 @@ import pedalboard
 
 _thread_local: threading.local = threading.local()
 
-from sonitra.config import PipelineConfig, RenderingMode
+from sonitra.config import EffectsChain, PipelineConfig, SynthBackend
 from sonitra.engine import RendererEngine
 from sonitra.effects.chain_builder import build_effects_chain_from_config, compute_chain_hash
 from sonitra.manifest import ManifestEntry, ManifestWriter
@@ -74,7 +74,7 @@ def _render_file(
         duration = _compute_duration(notes, cfg.pipeline.duration_padding_sec)
         audio = synth.render(notes, duration_sec=duration)
         audio = normalise_from_config(audio, cfg, stage="pre")
-        if cfg.pipeline.rendering_mode != RenderingMode.DAWDREAMER_ONLY and len(chain) > 0:
+        if cfg.pipeline.effects_chain == EffectsChain.PEDALBOARD and len(chain) > 0:
             audio = chain(audio, cfg.pipeline.sample_rate)
         audio = normalise_from_config(audio, cfg, stage="post")
 
@@ -83,7 +83,7 @@ def _render_file(
             entry = ManifestEntry(
                 midi_path=str(midi_path),
                 output_path=str(output_path),
-                rendering_mode=cfg.pipeline.rendering_mode.value,
+                synth_backend=cfg.pipeline.synth_backend.value,
                 effects_chain_hash=chain_hash,
                 status="failed",
                 duration_sec=quality.duration_sec,
@@ -113,7 +113,7 @@ def _render_file(
         entry = ManifestEntry(
             midi_path=str(midi_path),
             output_path=str(output_path),
-            rendering_mode=cfg.pipeline.rendering_mode.value,
+            synth_backend=cfg.pipeline.synth_backend.value,
             effects_chain_hash=chain_hash,
             status="done",
             duration_sec=quality.duration_sec,
@@ -136,7 +136,7 @@ def _render_file(
                 ManifestEntry(
                     midi_path=str(midi_path),
                     output_path=str(output_path),
-                    rendering_mode=cfg.pipeline.rendering_mode.value,
+                    synth_backend=cfg.pipeline.synth_backend.value,
                     effects_chain_hash=chain_hash,
                     status="failed",
                     duration_sec=0.0,
@@ -201,7 +201,7 @@ def run_pipeline(
             else:
                 failed += 1
 
-        if cfg.pipeline.rendering_mode == RenderingMode.PEDALBOARD_ONLY and n_workers > 1:
+        if cfg.pipeline.synth_backend == SynthBackend.PEDALBOARD_INSTRUMENT and n_workers > 1:
             with ThreadPoolExecutor(
                 max_workers=n_workers,
                 initializer=_init_thread_synth_chain,

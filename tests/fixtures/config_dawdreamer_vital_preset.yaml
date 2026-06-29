@@ -1,5 +1,7 @@
 pipeline:
-  rendering_mode: dawdreamer_only
+  synth_backend: dawdreamer_vst
+  effects_chain: none
+  bpm: 120
   sample_rate: 44100
   bit_depth: 24
   channels: 2
@@ -16,17 +18,16 @@ io:
   file_naming: "{stem}"
 
 dawdreamer:
-  enabled: true
   block_size: 512
   plugin_path: /workspace/plugin/vital/lib/vst3/Vital.vst3
   preset_path: /workspace/preset/vital/Keys - Goodies.vital
-  soundfont_path: null
-  bpm: 120
   faust_code: null
   clear_midi_between_renders: true
 
+fluidsynth:
+  soundfont_path: null
+
 pedalboard:
-  enabled: true
   instrument:
     plugin_path: null
     preset_path: null

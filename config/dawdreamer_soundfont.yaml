@@ -1,6 +1,8 @@
-# DawDreamer rendering with SoundFont/FluidSynth backend.
+# FluidSynth rendering with SoundFont backend.
 pipeline:
-    rendering_mode: dawdreamer_only
+    synth_backend: fluidsynth
+    effects_chain: none
+    bpm: 120
     sample_rate: 44100
     bit_depth: 24
     channels: 2
@@ -18,17 +20,16 @@ io:
     dataset: test
 
 dawdreamer:
-    enabled: true
     block_size: 512
     plugin_path: null
     preset_path: null
-    soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
-    bpm: 120
     faust_code: null
     clear_midi_between_renders: true
 
+fluidsynth:
+    soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
 pedalboard:
-    enabled: true
     instrument:
         plugin_path: null
         preset_path: null

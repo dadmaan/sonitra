@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -17,7 +19,7 @@ def to_response(record: JobRecord) -> JobResponse:
     return JobResponse(
         job_id=record.job_id,
         status=record.status,
-        rendering_mode=record.rendering_mode,
+        synth_backend=record.synth_backend,
         total=record.total,
         succeeded=record.succeeded,
         failed=record.failed,
@@ -33,11 +35,11 @@ async def create_job(
     request: Request,
     store: JobStore = Depends(get_job_store),
 ) -> JobResponse:
-    rendering_mode = request.app.state.config.pipeline.rendering_mode.value
+    synth_backend = request.app.state.config.pipeline.synth_backend.value
     job_id = store.create(
         midi_dir=str(payload.midi_dir),
         out_dir=str(payload.out_dir),
-        rendering_mode=rendering_mode,
+        synth_backend=synth_backend,
         plugin_path=str(payload.plugin_path) if payload.plugin_path else None,
     )
     task = asyncio.create_task(

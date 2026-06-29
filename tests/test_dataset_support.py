@@ -30,7 +30,8 @@ def _minimal_config_dict(*, dataset: str | None = None) -> dict:
         io["dataset"] = dataset
     return {
         "pipeline": {
-            "rendering_mode": "dawdreamer_only",
+            "synth_backend": "dawdreamer_faust",
+            "effects_chain": "none",
             "sample_rate": 44100,
             "bit_depth": 24,
             "channels": 2,
@@ -209,7 +210,8 @@ def test_midi_dir_yaml_key_raises_config_error(tmp_path: Path) -> None:
     bad_yaml = tmp_path / "old_keys.yaml"
     bad_yaml.write_text(
         "pipeline:\n"
-        "  rendering_mode: dawdreamer_only\n"
+        "  synth_backend: dawdreamer_faust\n"
+        "  effects_chain: none\n"
         "  sample_rate: 44100\n"
         "  bit_depth: 24\n"
         "  channels: 2\n"
@@ -233,7 +235,8 @@ def test_output_dir_yaml_key_raises_config_error() -> None:
     """output_dir in the io section is now an unknown key and must raise ConfigError."""
     data = {
         "pipeline": {
-            "rendering_mode": "dawdreamer_only",
+            "synth_backend": "dawdreamer_faust",
+            "effects_chain": "none",
             "sample_rate": 44100,
             "bit_depth": 24,
             "channels": 2,

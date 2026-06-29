@@ -8,17 +8,22 @@
 # starter config without the commentary.
 
 pipeline:
-  rendering_mode: dawdreamer_synth_pedalboard_fx
-  # dawdreamer_only              — DawDreamer synth, no effects chain
-  # pedalboard_only              — Pedalboard instrument plugin + effects chain
-  # dawdreamer_synth_pedalboard_fx — DawDreamer synth, then Pedalboard effects chain
+  synth_backend: dawdreamer_faust
+  # dawdreamer_faust         — DawDreamer synth using Faust oscillator, no VST
+  # dawdreamer_vst           — DawDreamer synth using a VST3 plugin
+  # fluidsynth               — SoundFont-based synthesis via fluidsynth CLI
+  # pedalboard_instrument    — Pedalboard instrument plugin
+  effects_chain: pedalboard
+  # none                     — no effects chain applied after synthesis
+  # pedalboard               — apply Pedalboard effects chain after synthesis
+  bpm: 120                   # playback tempo during rendering
   sample_rate: 44100       # Hz; 44100 or 48000 recommended
   bit_depth: 24            # 16 or 24
   channels: 2              # 1 = mono, 2 = stereo
   duration_padding_sec: 2.0  # silence appended after last note-off to capture reverb tail
   overwrite: false         # re-render files that already exist in output_dir
   resume: true             # skip files already present in output_dir (complement of overwrite)
-  max_workers: 1           # DawDreamer modes require 1; pedalboard_only supports > 1
+  max_workers: 1           # DawDreamer backends require 1; pedalboard_instrument supports > 1
   log_level: INFO          # DEBUG | INFO | WARNING | ERROR
 
 io:
@@ -29,28 +34,28 @@ io:
   dataset: null              # optional: scope paths to {corpus_root}/{dataset}/midi|audio|transcription|eval_results/
 
 dawdreamer:
-  enabled: true
   block_size: 512
   # VST3 instrument plugin (e.g. Vital).
   # Download Vital from https://vital.audio/ and place it under plugin/ (gitignored).
   # Linux path after extraction: plugin/vital/lib/vst3/Vital.vst3
+  # Required when synth_backend: dawdreamer_vst; must be null for dawdreamer_faust.
   plugin_path: null
   # Preset file for the VST3 plugin.
   # Place .vital preset files under preset/ (gitignored).
   # Example: preset/vital/Keys - Goodies.vital
   preset_path: null
-  # SoundFont for FluidSynth-based synthesis.
-  # Used when plugin_path is null and rendering_mode is not pedalboard_only.
-  # Install on Linux: sudo apt install fluid-soundfont-gm
-  soundfont_path: null       # e.g. /usr/share/sounds/sf2/default-GM.sf2
-  bpm: 120                   # playback tempo during rendering
   faust_code: null           # inline Faust DSP code; overrides plugin_path when set
   clear_midi_between_renders: true  # reset MIDI state between files to prevent note bleed
 
+fluidsynth:
+  # SoundFont for FluidSynth-based synthesis.
+  # Required when synth_backend: fluidsynth.
+  # Install on Linux: sudo apt install fluid-soundfont-gm
+  soundfont_path: null       # e.g. /usr/share/sounds/sf2/default-GM.sf2
+
 pedalboard:
-  enabled: true
   instrument:
-    plugin_path: null              # VST3/AU instrument for pedalboard_only mode
+    plugin_path: null              # VST3/AU instrument for pedalboard_instrument backend
     preset_path: null
     reload_plugin_per_file: false  # reload plugin state per file; safer but slower
     silence_flush_sec: 0.5         # seconds of silence used to flush the plugin buffer

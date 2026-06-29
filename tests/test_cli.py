@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from sonitra.cli import init
-from sonitra.config import RenderingMode, load_config
+from sonitra.config import SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
 
 
@@ -14,7 +14,7 @@ def test_init_writes_working_basic_pitch_config(tmp_path: Path) -> None:
     path = tmp_path / "init.yaml"
     init(path)
     cfg = load_config(path)
-    assert cfg.pipeline.rendering_mode == RenderingMode.DAWDREAMER_ONLY
+    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
     assert cfg.normalisation.enabled is True
     assert any(t.type == "basic_pitch" and t.enabled for t in cfg.transcription.transcribers)
 
@@ -60,7 +60,9 @@ def test_sonitra_console_script_is_registered() -> None:
 
 _MINIMAL_CONFIG_TEMPLATE = """\
 pipeline:
-  rendering_mode: dawdreamer_synth_pedalboard_fx
+  synth_backend: dawdreamer_faust
+  effects_chain: pedalboard
+  bpm: 120
   sample_rate: 44100
   bit_depth: 24
   channels: 2
@@ -75,16 +77,14 @@ io:
   mp3_bitrate_kbps: 192
   file_naming: "{{stem}}"
 dawdreamer:
-  enabled: true
   block_size: 512
   plugin_path: null
   preset_path: null
-  soundfont_path: null
-  bpm: 120
   faust_code: null
   clear_midi_between_renders: true
+fluidsynth:
+  soundfont_path: null
 pedalboard:
-  enabled: true
   instrument:
     plugin_path: null
     preset_path: null
@@ -193,7 +193,9 @@ def test_transcribe_empty_audio_dir_exits_nonzero(tmp_path: Path) -> None:
 
 _TWO_TRANSCRIBERS_CONFIG_TEMPLATE = """\
 pipeline:
-  rendering_mode: dawdreamer_synth_pedalboard_fx
+  synth_backend: dawdreamer_faust
+  effects_chain: pedalboard
+  bpm: 120
   sample_rate: 44100
   bit_depth: 24
   channels: 2
@@ -208,16 +210,14 @@ io:
   mp3_bitrate_kbps: 192
   file_naming: "{{stem}}"
 dawdreamer:
-  enabled: true
   block_size: 512
   plugin_path: null
   preset_path: null
-  soundfont_path: null
-  bpm: 120
   faust_code: null
   clear_midi_between_renders: true
+fluidsynth:
+  soundfont_path: null
 pedalboard:
-  enabled: true
   instrument:
     plugin_path: null
     preset_path: null
@@ -321,3 +321,67 @@ def test_transcribe_filter_by_name_selects_correct_backend(tmp_path: Path) -> No
     assert result.exit_code == 0, f"transcribe failed: {result.output}"
     assert (out_dir / "keep_this" / "test_c4.mid").exists()
     assert not (out_dir / "skip_this").exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — init command output verification tests
+# ---------------------------------------------------------------------------
+
+from typer.testing import CliRunner
+from sonitra.cli import app
+from sonitra.config import SynthBackend, EffectsChain, load_config
+
+runner = CliRunner()
+
+
+def test_init_config_has_synth_backend(tmp_path) -> None:
+    result = runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
+    assert result.exit_code == 0
+    cfg = load_config(tmp_path / "cfg.yaml")
+    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+
+
+def test_init_config_has_effects_chain(tmp_path) -> None:
+    result = runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
+    assert result.exit_code == 0
+    cfg = load_config(tmp_path / "cfg.yaml")
+    assert cfg.pipeline.effects_chain == EffectsChain.NONE
+
+
+def test_init_config_no_rendering_mode_in_yaml(tmp_path) -> None:
+    runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
+    raw = (tmp_path / "cfg.yaml").read_text()
+    assert "rendering_mode" not in raw
+
+
+def test_init_config_has_fluidsynth_section_in_raw_yaml(tmp_path) -> None:
+    """Verify the init command actually writes the fluidsynth: section."""
+    runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
+    raw = (tmp_path / "cfg.yaml").read_text()
+    assert "fluidsynth:" in raw
+    cfg = load_config(tmp_path / "cfg.yaml")
+    assert cfg.fluidsynth.soundfont_path is None
+
+
+def test_init_config_no_section_level_enabled_in_yaml(tmp_path) -> None:
+    """Verify dawdreamer and pedalboard sections have no top-level 'enabled' field.
+
+    Only section-level enabled: in dawdreamer/pedalboard is prohibited (H2 constraint).
+    Per-effect enabled: and per-transcriber enabled: are legitimate.
+    """
+    runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
+    cfg = load_config(tmp_path / "cfg.yaml")
+    # DawDreamerSection model has no 'enabled' field
+    assert not hasattr(cfg.dawdreamer, "enabled")
+    # PedalboardSection model has no 'enabled' field
+    assert not hasattr(cfg.pedalboard, "enabled")
+    # Verify in raw YAML too
+    raw = (tmp_path / "cfg.yaml").read_text()
+    # dawdreamer section — look for enabled at the section level (2-space indent)
+    import re
+    dawdreamer_block = re.search(r"dawdreamer:\n(  .*(?:\n|$))*", raw)
+    if dawdreamer_block:
+        assert "enabled:" not in dawdreamer_block.group()
+    pedalboard_block = re.search(r"pedalboard:\n(  .*(?:\n|$))*", raw)
+    if pedalboard_block:
+        assert "enabled:" not in pedalboard_block.group()
