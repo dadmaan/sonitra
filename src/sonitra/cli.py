@@ -125,6 +125,8 @@ def transcribe(
     ),
 ) -> None:
     """Transcribe audio files to MIDI with the configured transcribers."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from sonitra.config import load_config, resolve_corpus_paths
     from sonitra.midi_writer import write_midi
     from sonitra.transcribe.protocol import make_transcriber
@@ -165,18 +167,37 @@ def transcribe(
         raise typer.Exit(code=1)
 
     failures = 0
+    n_workers = cfg.transcription.max_workers
+
+    def _transcribe_one(backend_name: str, backend_transcribe, audio_path: Path) -> tuple[str, str | None]:
+        rel = audio_path.relative_to(actual_audio)
+        midi_path = actual_output / backend_name / rel.with_suffix(".mid")
+        try:
+            result = backend_transcribe(audio_path)
+            write_midi(result.notes, midi_path)
+            return f"{backend_name}: {audio_path.name} -> {midi_path}", None
+        except Exception as exc:  # noqa: BLE001 - CLI reports and continues
+            return f"{backend_name}: {audio_path.name} FAILED ({exc})", str(exc)
+
     for transcriber_cfg in transcriber_configs:
         backend = make_transcriber(transcriber_cfg)
-        for audio_path in audio_paths:
-            rel = audio_path.relative_to(actual_audio)
-            midi_path = actual_output / backend.name / rel.with_suffix(".mid")
-            try:
-                result = backend.transcribe(audio_path)
-                write_midi(result.notes, midi_path)
-                typer.echo(f"{backend.name}: {audio_path.name} -> {midi_path}")
-            except Exception as exc:  # noqa: BLE001 - CLI reports and continues
-                failures += 1
-                typer.echo(f"{backend.name}: {audio_path.name} FAILED ({exc})")
+        if n_workers > 1:
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                future_to_path = {
+                    executor.submit(_transcribe_one, backend.name, backend.transcribe, ap): ap
+                    for ap in audio_paths
+                }
+                for future in as_completed(future_to_path):
+                    msg, err = future.result()
+                    typer.echo(msg)
+                    if err is not None:
+                        failures += 1
+        else:
+            for audio_path in audio_paths:
+                msg, err = _transcribe_one(backend.name, backend.transcribe, audio_path)
+                typer.echo(msg)
+                if err is not None:
+                    failures += 1
     if failures:
         raise typer.Exit(code=1)
 
@@ -208,6 +229,7 @@ def evaluate(
     """Score estimated MIDI against reference MIDI, paired by file stem."""
     import json
     import math
+    from concurrent.futures import ThreadPoolExecutor
 
     from sonitra.config import EvaluationSection, load_config, resolve_corpus_paths
     from sonitra.evaluation.protocol import evaluate_notes, make_symbolic_metrics
@@ -269,10 +291,9 @@ def evaluate(
         typer.echo(f"No MIDI files found in {actual_reference}")
         raise typer.Exit(code=1)
 
-    rows = []
     # Pairs by stem; assumes globally unique filenames across the reference corpus.
     # See .local/notes/TODO.md for the known limitation with nested datasets.
-    for ref_path in reference_paths:
+    def _eval_one(ref_path: Path) -> dict | None:
         rel = ref_path.relative_to(actual_reference)
         est_path = next(
             (
@@ -284,13 +305,20 @@ def evaluate(
         )
         if est_path is None:
             typer.echo(f"{rel}: no estimate found, skipping")
-            continue
+            return None
         values = evaluate_notes(
             notes_from_dicts(parse_midi(ref_path)),
             notes_from_dicts(parse_midi(est_path)),
             metrics,
         )
-        rows.append({"file": str(rel), **values})
+        return {"file": str(rel), **values}
+
+    n_eval_workers = section.max_workers
+    if n_eval_workers > 1:
+        with ThreadPoolExecutor(max_workers=n_eval_workers) as executor:
+            rows = [r for r in executor.map(_eval_one, reference_paths) if r is not None]
+    else:
+        rows = [r for ref_path in reference_paths if (r := _eval_one(ref_path)) is not None]
 
     if not rows:
         typer.echo("No reference/estimate pairs evaluated")
