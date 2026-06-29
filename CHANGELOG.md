@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `threading.Lock` in `ManifestWriter.write()` to support safe concurrent writes from multiple threads
 - `_init_thread_synth_chain()` initializer and `_render_file()` helper in `pipeline.py`, extracted from the main loop to support per-thread synth/effect-chain instances
 - `_condition_worker()` subprocess entry point in `benchmark/runner.py` for running benchmark conditions in isolated processes via `ProcessPoolExecutor`
+- `SynthBackend` and `EffectsChain` enums replacing the removed `RenderingMode` enum
+- `FluidSynthSection` and `DawDreamerSection` Pydantic models for new config sections
+- `bpm` field on `PipelineSection` for configuring tempo per pipeline run
+- `PipelineConfig.save()` method for serialising config to YAML
+- `tests/test_config_new_fields.py` — config schema validation tests for new field combinations
+- `tests/test_fluid_synth_bpm.py` — 6 BPM timing invariance tests for FluidSynth backend
+- 5 CLI init output verification tests (`synth_backend`, `effects_chain`, no `rendering_mode`, `fluidsynth` section present, no section-level `enabled`)
 
 ### Changed
 
@@ -25,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_run_condition` and `_evaluate_one` in `benchmark/runner.py` now accept optional `writer` parameter (default `None`) for subprocess worker mode
 - `scripts/run_transcribe_eval.py` main loop refactored into `_process_config()` function to enable parallel config execution
 - `BasicPitchTranscriber.transcribe()` wraps the `predict()` call in `tf.device(self.device)` context manager to respect the configured device
+- `RenderingMode` enum replaced by `SynthBackend` + `EffectsChain` enums across config, CLI, pipeline, and API (BREAKING: old `rendering_mode` config key is rejected by `extra="forbid"`)
+- `dawdreamer.bpm` flattened to `pipeline.bpm`; `dawdreamer.soundfont_path` moved to dedicated `fluidsynth.soundfont_path` section (BREAKING: old keys rejected)
+- Section-level `enabled:` removed from `dawdreamer` and `pedalboard` config sections (per-effect `enabled:` preserved)
+- FluidSynth, DawDreamerSynth, and PedalboardSynth now accept `bpm` parameter; `make_synth` passes `bpm=cfg.pipeline.bpm` to all three backends
+- `PedalboardSynth.render()` raises `ValueError` with actionable message instead of returning silent `np.zeros` when no VST instrument plugin is configured
+- `make_synth()` in `protocol.py` automatically falls back to `FluidSynth` when `synth_backend=pedalboard_instrument` has `plugin_path: null` but `fluidsynth.soundfont_path` is configured, with a logged warning
+- `sonitra init` now writes starter config using `SynthBackend.DAWDREAMER_FAUST` and `EffectsChain.NONE` with explicit `fluidsynth`/`dawdreamer` sections
+- All preset configs and test fixtures updated from `rendering_mode`/`soundfont_path`/`bpm` to the new config structure
 
 ## [0.1.0] - 2026-06-26
 
