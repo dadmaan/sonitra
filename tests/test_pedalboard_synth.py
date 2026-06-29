@@ -15,12 +15,11 @@ def test_pedalboard_synth_implements_synthesiser_protocol():
 
 # ── Faust fallback (no VST needed) ───────────────────────────────────
 
-def test_synth_with_no_plugin_uses_silence_fallback(midi_fixture):
+def test_synth_with_no_plugin_raises_error(midi_fixture):
     synth = PedalboardSynth(sample_rate=44100, channels=2, plugin_path=None)
     notes = parse_midi(midi_fixture("test_c4.mid"))
-    audio = synth.render(notes, duration_sec=2.0)
-    assert audio.shape == (2, 44100 * 2)
-    assert np.allclose(audio, 0.0)
+    with pytest.raises(ValueError, match="requires a VST instrument"):
+        synth.render(notes, duration_sec=2.0)
 
 
 # ── Instrument rendering (requires VST) ──────────────────────────────

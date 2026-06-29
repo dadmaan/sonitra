@@ -120,14 +120,13 @@ def test_apply_subset_result_is_sorted() -> None:
 # CLI smoke tests (use CliRunner + real fixtures)
 # ---------------------------------------------------------------------------
 
-# Minimal pedalboard-only config with silence_threshold_rms=0.0 so that
-# PedalboardSynth without a plugin (which renders zeros) passes quality gates.
-# This mirrors the pattern used in test_benchmark_runner.py and is required
-# because config_pedalboard_only.yaml sets silence_threshold_rms=0.001, which
-# rejects the silence produced by a plugin-less pedalboard render.
+# Minimal fluidsynth config used for CLI smoke tests. PedalboardSynth without a
+# plugin now raises ValueError, so we use FluidSynth with the system SoundFont.
 _RENDER_SMOKE_CONFIG = """\
 pipeline:
-  rendering_mode: pedalboard_only
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
   sample_rate: 22050
   bit_depth: 16
   channels: 1
@@ -141,8 +140,9 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
 pedalboard:
-  enabled: true
   instrument:
     plugin_path: null
     preset_path: null
