@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -7,6 +8,8 @@ import numpy as np
 from sonitra.config import PipelineConfig, SynthBackend
 from sonitra.synth.dawdreamer_synth import DawDreamerSynth
 from sonitra.synth.pedalboard_synth import PedalboardSynth
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -19,6 +22,20 @@ def make_synth(cfg: PipelineConfig) -> SynthesiserProtocol:
 
     if backend == SynthBackend.PEDALBOARD_INSTRUMENT:
         instrument = cfg.pedalboard.instrument
+        if instrument.plugin_path is None and cfg.fluidsynth.soundfont_path is not None:
+            logger.warning(
+                "No VST instrument plugin path configured for synth_backend=pedalboard_instrument; "
+                "falling back to FluidSynth (soundfont_path=%s).",
+                cfg.fluidsynth.soundfont_path,
+            )
+            from sonitra.synth.fluid_synth import FluidSynth
+
+            return FluidSynth(
+                sample_rate=cfg.pipeline.sample_rate,
+                channels=cfg.pipeline.channels,
+                soundfont_path=cfg.fluidsynth.soundfont_path,
+                bpm=cfg.pipeline.bpm,
+            )
         return PedalboardSynth(
             sample_rate=cfg.pipeline.sample_rate,
             channels=cfg.pipeline.channels,

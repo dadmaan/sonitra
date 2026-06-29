@@ -25,17 +25,25 @@ def test_pedalboard_synth_implements_protocol():
 
 
 def test_protocol_render_signature_matches(midi_fixture):
-    for synth_cls in [DawDreamerSynth, PedalboardSynth]:
-        synth = synth_cls(sample_rate=44100)
-        notes = parse_midi(midi_fixture("test_c4.mid"))
-        audio = synth.render(notes, duration_sec=2.0)
-        assert isinstance(audio, np.ndarray)
-        assert audio.ndim == 2
+    # DawDreamerSynth covers protocol shape without needing a plugin.
+    synth = DawDreamerSynth(sample_rate=44100)
+    notes = parse_midi(midi_fixture("test_c4.mid"))
+    audio = synth.render(notes, duration_sec=2.0)
+    assert isinstance(audio, np.ndarray)
+    assert audio.ndim == 2
+
+
+def test_pedalboard_synth_without_plugin_raises_on_render(midi_fixture):
+    synth = PedalboardSynth(sample_rate=44100, channels=2, plugin_path=None)
+    notes = parse_midi(midi_fixture("test_c4.mid"))
+    with pytest.raises(ValueError, match="requires a VST instrument"):
+        synth.render(notes, duration_sec=2.0)
 
 
 def test_synth_factory_returns_correct_type_dawdreamer(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.rendering_mode = RenderingMode.DAWDREAMER_ONLY
+    # config_valid.yaml uses synth_backend: dawdreamer_faust
+    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
     synth = make_synth(cfg)
     assert isinstance(synth, DawDreamerSynth)
 

@@ -1,18 +1,20 @@
-# Multi-worker parallel: render (pedalboard_only), transcribe, and evaluate.
-# pipeline.max_workers: 2  -> ThreadPoolExecutor in run_pipeline (PEDALBOARD_ONLY path)
+# Multi-worker parallel: render (pedalboard_instrument), transcribe, and evaluate.
+# pipeline.max_workers: 4  -> ThreadPoolExecutor in run_pipeline (PEDALBOARD_INSTRUMENT path)
 # transcription.max_workers: 2 -> ThreadPoolExecutor in sonitra transcribe
 # evaluation.max_workers: 2   -> ThreadPoolExecutor in sonitra evaluate
 # transcribers.device: cpu     -> tf.device("cpu") context in BasicPitchTranscriber
-# quality_gates.silence_threshold_rms: 0.0 -> no silence gate (no instrument plugin installed)
+# quality_gates.silence_threshold_rms: 0.0 -> no silence gate (falls back to FluidSynth when no plugin)
 pipeline:
-    rendering_mode: pedalboard_only
+    synth_backend: pedalboard_instrument
+    effects_chain: pedalboard
+    bpm: 120
     sample_rate: 44100
     bit_depth: 24
     channels: 2
     duration_padding_sec: 2.0
     overwrite: true
     resume: false
-    max_workers: 2
+    max_workers: 4
     log_level: INFO
 
 io:
@@ -22,18 +24,17 @@ io:
     file_naming: "{stem}"
     dataset: test
 
+fluidsynth:
+    soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
 dawdreamer:
-    enabled: false
     block_size: 512
     plugin_path: null
     preset_path: null
-    soundfont_path: null
-    bpm: 120
     faust_code: null
     clear_midi_between_renders: true
 
 pedalboard:
-    enabled: true
     instrument:
         plugin_path: null
         preset_path: null

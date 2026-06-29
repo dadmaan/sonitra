@@ -11,13 +11,15 @@ from sonitra.config import PipelineConfig
 
 @pytest.fixture
 def benchmark_config(corpus_dir: Path) -> PipelineConfig:
-    # pedalboard_only without a plugin renders silence, which passes the
-    # default quality gates; the precomputed transcriber returns the original
-    # corpus MIDI, so symbolic metrics must come out perfect.
+    # Use FluidSynth with the system SoundFont so audio is non-silent.
+    # The precomputed transcriber returns the original corpus MIDI,
+    # so symbolic metrics must come out perfect.
     return PipelineConfig.model_validate(
         {
             "pipeline": {
-                "rendering_mode": "pedalboard_only",
+                "synth_backend": "fluidsynth",
+                "effects_chain": "pedalboard",
+                "bpm": 120,
                 "sample_rate": 22050,
                 "bit_depth": 16,
                 "channels": 1,
@@ -33,6 +35,7 @@ def benchmark_config(corpus_dir: Path) -> PipelineConfig:
                 "mp3_bitrate_kbps": 192,
                 "file_naming": "{stem}",
             },
+            "fluidsynth": {"soundfont_path": "/usr/share/sounds/sf2/default-GM.sf2"},
             "transcription": {
                 "transcribers": [
                     {"type": "precomputed", "midi_dir": str(corpus_dir), "name": "oracle"}

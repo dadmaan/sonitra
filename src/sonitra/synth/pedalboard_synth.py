@@ -32,7 +32,11 @@ class PedalboardSynth:
     def render(self, notes: Iterable[dict], duration_sec: float) -> np.ndarray:
         duration = max(0.0, float(duration_sec))
         if self.plugin_path is None:
-            return np.zeros((self.channels, int(self.sample_rate * duration)))
+            raise ValueError(
+                "PedalboardSynth requires a VST instrument plugin path. "
+                "Set pedalboard.instrument.plugin_path in your config, or use "
+                "a different synth_backend (fluidsynth, dawdreamer_faust, etc.)."
+            )
 
         plugin = self._load_plugin() if self.reload_plugin_per_file or self._plugin is None else self._plugin
         if self._plugin is None and not self.reload_plugin_per_file:
