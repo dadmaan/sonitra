@@ -11,7 +11,7 @@ def test_write_creates_manifest_file(tmp_path):
         ManifestEntry(
             midi_path="corpus/a.mid",
             output_path="out/a.wav",
-            rendering_mode="dawdreamer_synth_pedalboard_fx",
+            synth_backend="dawdreamer_faust",
             effects_chain_hash="abc123",
             status="done",
             duration_sec=3.1,
@@ -30,7 +30,7 @@ def test_each_write_appends_one_line(tmp_path):
             ManifestEntry(
                 midi_path=f"a{i}.mid",
                 output_path=f"a{i}.wav",
-                rendering_mode="pedalboard_only",
+                synth_backend="pedalboard_instrument",
                 effects_chain_hash="x",
                 status="done",
                 duration_sec=1.0,
@@ -49,7 +49,7 @@ def test_manifest_line_is_valid_json(tmp_path):
         ManifestEntry(
             midi_path="a.mid",
             output_path="a.wav",
-            rendering_mode="pedalboard_only",
+            synth_backend="pedalboard_instrument",
             effects_chain_hash="y",
             status="done",
             duration_sec=1.0,
@@ -82,7 +82,7 @@ def test_failed_list_written_on_failure(tmp_path):
         ManifestEntry(
             midi_path="bad.mid",
             output_path="",
-            rendering_mode="pedalboard_only",
+            synth_backend="pedalboard_instrument",
             effects_chain_hash="z",
             status="failed",
             duration_sec=0.0,

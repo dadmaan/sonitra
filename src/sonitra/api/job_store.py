@@ -14,7 +14,7 @@ class JobRecord:
     midi_dir: str
     out_dir: str
     plugin_path: str | None
-    rendering_mode: str
+    synth_backend: str
     status: JobStatus
     total: int
     succeeded: int
@@ -30,7 +30,7 @@ class JobStore:
         self._cancel_requested: dict[str, bool] = {}
         self._lock = Lock()
 
-    def create(self, *, midi_dir: str, out_dir: str, rendering_mode: str = "", plugin_path: str | None = None) -> str:
+    def create(self, *, midi_dir: str, out_dir: str, synth_backend: str = "", plugin_path: str | None = None) -> str:
         job_id = uuid4().hex
         created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         record = JobRecord(
@@ -38,7 +38,7 @@ class JobStore:
             midi_dir=midi_dir,
             out_dir=out_dir,
             plugin_path=plugin_path,
-            rendering_mode=rendering_mode,
+            synth_backend=synth_backend,
             status=JobStatus.PENDING,
             total=0,
             succeeded=0,

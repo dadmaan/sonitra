@@ -30,6 +30,7 @@ class DawDreamerSynth:
         self.clear_midi_between_renders = clear_midi_between_renders
 
     def render(self, notes: Iterable[dict], duration_sec: float) -> np.ndarray:
+        self.engine.engine.set_bpm(float(self.bpm))
         if self.plugin_path is None:
             return render_notes_faust(list(notes), engine=self.engine, duration_sec=duration_sec)
         return render_notes_vst(

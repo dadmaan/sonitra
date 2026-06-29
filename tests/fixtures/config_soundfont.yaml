@@ -1,5 +1,7 @@
 pipeline:
-  rendering_mode: dawdreamer_synth_pedalboard_fx
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
   sample_rate: 44100
   bit_depth: 24
   channels: 2
@@ -16,17 +18,16 @@ io:
   file_naming: "{stem}"
 
 dawdreamer:
-  enabled: true
   block_size: 512
   plugin_path: null
   preset_path: null
-  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
-  bpm: 120
   faust_code: null
   clear_midi_between_renders: true
 
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
 pedalboard:
-  enabled: true
   instrument:
     plugin_path: null
     preset_path: null

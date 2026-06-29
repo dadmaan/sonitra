@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from sonitra.effects.builtin_effects import EffectConfig
 from sonitra.transcribe.configs import TranscriberConfig
@@ -27,16 +27,24 @@ class ConfigError(RuntimeError):
     pass
 
 
-class RenderingMode(str, Enum):
-    DAWDREAMER_ONLY = "dawdreamer_only"
-    PEDALBOARD_ONLY = "pedalboard_only"
-    DAWDREAMER_SYNTH_PEDALBOARD_FX = "dawdreamer_synth_pedalboard_fx"
+class SynthBackend(str, Enum):
+    FLUIDSYNTH = "fluidsynth"
+    DAWDREAMER_FAUST = "dawdreamer_faust"
+    DAWDREAMER_VST = "dawdreamer_vst"
+    PEDALBOARD_INSTRUMENT = "pedalboard_instrument"
+
+
+class EffectsChain(str, Enum):
+    NONE = "none"
+    PEDALBOARD = "pedalboard"
 
 
 class PipelineSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    rendering_mode: RenderingMode
+    synth_backend: SynthBackend
+    effects_chain: EffectsChain
+    bpm: int = Field(default=120, ge=1)
     sample_rate: int
     bit_depth: int
     channels: int
@@ -68,14 +76,17 @@ class IOSection(BaseModel):
 class DawDreamerSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
     block_size: int = 512
     plugin_path: Path | None = None
     preset_path: Path | None = None
-    soundfont_path: Path | None = None
-    bpm: int = 120
     faust_code: str | None = None
     clear_midi_between_renders: bool = True
+
+
+class FluidSynthSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    soundfont_path: Path | None = None
 
 
 class PedalboardInstrumentSection(BaseModel):
@@ -90,7 +101,6 @@ class PedalboardInstrumentSection(BaseModel):
 class PedalboardSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
     instrument: PedalboardInstrumentSection = Field(default_factory=PedalboardInstrumentSection)
     effects: list[EffectConfig] = Field(default_factory=list)
 
@@ -216,6 +226,7 @@ class PipelineConfig(BaseModel):
     pipeline: PipelineSection
     io: IOSection
     dawdreamer: DawDreamerSection = Field(default_factory=DawDreamerSection)
+    fluidsynth: FluidSynthSection = Field(default_factory=FluidSynthSection)
     pedalboard: PedalboardSection = Field(default_factory=PedalboardSection)
     normalisation: NormalisationSection = Field(default_factory=NormalisationSection)
     quality_gates: QualityGatesSection = Field(default_factory=QualityGatesSection)
@@ -225,6 +236,24 @@ class PipelineConfig(BaseModel):
     evaluation: EvaluationSection = Field(default_factory=EvaluationSection)
     benchmark: BenchmarkSection = Field(default_factory=BenchmarkSection)
 
+    @model_validator(mode="after")
+    def _validate_backend_fields(self) -> "PipelineConfig":
+        backend = self.pipeline.synth_backend
+        if backend == SynthBackend.FLUIDSYNTH and not self.fluidsynth.soundfont_path:
+            raise ValueError(
+                "synth_backend=fluidsynth requires fluidsynth.soundfont_path to be set"
+            )
+        if backend == SynthBackend.DAWDREAMER_VST and not self.dawdreamer.plugin_path:
+            raise ValueError(
+                "synth_backend=dawdreamer_vst requires dawdreamer.plugin_path to be set"
+            )
+        if backend == SynthBackend.DAWDREAMER_FAUST and self.dawdreamer.plugin_path:
+            raise ValueError(
+                "synth_backend=dawdreamer_faust must not set dawdreamer.plugin_path; "
+                "use synth_backend=dawdreamer_vst for VST plugins"
+            )
+        return self
+
     @classmethod
     def model_validate(cls, obj: Any, *args: Any, **kwargs: Any) -> "PipelineConfig":
         try:
@@ -233,11 +262,11 @@ class PipelineConfig(BaseModel):
             raise ConfigError(str(exc)) from exc
 
     def validate_worker_constraint(self) -> "PipelineConfig":
-        if self.pipeline.rendering_mode in {
-            RenderingMode.DAWDREAMER_ONLY,
-            RenderingMode.DAWDREAMER_SYNTH_PEDALBOARD_FX,
+        if self.pipeline.synth_backend in {
+            SynthBackend.DAWDREAMER_FAUST,
+            SynthBackend.DAWDREAMER_VST,
         } and self.pipeline.max_workers != 1:
-            logger.warning("max_workers forced to 1 for dawdreamer modes")
+            logger.warning("max_workers forced to 1 for dawdreamer backends")
             self.pipeline.max_workers = 1
         return self
 

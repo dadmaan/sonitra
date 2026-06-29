@@ -131,3 +131,33 @@ def test_vital_preset_changes_rendered_audio(vital_vst_path, midi_fixture):
     assert default_rms > 0.05
     assert preset_rms > 0.01
     assert preset_rms < default_rms * 0.7
+
+
+from unittest.mock import MagicMock, patch
+
+
+def _mock_engine(sample_rate: int = 44100):
+    engine = MagicMock()
+    engine.sample_rate = sample_rate
+    engine.engine = MagicMock()
+    engine.engine.get_audio.return_value = __import__("numpy").zeros((2, sample_rate))
+    engine.assert_thread = MagicMock()
+    return engine
+
+
+def test_dawdreamer_synth_calls_set_bpm_before_render_faust() -> None:
+    """DawDreamerSynth.render() must call engine.engine.set_bpm() before any render call."""
+    import dawdreamer as daw
+    from sonitra.synth.dawdreamer_synth import DawDreamerSynth
+    call_order = []
+    mock_set_bpm = MagicMock(side_effect=lambda bpm: call_order.append("set_bpm"))
+    with patch.object(daw.RenderEngine, "set_bpm", mock_set_bpm):
+        synth = DawDreamerSynth(sample_rate=44100, block_size=512, bpm=144)
+        notes = [{"pitch": 60, "velocity": 100, "start_sec": 0.0, "duration_sec": 0.5}]
+        with patch("sonitra.synth.dawdreamer_synth.render_notes_faust") as mock_faust:
+            mock_faust.return_value = __import__("numpy").zeros((2, 44100))
+            mock_faust.side_effect = lambda *a, **kw: (
+                call_order.append("render"), __import__("numpy").zeros((2, 44100))
+            )[1]
+            synth.render(notes, duration_sec=1.0)
+    assert call_order.index("set_bpm") < call_order.index("render")

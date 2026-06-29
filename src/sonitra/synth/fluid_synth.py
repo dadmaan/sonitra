@@ -12,9 +12,6 @@ from scipy.io import wavfile
 _PPQN = 480
 """Pulses per quarter note used for intermediate MIDI files."""
 
-_TICKS_PER_SEC_AT_120BPM = _PPQN * 2
-"""At 120 BPM one quarter note = 0.5 s, so one second = 2 * PPQN ticks."""
-
 
 class FluidSynth:
     """SoundFont-based synthesiser using the fluidsynth CLI.
@@ -30,10 +27,12 @@ class FluidSynth:
         sample_rate: int,
         channels: int = 2,
         soundfont_path: Path | str,
+        bpm: int = 120,
     ) -> None:
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
         self.soundfont_path = Path(soundfont_path)
+        self.bpm = int(bpm)
         if not self.soundfont_path.exists():
             raise FileNotFoundError(f"SoundFont not found: {self.soundfont_path}")
 
@@ -58,7 +57,7 @@ class FluidSynth:
             midi_path = tmp_path / "render.mid"
             wav_path = tmp_path / "render.wav"
 
-            _write_notes_to_midi(midi_path, notes_list)
+            _write_notes_to_midi(midi_path, notes_list, bpm=self.bpm)
             _run_fluidsynth(
                 soundfont_path=self.soundfont_path,
                 midi_path=midi_path,
@@ -73,12 +72,22 @@ class FluidSynth:
         return _trim_or_pad(audio, int(duration * self.sample_rate))
 
 
-def _write_notes_to_midi(path: Path, notes: list[dict]) -> None:
-    """Write note dictionaries to a type-0 MIDI file at ``path``."""
+def _write_notes_to_midi(path: Path, notes: list[dict], bpm: int = 120) -> None:
+    """Write note dictionaries to a type-0 MIDI file at ``path``.
+
+    Args:
+        path: Output MIDI file path.
+        notes: List of note dicts with keys ``pitch``, ``velocity``,
+            ``start_sec``, and ``duration_sec``.
+        bpm: Beats per minute for tempo meta message and tick computation.
+    """
+    bpm = int(bpm)
+    tempo_us = round(60_000_000 / bpm)
+    ticks_per_sec = _PPQN * bpm / 60.0
     midi = mido.MidiFile(type=0, ticks_per_beat=_PPQN)
     track = mido.MidiTrack()
     midi.tracks.append(track)
-    track.append(mido.MetaMessage("set_tempo", tempo=500000, time=0))
+    track.append(mido.MetaMessage("set_tempo", tempo=tempo_us, time=0))
 
     events: list[tuple[int, str, int, int]] = []
     for note in notes:
@@ -90,8 +99,8 @@ def _write_notes_to_midi(path: Path, notes: list[dict]) -> None:
             continue
         start = max(0.0, float(note.get("start_sec", 0.0)))
         pitch = int(note["pitch"])
-        start_tick = int(round(start * _TICKS_PER_SEC_AT_120BPM))
-        end_tick = int(round((start + duration) * _TICKS_PER_SEC_AT_120BPM))
+        start_tick = int(round(start * ticks_per_sec))
+        end_tick = int(round((start + duration) * ticks_per_sec))
         events.append((start_tick, "note_on", pitch, velocity))
         events.append((end_tick, "note_off", pitch, 0))
 

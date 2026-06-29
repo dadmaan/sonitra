@@ -10,7 +10,7 @@ import threading
 class ManifestEntry:
     midi_path: str
     output_path: str
-    rendering_mode: str
+    synth_backend: str
     effects_chain_hash: str
     status: str
     duration_sec: float

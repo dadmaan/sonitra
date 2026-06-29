@@ -96,3 +96,13 @@ def test_render_duration_close_to_requested(vst_path, midi_fixture):
     audio = synth.render(parse_midi(midi_fixture("test_c4.mid")), duration_sec=3.0)
     expected = 44100 * 3
     assert abs(audio.shape[1] - expected) < 1024
+
+
+def test_pedalboard_synth_accepts_bpm_in_constructor() -> None:
+    ps = PedalboardSynth(sample_rate=44100, plugin_path=None, bpm=130)
+    assert ps.bpm == 130
+
+
+def test_pedalboard_synth_bpm_defaults_to_120() -> None:
+    ps = PedalboardSynth(sample_rate=44100, plugin_path=None)
+    assert ps.bpm == 120

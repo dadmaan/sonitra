@@ -6,7 +6,7 @@ import pedalboard
 import pytest
 import soundfile as sf
 
-from sonitra.config import RenderingMode, default_config_path, load_config
+from sonitra.config import SynthBackend, default_config_path, load_config
 from sonitra.pipeline import run_pipeline
 from sonitra.synth.dawdreamer_synth import DawDreamerSynth
 from sonitra.synth.pedalboard_synth import PedalboardSynth
@@ -18,7 +18,7 @@ def test_pipeline_uses_dawdreamer_synth_in_dawdreamer_only_mode(
     monkeypatch, tmp_path, midi_fixture, config_fixture
 ):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.rendering_mode = RenderingMode.DAWDREAMER_ONLY
+    cfg.pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
     spy = []
     orig = DawDreamerSynth.render
     monkeypatch.setattr(DawDreamerSynth, "render", lambda self, *a, **kw: spy.append("dd") or orig(self, *a, **kw))
@@ -96,7 +96,7 @@ def test_manifest_contains_correct_mode(tmp_path, midi_fixture, config_fixture):
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
     line = json.loads((tmp_path / "renders.jsonl").read_text().strip())
-    assert line["rendering_mode"] == "dawdreamer_synth_pedalboard_fx"
+    assert line["synth_backend"] == "dawdreamer_faust"
 
 
 # ── Output formats ────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ def test_output_format_config_controls_extension(tmp_path, midi_fixture, config_
 
 def test_dawdreamer_mode_uses_single_worker(monkeypatch, tmp_path, midi_fixture, config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.rendering_mode = RenderingMode.DAWDREAMER_ONLY
+    cfg.pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
     cfg.pipeline.max_workers = 8
     worker_counts = []
 

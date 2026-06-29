@@ -330,9 +330,9 @@
           "status": {
             "$ref": "#/components/schemas/JobStatus"
           },
-          "rendering_mode": {
+          "synth_backend": {
             "type": "string",
-            "title": "Rendering Mode",
+            "title": "Synth Backend",
             "default": ""
           },
           "total": {

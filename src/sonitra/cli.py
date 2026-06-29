@@ -420,20 +420,25 @@ def init(
 ) -> None:
     """Write a starter config.yaml to the given path."""
     from sonitra.config import (
+        DawDreamerSection,
+        EffectsChain,
+        FluidSynthSection,
         IOSection,
         NormalisationSection,
         ObservabilitySection,
         PipelineConfig,
         PipelineSection,
         QualityGatesSection,
-        RenderingMode,
+        SynthBackend,
         TranscriptionSection,
     )
     from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 
     cfg = PipelineConfig(
         pipeline=PipelineSection(
-            rendering_mode=RenderingMode.DAWDREAMER_ONLY,
+            synth_backend=SynthBackend.DAWDREAMER_FAUST,
+            effects_chain=EffectsChain.NONE,
+            bpm=120,
             sample_rate=44100,
             bit_depth=24,
             channels=2,
@@ -443,12 +448,14 @@ def init(
             max_workers=1,
             log_level="INFO",
         ),
+        fluidsynth=FluidSynthSection(soundfont_path=None),
         io=IOSection(
             corpus_root="corpus",
             output_format="wav",
             mp3_bitrate_kbps=192,
             file_naming="{stem}",
         ),
+        dawdreamer=DawDreamerSection(),
         normalisation=NormalisationSection(
             enabled=True,
             mode="peak",

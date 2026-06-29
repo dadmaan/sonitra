@@ -3,45 +3,56 @@ from __future__ import annotations
 import pytest
 
 from sonitra.benchmark.conditions import Condition, apply_overrides, expand_conditions
-from sonitra.config import BenchmarkSection, PipelineConfig, RenderingMode
+from sonitra.config import BenchmarkSection, PipelineConfig, SynthBackend
 
 
-def _config() -> PipelineConfig:
-    return PipelineConfig.model_validate(
-        {
-            "pipeline": {
-                "rendering_mode": "pedalboard_only",
-                "sample_rate": 44100,
-                "bit_depth": 16,
-                "channels": 2,
-                "duration_padding_sec": 1.0,
-                "overwrite": True,
-                "resume": False,
-                "max_workers": 1,
-                "log_level": "INFO",
-            },
-            "io": {
-                "corpus_root": ".",
-                "output_format": "wav",
-                "mp3_bitrate_kbps": 192,
-                "file_naming": "{stem}",
-            },
-            "pedalboard": {
-                "effects": [
-                    {"type": "Gain", "gain_db": 0.0},
-                    {
-                        "type": "Reverb",
-                        "room_size": 0.4,
-                        "damping": 0.5,
-                        "wet_level": 0.1,
-                        "dry_level": 0.9,
-                        "width": 1.0,
-                        "freeze_mode": False,
-                    },
-                ]
-            },
-        }
-    )
+def _config(**overrides) -> PipelineConfig:
+    return PipelineConfig.model_validate({
+        "pipeline": {
+            "synth_backend": "pedalboard_instrument",
+            "effects_chain": "pedalboard",
+            "sample_rate": 44100,
+            "bit_depth": 16,
+            "channels": 2,
+            "duration_padding_sec": 1.0,
+            "overwrite": True,
+            "resume": False,
+            "max_workers": 1,
+            "log_level": "INFO",
+            "bpm": 120,
+            **overrides.pop("pipeline", {}),
+        },
+        "io": {
+            "corpus_root": ".",
+            "output_format": "wav",
+            "mp3_bitrate_kbps": 192,
+            "file_naming": "{stem}",
+        },
+        "dawdreamer": {
+            "block_size": 512,
+            "plugin_path": None,
+            "preset_path": None,
+            "faust_code": None,
+            "clear_midi_between_renders": True,
+        },
+        "pedalboard": {
+            "instrument": {"plugin_path": None, "preset_path": None,
+                           "reload_plugin_per_file": False, "silence_flush_sec": 0.5},
+            "effects": [
+                {"type": "Gain", "gain_db": 0.0},
+                {
+                    "type": "Reverb",
+                    "room_size": 0.4,
+                    "damping": 0.5,
+                    "wet_level": 0.1,
+                    "dry_level": 0.9,
+                    "width": 1.0,
+                    "freeze_mode": False,
+                },
+            ],
+        },
+        **overrides,
+    })
 
 
 def test_expand_includes_baseline_conditions_and_sweeps() -> None:
@@ -93,10 +104,8 @@ def test_apply_overrides_list_index() -> None:
 
 
 def test_apply_overrides_enum_field() -> None:
-    updated = apply_overrides(
-        _config(), {"pipeline.rendering_mode": "dawdreamer_only"}
-    )
-    assert updated.pipeline.rendering_mode == RenderingMode.DAWDREAMER_ONLY
+    updated = apply_overrides(_config(), {"pipeline.synth_backend": "dawdreamer_faust"})
+    assert updated.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
 
 
 def test_apply_overrides_unknown_key_raises() -> None:
@@ -120,3 +129,9 @@ def test_condition_slug_is_filesystem_safe() -> None:
     condition = Condition(name="reverb wet/dry=0.5")
     assert "/" not in condition.slug
     assert " " not in condition.slug
+
+
+def test_apply_overrides_triggers_cross_field_validator_on_vst_without_plugin() -> None:
+    from sonitra.config import ConfigError
+    with pytest.raises(ConfigError, match="plugin_path"):
+        apply_overrides(_config(), {"pipeline.synth_backend": "dawdreamer_vst"})
