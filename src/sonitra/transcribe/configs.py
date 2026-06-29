@@ -22,6 +22,7 @@ class BasicPitchTranscriberConfig(_TranscriberBase):
     minimum_note_length_ms: float = 127.7
     minimum_frequency_hz: float | None = None
     maximum_frequency_hz: float | None = None
+    device: str = "cpu"
 
 
 class ExternalCommandTranscriberConfig(_TranscriberBase):
