@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
 import subprocess
@@ -78,6 +79,16 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Run only the named config(s) (stem without .yaml). "
             "Omit to run all configs under config/."
+        ),
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Number of configs to process in parallel (default: 1). "
+            "Each config's render→transcribe→evaluate steps still run serially."
         ),
     )
     return parser.parse_args()
@@ -168,6 +179,108 @@ def _dump_csv(rows: list[dict], path: Path) -> None:
             )
 
 
+def _process_config(
+    config_path: Path,
+    args: argparse.Namespace,
+    audio_dir_base: Path,
+    transcription_dir_base: Path,
+    eval_dir: Path,
+    midi_ref_dir: Path,
+) -> tuple[list[dict], list[dict], list[str]]:
+    """Run render → transcribe → evaluate for one config.
+
+    Returns ``(summary_rows, all_rows, failures)`` so the caller can merge
+    results across configs, including when running configs in parallel.
+    """
+    name = config_path.stem
+    audio_dir = audio_dir_base / name
+    summary_rows: list[dict] = []
+    all_rows: list[dict] = []
+    failures: list[str] = []
+
+    bar = "=" * 60
+    print(f"\n{bar}")
+    print(f"CONFIG: {name}")
+
+    if not args.skip_render:
+        print(f"  step 1: render     -> {audio_dir}/")
+        render_cmd = [PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
+        if args.dataset is not None:
+            render_cmd += ["--dataset", args.dataset]
+        if args.limit is not None:
+            render_cmd += ["--limit", str(args.limit)]
+        if args.seed is not None:
+            render_cmd += ["--seed", str(args.seed)]
+        rc = _run(render_cmd)
+        if rc != 0:
+            print(f"  FAIL  — render exited {rc}")
+            failures.append(f"{name}:render")
+            return summary_rows, all_rows, failures
+
+    if not audio_dir.exists():
+        print(f"  SKIP — no audio dir at {audio_dir}")
+        return summary_rows, all_rows, failures
+
+    wavs = sorted(audio_dir.rglob("*.wav"))
+    if not wavs:
+        print(f"  SKIP — no WAV files in {audio_dir}")
+        return summary_rows, all_rows, failures
+
+    print(f"  audio : {audio_dir}  ({len(wavs)} WAVs)")
+
+    transcription_out = transcription_dir_base / name
+    print(f"  step 2: transcribe -> {transcription_out}/")
+    rc = _run(
+        [
+            PYTHON, "-m", "sonitra", "transcribe",
+            "--config", str(config_path),
+            "--audio", str(audio_dir),
+            "--output", str(transcription_out),
+        ]
+    )
+    if rc != 0:
+        print(f"  FAIL  — transcribe exited {rc}")
+        failures.append(f"{name}:transcribe")
+        return summary_rows, all_rows, failures
+
+    estimate_dir = transcription_out / "basic_pitch"
+    if not estimate_dir.exists():
+        subdirs = [d for d in transcription_out.iterdir() if d.is_dir()]
+        if not subdirs:
+            print(f"  FAIL  — no transcription output subdir found under {transcription_out}")
+            failures.append(f"{name}:evaluate")
+            return summary_rows, all_rows, failures
+        estimate_dir = sorted(subdirs)[0]
+    print(f"  midis : {estimate_dir}/")
+
+    eval_out = eval_dir / f"{name}.jsonl"
+    print(f"  step 3: evaluate   -> {eval_out}")
+    rc = _run(
+        [
+            PYTHON, "-m", "sonitra", "evaluate",
+            "--config", str(config_path),
+            "--reference", str(midi_ref_dir),
+            "--estimate", str(estimate_dir),
+            "--output", str(eval_out),
+        ]
+    )
+    if rc != 0:
+        print(f"  FAIL  — evaluate exited {rc}")
+        failures.append(f"{name}:evaluate")
+        return summary_rows, all_rows, failures
+
+    rows = _load_jsonl(eval_out)
+    means = _mean_metrics(rows)
+    summary_rows.append({"config": name, **means})
+    all_rows.extend({"config": name, **r} for r in rows)
+
+    onset_f1_key = next((k for k in means if "onset_f1" in k), None)
+    if onset_f1_key and means[onset_f1_key] is not None:
+        print(f"  onset_f1 (mean): {means[onset_f1_key]:.3f}")
+    print("  OK")
+    return summary_rows, all_rows, failures
+
+
 def main() -> int:
     args = _parse_args()
     AUDIO_DIR, TRANSCRIPTION_DIR, EVAL_DIR, MIDI_REF_DIR = _resolve_dirs(args.dataset)
@@ -197,118 +310,32 @@ def main() -> int:
     summary_rows: list[dict] = []
     all_rows: list[dict] = []
 
-    for config_path in configs:
-        name = config_path.stem
-        audio_dir = AUDIO_DIR / name
+    def _merge(result: tuple[list[dict], list[dict], list[str]]) -> None:
+        s_rows, a_rows, f_list = result
+        summary_rows.extend(s_rows)
+        all_rows.extend(a_rows)
+        failures.extend(f_list)
 
-        bar = "=" * 60
-        print(f"\n{bar}")
-        print(f"CONFIG: {name}")
-
-        # ── Step 1: render ──────────────────────────────────────────────────
-        if not args.skip_render:
-            print(f"  step 1: render     -> {audio_dir}/")
-            render_cmd = [
-                PYTHON,
-                "-m",
-                "sonitra",
-                "render",
-                "--config",
-                str(config_path),
-            ]
-            if args.dataset is not None:
-                render_cmd += ["--dataset", args.dataset]
-            if args.limit is not None:
-                render_cmd += ["--limit", str(args.limit)]
-            if args.seed is not None:
-                render_cmd += ["--seed", str(args.seed)]
-            rc = _run(render_cmd)
-            if rc != 0:
-                print(f"  FAIL  — render exited {rc}")
-                failures.append(f"{name}:render")
-                continue
-
-        if not audio_dir.exists():
-            print(f"  SKIP — no audio dir at {audio_dir}")
-            continue
-
-        wavs = sorted(audio_dir.rglob("*.wav"))
-        if not wavs:
-            print(f"  SKIP — no WAV files in {audio_dir}")
-            continue
-
-        print(f"  audio : {audio_dir}  ({len(wavs)} WAVs)")
-
-        # ── Step 2: transcribe ──────────────────────────────────────────────
-        transcription_out = TRANSCRIPTION_DIR / name
-        print(f"  step 2: transcribe -> {transcription_out}/")
-        rc = _run(
-            [
-                PYTHON,
-                "-m",
-                "sonitra",
-                "transcribe",
-                "--config",
-                str(config_path),
-                "--audio",
-                str(audio_dir),
-                "--output",
-                str(transcription_out),
-            ]
-        )
-        if rc != 0:
-            print(f"  FAIL  — transcribe exited {rc}")
-            failures.append(f"{name}:transcribe")
-            continue
-
-        # ── Step 3: find backend subdir ─────────────────────────────────────
-        estimate_dir = transcription_out / "basic_pitch"
-        if not estimate_dir.exists():
-            subdirs = [d for d in transcription_out.iterdir() if d.is_dir()]
-            if not subdirs:
-                print(
-                    f"  FAIL  — no transcription output subdir found under {transcription_out}"
+    if args.jobs > 1:
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = [
+                executor.submit(
+                    _process_config,
+                    config_path,
+                    args,
+                    AUDIO_DIR,
+                    TRANSCRIPTION_DIR,
+                    EVAL_DIR,
+                    MIDI_REF_DIR,
                 )
-                failures.append(f"{name}:evaluate")
-                continue
-            estimate_dir = sorted(subdirs)[0]
-        print(f"  midis : {estimate_dir}/")
-
-        # ── Step 4: evaluate ────────────────────────────────────────────────
-        eval_out = EVAL_DIR / f"{name}.jsonl"
-        print(f"  step 3: evaluate   -> {eval_out}")
-        rc = _run(
-            [
-                PYTHON,
-                "-m",
-                "sonitra",
-                "evaluate",
-                "--config",
-                str(config_path),
-                "--reference",
-                str(MIDI_REF_DIR),
-                "--estimate",
-                str(estimate_dir),
-                "--output",
-                str(eval_out),
+                for config_path in configs
             ]
-        )
-        if rc != 0:
-            print(f"  FAIL  — evaluate exited {rc}")
-            failures.append(f"{name}:evaluate")
-            continue
-
-        # ── Step 5: accumulate summary ──────────────────────────────────────
-        rows = _load_jsonl(eval_out)
-        means = _mean_metrics(rows)
-        summary_rows.append({"config": name, **means})
-        all_rows.extend({"config": name, **r} for r in rows)
-
-        onset_f1_key = next((k for k in means if "onset_f1" in k), None)
-        if onset_f1_key and means[onset_f1_key] is not None:
-            print(f"  onset_f1 (mean): {means[onset_f1_key]:.3f}")
-
-        print(f"  OK")
+            for future in as_completed(futures):
+                _merge(future.result())
+        summary_rows.sort(key=lambda r: r.get("config", ""))
+    else:
+        for config_path in configs:
+            _merge(_process_config(config_path, args, AUDIO_DIR, TRANSCRIPTION_DIR, EVAL_DIR, MIDI_REF_DIR))
 
     # ── Summary ─────────────────────────────────────────────────────────────
     summary_path = EVAL_DIR / "summary.jsonl"
