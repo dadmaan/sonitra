@@ -132,6 +132,7 @@ separation:
 
 transcription:
   output_dir: transcriptions
+  max_workers: 1                 # parallel audio files per transcriber; safe for any rendering mode
   transcribers:
     - type: basic_pitch          # Spotify Basic Pitch — installed by default
       enabled: true
@@ -140,6 +141,7 @@ transcription:
       minimum_note_length_ms: 127.7
       minimum_frequency_hz: null # null = no lower frequency cutoff
       maximum_frequency_hz: null # null = no upper frequency cutoff
+      device: cpu                # TF device for inference: "cpu", "GPU:0", "GPU:1", …
     # Pre-exported MIDI from any external tool:
     # - type: precomputed
     #   name: klangio             # used as the output subdirectory name
@@ -150,6 +152,7 @@ transcription:
     #   command: "amt-tool transcribe {input} -o {output}"
 
 evaluation:
+  max_workers: 1                 # parallel reference/estimate pairs during scoring
   note_metrics:
     enabled: true
     onset_tolerance_sec: 0.05        # ±50 ms onset matching window
@@ -172,6 +175,7 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline            # condition name used as the reference for delta metrics
+  max_workers: 1                     # parallel conditions; uses ProcessPoolExecutor for JUCE isolation
   conditions: []                     # named config variants; each provides a list of overrides
   sweeps:
     - name: reverb_wet               # sweep name used in results output

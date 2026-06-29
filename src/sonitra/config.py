@@ -138,6 +138,7 @@ class TranscriptionSection(BaseModel):
 
     transcribers: list[TranscriberConfig] = Field(default_factory=list)
     output_dir: Path | str = "transcriptions"
+    max_workers: int = 1
 
 
 class NoteMetricsSection(BaseModel):
@@ -180,6 +181,7 @@ class EvaluationSection(BaseModel):
     frame_metrics: FrameMetricsSection = Field(default_factory=FrameMetricsSection)
     expressive_metrics: ExpressiveMetricsSection = Field(default_factory=ExpressiveMetricsSection)
     dtw: DTWMetricSection = Field(default_factory=DTWMetricSection)
+    max_workers: int = 1
 
 
 class ConditionSection(BaseModel):
@@ -205,6 +207,7 @@ class BenchmarkSection(BaseModel):
     baseline_name: str = "baseline"
     conditions: list[ConditionSection] = Field(default_factory=list)
     sweeps: list[SweepSection] = Field(default_factory=list)
+    max_workers: int = 1
 
 
 class PipelineConfig(BaseModel):
