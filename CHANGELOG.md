@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(no changes yet)
+### Added
+
+- `max_workers` config field in `transcription`, `evaluation`, and `benchmark` sections for controlling parallel execution granularity
+- `device` config field in `BasicPitchTranscriberConfig` for selecting TensorFlow inference device (e.g. `cpu`, `GPU:0`)
+- `--jobs` / `-j` CLI flag on `scripts/run_transcribe_eval.py` for parallel processing of multiple configs
+- `threading.Lock` in `ManifestWriter.write()` to support safe concurrent writes from multiple threads
+- `_init_thread_synth_chain()` initializer and `_render_file()` helper in `pipeline.py`, extracted from the main loop to support per-thread synth/effect-chain instances
+- `_condition_worker()` subprocess entry point in `benchmark/runner.py` for running benchmark conditions in isolated processes via `ProcessPoolExecutor`
+
+### Changed
+
+- `run_pipeline` now uses `ThreadPoolExecutor` for PEDALBOARD_ONLY mode to render MIDI files concurrently, with per-thread synth and effects chain instances
+- CLI `transcribe` command now parallelises per-backend audio transcription via `ThreadPoolExecutor` when `transcription.max_workers > 1`
+- CLI `evaluate` command now parallelises reference/estimate scoring via `ThreadPoolExecutor` when `evaluation.max_workers > 1`
+- `run_benchmark` now parallelises benchmark conditions via `ProcessPoolExecutor` when `benchmark.max_workers > 1`, isolating DawDreamer/JUCE state per subprocess
+- `_run_condition` and `_evaluate_one` in `benchmark/runner.py` now accept optional `writer` parameter (default `None`) for subprocess worker mode
+- `scripts/run_transcribe_eval.py` main loop refactored into `_process_config()` function to enable parallel config execution
+- `BasicPitchTranscriber.transcribe()` wraps the `predict()` call in `tf.device(self.device)` context manager to respect the configured device
 
 ## [0.1.0] - 2026-06-26
 
