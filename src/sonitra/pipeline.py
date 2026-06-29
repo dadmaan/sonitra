@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 from typing import Iterable, List, Dict, Any
 import time
 
 import numpy as np
 import pedalboard
+
+_thread_local: threading.local = threading.local()
 
 from sonitra.config import PipelineConfig, RenderingMode
 from sonitra.engine import RendererEngine
@@ -38,6 +42,118 @@ class PipelineResult:
         }
 
 
+def _init_thread_synth_chain(cfg: PipelineConfig) -> None:
+    """Create per-thread synth and effects-chain instances (called once per thread)."""
+    _thread_local.synth = make_synth(cfg)
+    _thread_local.chain = build_effects_chain_from_config(cfg)
+
+
+def _render_file(
+    midi_path: Path,
+    out_dir: Path,
+    cfg: PipelineConfig,
+    chain_hash: str,
+    manifest: ManifestWriter | None,
+    corpus_root: Path | None,
+) -> Dict[str, Any]:
+    """Render one MIDI file using the calling thread's synth/chain.
+
+    Returns a log-entry dict with a ``'status'`` key: ``'succeeded'``,
+    ``'failed'``, or ``'skipped'``.  Writes to *manifest* directly (which is
+    thread-safe after Tier-0 changes).
+    """
+    output_path = _resolve_output_path(midi_path, out_dir, cfg, corpus_root)
+    if output_path.exists() and not cfg.pipeline.overwrite:
+        return {"midi": str(midi_path), "output": str(output_path), "status": "skipped"}
+
+    synth = _thread_local.synth
+    chain = _thread_local.chain
+
+    try:
+        notes = parse_midi(midi_path)
+        duration = _compute_duration(notes, cfg.pipeline.duration_padding_sec)
+        audio = synth.render(notes, duration_sec=duration)
+        audio = normalise_from_config(audio, cfg, stage="pre")
+        if cfg.pipeline.rendering_mode != RenderingMode.DAWDREAMER_ONLY and len(chain) > 0:
+            audio = chain(audio, cfg.pipeline.sample_rate)
+        audio = normalise_from_config(audio, cfg, stage="post")
+
+        quality = check_quality(audio, cfg.pipeline.sample_rate, cfg.quality_gates)
+        if not quality.passed:
+            entry = ManifestEntry(
+                midi_path=str(midi_path),
+                output_path=str(output_path),
+                rendering_mode=cfg.pipeline.rendering_mode.value,
+                effects_chain_hash=chain_hash,
+                status="failed",
+                duration_sec=quality.duration_sec,
+                rms=quality.rms,
+                peak=quality.peak,
+                elapsed_seconds=0.0,
+                quality_flags=quality.to_dict(),
+            )
+            if manifest:
+                manifest.write(entry)
+            return {
+                "midi": str(midi_path),
+                "output": str(output_path),
+                "status": "failed",
+                "quality_flags": quality.to_dict(),
+            }
+
+        write_audio(
+            audio,
+            output_path,
+            sample_rate=cfg.pipeline.sample_rate,
+            bit_depth=cfg.pipeline.bit_depth,
+            output_format=cfg.io.output_format,
+            mp3_bitrate_kbps=cfg.io.mp3_bitrate_kbps,
+            overwrite=cfg.pipeline.overwrite,
+        )
+        entry = ManifestEntry(
+            midi_path=str(midi_path),
+            output_path=str(output_path),
+            rendering_mode=cfg.pipeline.rendering_mode.value,
+            effects_chain_hash=chain_hash,
+            status="done",
+            duration_sec=quality.duration_sec,
+            rms=quality.rms,
+            peak=quality.peak,
+            elapsed_seconds=0.0,
+            quality_flags=quality.to_dict(),
+        )
+        if manifest:
+            manifest.write(entry)
+        return {
+            "midi": str(midi_path),
+            "output": str(output_path),
+            "status": "succeeded",
+            "quality_flags": quality.to_dict(),
+        }
+    except Exception as exc:  # noqa: BLE001 - pipeline logs and continues
+        if manifest:
+            manifest.write(
+                ManifestEntry(
+                    midi_path=str(midi_path),
+                    output_path=str(output_path),
+                    rendering_mode=cfg.pipeline.rendering_mode.value,
+                    effects_chain_hash=chain_hash,
+                    status="failed",
+                    duration_sec=0.0,
+                    rms=0.0,
+                    peak=0.0,
+                    elapsed_seconds=0.0,
+                    quality_flags={"error": str(exc)},
+                )
+            )
+        return {
+            "midi": str(midi_path),
+            "output": str(output_path),
+            "status": "failed",
+            "error": str(exc),
+        }
+
+
 def run_pipeline(
     midi_paths: Iterable[Path | str],
     out_dir: Path | str,
@@ -59,9 +175,7 @@ def run_pipeline(
 
     if config is not None:
         cfg = config.validate_worker_constraint()
-        _get_worker_count(cfg)
-        synth = make_synth(cfg)
-        chain = build_effects_chain_from_config(cfg)
+        n_workers = _get_worker_count(cfg)
         chain_hash = compute_chain_hash(cfg.pedalboard.effects)
         manifest = (
             ManifestWriter(
@@ -74,106 +188,37 @@ def run_pipeline(
             else None
         )
 
-        for midi_path in midi_paths:
-            midi_path = Path(midi_path)
-            output_path = _resolve_output_path(midi_path, out_dir, cfg, corpus_root)
-            if output_path.exists() and not cfg.pipeline.overwrite:
-                skipped += 1
-                log.append({"midi": str(midi_path), "output": str(output_path), "status": "skipped"})
-                continue
-            try:
-                notes = parse_midi(midi_path)
-                duration = _compute_duration(notes, cfg.pipeline.duration_padding_sec)
-                audio = synth.render(notes, duration_sec=duration)
-                audio = normalise_from_config(audio, cfg, stage="pre")
-                if cfg.pipeline.rendering_mode != RenderingMode.DAWDREAMER_ONLY and len(chain) > 0:
-                    audio = chain(audio, cfg.pipeline.sample_rate)
-                audio = normalise_from_config(audio, cfg, stage="post")
+        _init_thread_synth_chain(cfg)  # synth + chain for the calling thread
 
-                quality = check_quality(audio, cfg.pipeline.sample_rate, cfg.quality_gates)
-                if not quality.passed:
-                    failed += 1
-                    entry = ManifestEntry(
-                        midi_path=str(midi_path),
-                        output_path=str(output_path),
-                        rendering_mode=cfg.pipeline.rendering_mode.value,
-                        effects_chain_hash=chain_hash,
-                        status="failed",
-                        duration_sec=quality.duration_sec,
-                        rms=quality.rms,
-                        peak=quality.peak,
-                        elapsed_seconds=0.0,
-                        quality_flags=quality.to_dict(),
-                    )
-                    if manifest:
-                        manifest.write(entry)
-                    log.append(
-                        {
-                            "midi": str(midi_path),
-                            "output": str(output_path),
-                            "status": "failed",
-                            "quality_flags": quality.to_dict(),
-                        }
-                    )
-                    continue
-
-                write_audio(
-                    audio,
-                    output_path,
-                    sample_rate=cfg.pipeline.sample_rate,
-                    bit_depth=cfg.pipeline.bit_depth,
-                    output_format=cfg.io.output_format,
-                    mp3_bitrate_kbps=cfg.io.mp3_bitrate_kbps,
-                    overwrite=cfg.pipeline.overwrite,
-                )
+        def _tally(entry: Dict[str, Any]) -> None:
+            nonlocal succeeded, failed, skipped
+            log.append(entry)
+            s = entry["status"]
+            if s == "succeeded":
                 succeeded += 1
-                entry = ManifestEntry(
-                    midi_path=str(midi_path),
-                    output_path=str(output_path),
-                    rendering_mode=cfg.pipeline.rendering_mode.value,
-                    effects_chain_hash=chain_hash,
-                    status="done",
-                    duration_sec=quality.duration_sec,
-                    rms=quality.rms,
-                    peak=quality.peak,
-                    elapsed_seconds=0.0,
-                    quality_flags=quality.to_dict(),
-                )
-                if manifest:
-                    manifest.write(entry)
-                log.append(
-                    {
-                        "midi": str(midi_path),
-                        "output": str(output_path),
-                        "status": "succeeded",
-                        "quality_flags": quality.to_dict(),
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001 - pipeline logs and continues
+            elif s == "skipped":
+                skipped += 1
+            else:
                 failed += 1
-                if manifest:
-                    manifest.write(
-                        ManifestEntry(
-                            midi_path=str(midi_path),
-                            output_path=str(output_path),
-                            rendering_mode=cfg.pipeline.rendering_mode.value,
-                            effects_chain_hash=chain_hash,
-                            status="failed",
-                            duration_sec=0.0,
-                            rms=0.0,
-                            peak=0.0,
-                            elapsed_seconds=0.0,
-                            quality_flags={"error": str(exc)},
-                        )
+
+        if cfg.pipeline.rendering_mode == RenderingMode.PEDALBOARD_ONLY and n_workers > 1:
+            with ThreadPoolExecutor(
+                max_workers=n_workers,
+                initializer=_init_thread_synth_chain,
+                initargs=(cfg,),
+            ) as executor:
+                futures = [
+                    executor.submit(
+                        _render_file, Path(mp), out_dir, cfg, chain_hash, manifest, corpus_root
                     )
-                log.append(
-                    {
-                        "midi": str(midi_path),
-                        "output": str(output_path),
-                        "status": "failed",
-                        "error": str(exc),
-                    }
-                )
+                    for mp in midi_paths
+                ]
+                for future in as_completed(futures):
+                    _tally(future.result())
+        else:
+            for midi_path in midi_paths:
+                _tally(_render_file(Path(midi_path), out_dir, cfg, chain_hash, manifest, corpus_root))
+
         elapsed = time.perf_counter() - start
         return PipelineResult(
             succeeded=succeeded,
