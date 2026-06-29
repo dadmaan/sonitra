@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 import logging
 import time
@@ -77,6 +78,7 @@ def run_benchmark(
     conditions = expand_conditions(config.benchmark)
     symbolic_metrics = make_symbolic_metrics(config.evaluation)
     audio_metrics = make_audio_metrics(config.evaluation)
+    n_workers = config.benchmark.max_workers
 
     writer = ResultsWriter(work_dir / config.benchmark.results_path)
     references: dict[Path, list[NoteEvent] | None] = {}
@@ -88,23 +90,44 @@ def run_benchmark(
             references[path] = None
 
     records: list[BenchmarkRecord] = []
-    for condition in conditions:
-        logger.info("Benchmark condition '%s' (%d overrides)", condition.name, len(condition.overrides))
-        condition_config = apply_overrides(config, condition.overrides)
-        records.extend(
-            _run_condition(
-                condition,
-                condition_config,
-                midi_paths,
-                references,
-                transcribers,
-                symbolic_metrics,
-                audio_metrics,
-                work_dir,
-                writer,
-                corpus_root=corpus_root,
+    if n_workers > 1:
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(
+                    _condition_worker,
+                    condition,
+                    apply_overrides(config, condition.overrides),
+                    midi_paths,
+                    references,
+                    transcriber_configs,
+                    work_dir,
+                    corpus_root,
+                ): condition
+                for condition in conditions
+            }
+            for future in as_completed(futures):
+                condition_records = future.result()
+                for record in condition_records:
+                    writer.write(record)
+                    records.append(record)
+    else:
+        for condition in conditions:
+            logger.info("Benchmark condition '%s' (%d overrides)", condition.name, len(condition.overrides))
+            condition_config = apply_overrides(config, condition.overrides)
+            records.extend(
+                _run_condition(
+                    condition,
+                    condition_config,
+                    midi_paths,
+                    references,
+                    transcribers,
+                    symbolic_metrics,
+                    audio_metrics,
+                    work_dir,
+                    writer,
+                    corpus_root=corpus_root,
+                )
             )
-        )
 
     summary = summarise(records)
     degradation_rows = degradation(summary, baseline=config.benchmark.baseline_name)
@@ -123,6 +146,38 @@ def run_benchmark(
     )
 
 
+def _condition_worker(
+    condition: Condition,
+    condition_config: PipelineConfig,
+    midi_paths: list[Path],
+    references: dict[Path, list[NoteEvent] | None],
+    transcriber_cfgs: list,
+    work_dir: Path,
+    corpus_root: Path | None,
+) -> list[BenchmarkRecord]:
+    """Run one benchmark condition in a subprocess (for ProcessPoolExecutor).
+
+    Recreates transcribers and metrics from configs so no non-picklable state
+    crosses the process boundary.  Returns records without writing to disk so
+    the parent process can stream-write them to the shared ResultsWriter.
+    """
+    transcribers = [make_transcriber(cfg) for cfg in transcriber_cfgs]
+    symbolic_metrics = make_symbolic_metrics(condition_config.evaluation)
+    audio_metrics = make_audio_metrics(condition_config.evaluation)
+    return _run_condition(
+        condition,
+        condition_config,
+        midi_paths,
+        references,
+        transcribers,
+        symbolic_metrics,
+        audio_metrics,
+        work_dir,
+        writer=None,
+        corpus_root=corpus_root,
+    )
+
+
 def _run_condition(
     condition: Condition,
     condition_config: PipelineConfig,
@@ -132,7 +187,7 @@ def _run_condition(
     symbolic_metrics: Sequence,
     audio_metrics: Sequence[AudioMetric],
     work_dir: Path,
-    writer: ResultsWriter,
+    writer: ResultsWriter | None = None,
     corpus_root: Path | None = None,
 ) -> list[BenchmarkRecord]:
     audio_dir = work_dir / "audio" / condition.slug
@@ -213,7 +268,7 @@ def _evaluate_one(
     symbolic_metrics: Sequence,
     audio_metrics: Sequence[AudioMetric],
     work_dir: Path,
-    writer: ResultsWriter,
+    writer: ResultsWriter | None = None,
     corpus_root: Path | None = None,
 ) -> BenchmarkRecord:
     try:
@@ -256,7 +311,8 @@ def _evaluate_one(
             overrides=condition.overrides,
             error=str(exc),
         )
-    writer.write(record)
+    if writer is not None:
+        writer.write(record)
     return record
 
 
