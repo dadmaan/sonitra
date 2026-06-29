@@ -22,6 +22,7 @@ class BasicPitchTranscriber:
         minimum_note_length_ms: float = 127.7,
         minimum_frequency_hz: float | None = None,
         maximum_frequency_hz: float | None = None,
+        device: str = "cpu",
         name: str = "basic_pitch",
     ) -> None:
         self.onset_threshold = float(onset_threshold)
@@ -29,10 +30,12 @@ class BasicPitchTranscriber:
         self.minimum_note_length_ms = float(minimum_note_length_ms)
         self.minimum_frequency_hz = minimum_frequency_hz
         self.maximum_frequency_hz = maximum_frequency_hz
+        self.device = device
         self.name = name
 
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
         try:
+            import tensorflow as tf
             from basic_pitch import ICASSP_2022_MODEL_PATH
             from basic_pitch.inference import predict
         except ImportError as exc:
@@ -41,15 +44,16 @@ class BasicPitchTranscriber:
             ) from exc
 
         audio_path = Path(audio_path)
-        _, _, note_events = predict(
-            str(audio_path),
-            model_or_model_path=ICASSP_2022_MODEL_PATH,
-            onset_threshold=self.onset_threshold,
-            frame_threshold=self.frame_threshold,
-            minimum_note_length=self.minimum_note_length_ms,
-            minimum_frequency=self.minimum_frequency_hz,
-            maximum_frequency=self.maximum_frequency_hz,
-        )
+        with tf.device(self.device):
+            _, _, note_events = predict(
+                str(audio_path),
+                model_or_model_path=ICASSP_2022_MODEL_PATH,
+                onset_threshold=self.onset_threshold,
+                frame_threshold=self.frame_threshold,
+                minimum_note_length=self.minimum_note_length_ms,
+                minimum_frequency=self.minimum_frequency_hz,
+                maximum_frequency=self.maximum_frequency_hz,
+            )
         notes = [
             {
                 "pitch": int(pitch),
@@ -75,5 +79,6 @@ def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
         minimum_note_length_ms=cfg.minimum_note_length_ms,
         minimum_frequency_hz=cfg.minimum_frequency_hz,
         maximum_frequency_hz=cfg.maximum_frequency_hz,
+        device=cfg.device,
         name=cfg.name or "basic_pitch",
     )
