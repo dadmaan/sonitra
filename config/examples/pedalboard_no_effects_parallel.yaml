@@ -64,7 +64,7 @@ separation:
     enabled: false
     backend: passthrough
     model: htdemucs
-    device: cpu
+    device: gpu
     stem: null
     output_dir: stems
 
