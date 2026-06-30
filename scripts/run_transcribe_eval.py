@@ -26,15 +26,15 @@ from __future__ import annotations
 
 import argparse
 import csv
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CONFIGS_DIR = REPO / "config"
+CONFIGS_DIR = REPO / "config/examples"
 
 PYTHON = sys.executable
 
@@ -232,10 +232,16 @@ def _process_config(
     print(f"  step 2: transcribe -> {transcription_out}/")
     rc = _run(
         [
-            PYTHON, "-m", "sonitra", "transcribe",
-            "--config", str(config_path),
-            "--audio", str(audio_dir),
-            "--output", str(transcription_out),
+            PYTHON,
+            "-m",
+            "sonitra",
+            "transcribe",
+            "--config",
+            str(config_path),
+            "--audio",
+            str(audio_dir),
+            "--output",
+            str(transcription_out),
         ]
     )
     if rc != 0:
@@ -247,7 +253,9 @@ def _process_config(
     if not estimate_dir.exists():
         subdirs = [d for d in transcription_out.iterdir() if d.is_dir()]
         if not subdirs:
-            print(f"  FAIL  — no transcription output subdir found under {transcription_out}")
+            print(
+                f"  FAIL  — no transcription output subdir found under {transcription_out}"
+            )
             failures.append(f"{name}:evaluate")
             return summary_rows, all_rows, failures
         estimate_dir = sorted(subdirs)[0]
@@ -257,11 +265,18 @@ def _process_config(
     print(f"  step 3: evaluate   -> {eval_out}")
     rc = _run(
         [
-            PYTHON, "-m", "sonitra", "evaluate",
-            "--config", str(config_path),
-            "--reference", str(midi_ref_dir),
-            "--estimate", str(estimate_dir),
-            "--output", str(eval_out),
+            PYTHON,
+            "-m",
+            "sonitra",
+            "evaluate",
+            "--config",
+            str(config_path),
+            "--reference",
+            str(midi_ref_dir),
+            "--estimate",
+            str(estimate_dir),
+            "--output",
+            str(eval_out),
         ]
     )
     if rc != 0:
@@ -335,7 +350,16 @@ def main() -> int:
         summary_rows.sort(key=lambda r: r.get("config", ""))
     else:
         for config_path in configs:
-            _merge(_process_config(config_path, args, AUDIO_DIR, TRANSCRIPTION_DIR, EVAL_DIR, MIDI_REF_DIR))
+            _merge(
+                _process_config(
+                    config_path,
+                    args,
+                    AUDIO_DIR,
+                    TRANSCRIPTION_DIR,
+                    EVAL_DIR,
+                    MIDI_REF_DIR,
+                )
+            )
 
     # ── Summary ─────────────────────────────────────────────────────────────
     summary_path = EVAL_DIR / "summary.jsonl"
