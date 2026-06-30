@@ -1,0 +1,19 @@
+# =============================================================================
+# Sonitra devcontainer — GPU opt-in override
+#
+# Requires NVIDIA drivers + NVIDIA Container Toolkit on the host.
+# On Docker Desktop (Windows/Mac) GPU passthrough is built-in; no toolkit
+# install is needed beyond the NVIDIA GPU driver.
+#
+# Usage — activate GPU passthrough in VS Code devcontainer:
+#   Add this file to the dockerComposeFile array in devcontainer.json:
+#     "dockerComposeFile": ["docker-compose.yml", "docker-compose.gpu.yml"]
+#
+# Or run manually (outside VS Code):
+#   docker compose -f .devcontainer/docker-compose.yml \
+#                  -f .devcontainer/docker-compose.gpu.yml up
+# =============================================================================
+
+services:
+  sonitra:
+    runtime: nvidia

@@ -120,7 +120,7 @@ COPY src ./src
 
 USER node
 RUN pip install --user -U pip \
-    && pip install --user --no-cache-dir -e ".[dev]" \
+    && pip install --user --no-cache-dir -e ".[dev,gpu]" \
     && pip install --user --no-cache-dir jupyter jupyter-core typing_extensions
 
 USER root

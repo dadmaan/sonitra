@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
   "name": "sonitra",
-  "dockerComposeFile": "docker-compose.yml",
+  "dockerComposeFile": ["docker-compose.yml", "docker-compose.gpu.yml"],
   "service": "sonitra",
   "workspaceFolder": "/workspace",
   "updateRemoteUserUID": true,
@@ -14,16 +14,16 @@
         "ms-python.pylint",
         "ms-toolsai.jupyter",
         "ms-toolsai.jupyter-renderers",
-        "ms-toolsai.vscode-jupyter-powertoys"
+        "ms-toolsai.vscode-jupyter-powertoys",
       ],
       "settings": {
         "editor.formatOnSave": false,
         "python.defaultInterpreterPath": "/usr/local/bin/python",
         "python.linting.enabled": true,
         "python.linting.pylintEnabled": true,
-        "python.analysis.typeCheckingMode": "basic"
-      }
-    }
+        "python.analysis.typeCheckingMode": "basic",
+      },
+    },
   },
   "remoteUser": "node",
   "mounts": [
@@ -31,18 +31,15 @@
     "source=claude-code-config-${devcontainerId},target=/home/node/workspace/.claude,type=volume",
     "source=opencode-config-${devcontainerId},target=/home/node/.config/opencode,type=volume",
     "source=opencode-share-${devcontainerId},target=/home/node/.local/share/opencode,type=volume",
-    "source=opencode-state-${devcontainerId},target=/home/node/.local/state/opencode,type=volume"
+    "source=opencode-state-${devcontainerId},target=/home/node/.local/state/opencode,type=volume",
   ],
   "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/node/workspace/.claude"
+    "CLAUDE_CONFIG_DIR": "/home/node/workspace/.claude",
   },
   "remoteEnv": {
-    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
+    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
   },
-  "forwardPorts": [
-    8000,
-    8888
-  ],
-  "postCreateCommand": "git config --global --add safe.directory /workspace && pip install --user --no-cache-dir -e \"/workspace[dev]\"",
-  "postStartCommand": "if [ \"$JUPYTER_ENABLED\" != \"false\" ]; then nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace > /tmp/jupyter.log 2>&1 & fi; python --version"
+  "forwardPorts": [8000, 8888],
+  "postCreateCommand": "git config --global --add safe.directory /workspace && pip install --user --no-cache-dir -e \"/workspace[dev,gpu]\"",
+  "postStartCommand": "if [ \"$JUPYTER_ENABLED\" != \"false\" ]; then nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace > /tmp/jupyter.log 2>&1 & fi; python --version",
 }
