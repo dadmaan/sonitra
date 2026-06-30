@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 5 CLI init output verification tests (`synth_backend`, `effects_chain`, no `rendering_mode`, `fluidsynth` section present, no section-level `enabled`)
 - `--limit` / `--seed` CLI flags on `sonitra benchmark` command for quick smoke tests on large corpora
 - `config/benchmark/` directory with benchmark configuration files for parametric AMT evaluation studies: reverb sweep (11 conditions), compression sweep (13), distortion sweep (9), effects combinations (7), synthesis backends comparison (3 backends), and a quick smoke test (4 conditions)
+- `parse_midi()` now returns `initial_bpm` (first `set_tempo` event) instead of the last tempo when `return_meta=True`, enabling tempo-aware rendering
+- `_scale_note_timings()` helper in `pipeline.py` for scaling note timing arrays by a tempo ratio
+- BPM scaling in `_render_file()`: native MIDI BPM is read and note timings are scaled by `native_bpm / cfg.pipeline.bpm`, allowing config BPM to differ from the MIDI's native tempo
+- `tests/test_bpm_scaling.py` — 5 unit tests for `_scale_note_timings` and 1 integration test for `_render_file` BPM scaling
 
 ### Changed
 
@@ -43,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonitra init` now writes starter config using `SynthBackend.DAWDREAMER_FAUST` and `EffectsChain.NONE` with explicit `fluidsynth`/`dawdreamer` sections
 - All preset configs and test fixtures updated from `rendering_mode`/`soundfont_path`/`bpm` to the new config structure
 - Config directory restructured: flat `config/*.yaml` presets moved to `config/examples/`; benchmark-specific configs organized under `config/benchmark/` with dedicated parametric study files (reverb sweep, compression sweep, distortion sweep, effects combinations, synthesis backends)
+- `sonitra benchmark` output directory now scoped by config stem: `benchmark/<config_stem>/` instead of `benchmark/`
+- `scripts/run_transcribe_eval.py` config discovery path updated from `config/` to `config/examples/`
+- `config/source.yaml` bpm comment updated to note MIDI-derived default behaviour when the `bpm` field is commented out
 
 ## [0.1.0] - 2026-06-26
 
