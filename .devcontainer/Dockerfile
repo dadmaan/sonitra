@@ -1,7 +1,9 @@
-# FROM pytorch/pytorch:2.9.0-cuda12.8-cudnn9-devel
+# Base stays python:3.11-slim; CUDA 12.2 + cuDNN 8.9 for TF 2.15 are supplied by
+# the [gpu] pip wheels (tensorflow[and-cuda]) when GPU_EXTRAS=gpu, not by the base image.
 FROM python:3.11-slim
 
 ARG TZ
+ARG GPU_EXTRAS=""
 ARG CLAUDE_CODE_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG GEMINI_CLI_VERSION=latest
@@ -120,8 +122,48 @@ COPY src ./src
 
 USER node
 RUN pip install --user -U pip \
-    && pip install --user --no-cache-dir -e ".[dev,gpu]" \
+    && pip install --user --no-cache-dir -e ".[dev]" \
     && pip install --user --no-cache-dir jupyter jupyter-core typing_extensions
+
+# GPU extras (optional, CPU-only by default)
+# Activated at build time by passing GPU_EXTRAS=gpu build arg to install the
+# nvidia-* CUDA runtime wheels that TensorFlow 2.15 needs for GPU inference.
+# The tensorflow package itself is already installed (CPU build) from the
+# [dev] step above; this layer adds only the CUDA libraries.
+#
+# Why not "pip install -e '.[gpu]'" or "pip install tensorflow[and-cuda]"?
+# Both fail because tensorflow[and-cuda]==2.15.0 transitively requires
+# tensorrt-libs==8.6.1, which is NOT on public PyPI (it lives only on
+# NVIDIA's private index, https://pypi.nvidia.com). Installing the nvidia-*
+# CUDA wheels directly is equivalent for GPU inference and uses only the
+# standard PyPI index. Pinned to the exact versions that tensorflow==2.15.0
+# declares as its and-cuda extras.
+RUN if [ -n "$GPU_EXTRAS" ]; then \
+        pip install --user --no-cache-dir \
+            "nvidia-cublas-cu12==12.2.5.6" \
+            "nvidia-cuda-cupti-cu12==12.2.142" \
+            "nvidia-cuda-nvcc-cu12==12.2.140" \
+            "nvidia-cuda-nvrtc-cu12==12.2.140" \
+            "nvidia-cuda-runtime-cu12==12.2.140" \
+            "nvidia-cudnn-cu12==8.9.4.25" \
+            "nvidia-cufft-cu12==11.0.8.103" \
+            "nvidia-curand-cu12==10.3.3.141" \
+            "nvidia-cusolver-cu12==11.5.2.141" \
+            "nvidia-cusparse-cu12==12.1.2.141" \
+            "nvidia-nccl-cu12==2.16.5" \
+            "nvidia-nvjitlink-cu12==12.2.140"; \
+    fi
+
+# TF 2.15 [and-cuda] ships the CUDA libs as pip wheels under
+# site-packages/nvidia/*/lib, which are NOT on the linker path by default, so
+# TensorFlow's dlopen fails to find them (see tensorflow/tensorflow#65842).
+# Expose every wheel lib dir on LD_LIBRARY_PATH. Safe to set unconditionally:
+# on CPU-only builds these dirs simply do not exist and the linker skips them.
+# NOTE: this dir list is the fixed wheel set for TF 2.15 — revisit it if the
+# tensorflow version is bumped. The packages install under --user for the
+# 'node' user, hence the /home/node/.local path.
+ENV NV=/home/node/.local/lib/python3.11/site-packages/nvidia
+ENV LD_LIBRARY_PATH=$NV/cublas/lib:$NV/cuda_cupti/lib:$NV/cuda_nvrtc/lib:$NV/cuda_runtime/lib:$NV/cudnn/lib:$NV/cufft/lib:$NV/curand/lib:$NV/cusolver/lib:$NV/cusparse/lib:$NV/nccl/lib:$NV/nvjitlink/lib
 
 USER root
 # To run jupyter in remote development scenariowith VSCode

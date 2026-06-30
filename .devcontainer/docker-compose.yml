@@ -5,21 +5,33 @@ services:
       dockerfile: .devcontainer/Dockerfile
       args:
         TZ: ${TZ:-America/Los_Angeles}
-    # GPU passthrough is opt-in. To enable it, add docker-compose.gpu.yml to the
-    # dockerComposeFile array in devcontainer.json, or run compose with:
-    #   docker compose -f .devcontainer/docker-compose.yml \
-    #                  -f .devcontainer/docker-compose.gpu.yml up
-    # runtime: nvidia
+        GPU_EXTRAS: ${GPU_EXTRAS:-}
+    # GPU / NVIDIA CUDA passthrough (OPTIONAL)
+    # 
+    # To activate, ADD docker-compose.gpu.yml to the dockerComposeFile array
+    # in devcontainer.json, then rebuild the container:
+    #
+    #   "dockerComposeFile": ["docker-compose.yml", "docker-compose.gpu.yml"]
+    #
+    # The GPU override sets runtime: nvidia for GPU device passthrough and
+    # passes GPU_EXTRAS=gpu to install CUDA-enabled Python dependencies.
+    #
+    # The env vars below are pre-declared here so they are set in the
+    # container regardless of whether the GPU override is active. They are
+    # harmless without GPU access - Docker silently ignores them when the
+    # nvidia runtime is not registered.
+    # ═══════════════════════════════════════════════════════════════════════
     volumes:
       # Mount local notes directory. Set LOCAL_NOTES_DIR env var, or default to
       # the project-root .local/notes folder relative to this compose file.
       - ${LOCAL_NOTES_DIR:-../.local/notes}:/workspace/.local/notes
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE:-4096}
       JUPYTER_ENABLED: ${JUPYTER_ENABLED:-true}
       CLAUDE_CONFIG_DIR: /home/node/workspace/.claude
+      # NVIDIA GPU environment (harmless without GPU, required when active)
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     user: node
     # Keep the container alive; Jupyter is started by devcontainer.json postStartCommand.
     command: sleep infinity
