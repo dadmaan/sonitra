@@ -1,7 +1,18 @@
 {
   "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
   "name": "sonitra",
-  "dockerComposeFile": ["docker-compose.yml", "docker-compose.gpu.yml"],
+  "//_GPU_ACTIVATION": "GPU passthrough is OPTIONAL. See instructions below.",
+  "//_GPU_HOWTO_1": "1) Verify you have an NVIDIA GPU with up-to-date drivers.",
+  "//_GPU_HOWTO_2": "2) On Linux: install the NVIDIA Container Toolkit.",
+  "//_GPU_HOWTO_3": "   On Windows: Docker Desktop WSL2 has built-in GPU passthrough.",
+  "//_GPU_HOWTO_4": "3) To activate GPU, uncomment the second entry below:",
+  "//_GPU_HOWTO_5": "   \"dockerComposeFile\": [\"docker-compose.yml\", \"docker-compose.gpu.yml\"]",
+  "//_GPU_HOWTO_6": "4) Rebuild: Dev Containers: Rebuild Container.",
+  "//_GPU_HOWTO_7": "5) Verify inside container: python -c \"import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))\"",
+  "dockerComposeFile": [
+    "docker-compose.yml",
+    "docker-compose.gpu.yml"
+  ],
   "service": "sonitra",
   "workspaceFolder": "/workspace",
   "updateRemoteUserUID": true,
@@ -14,16 +25,16 @@
         "ms-python.pylint",
         "ms-toolsai.jupyter",
         "ms-toolsai.jupyter-renderers",
-        "ms-toolsai.vscode-jupyter-powertoys",
+        "ms-toolsai.vscode-jupyter-powertoys"
       ],
       "settings": {
         "editor.formatOnSave": false,
         "python.defaultInterpreterPath": "/usr/local/bin/python",
         "python.linting.enabled": true,
         "python.linting.pylintEnabled": true,
-        "python.analysis.typeCheckingMode": "basic",
-      },
-    },
+        "python.analysis.typeCheckingMode": "basic"
+      }
+    }
   },
   "remoteUser": "node",
   "mounts": [
@@ -31,15 +42,18 @@
     "source=claude-code-config-${devcontainerId},target=/home/node/workspace/.claude,type=volume",
     "source=opencode-config-${devcontainerId},target=/home/node/.config/opencode,type=volume",
     "source=opencode-share-${devcontainerId},target=/home/node/.local/share/opencode,type=volume",
-    "source=opencode-state-${devcontainerId},target=/home/node/.local/state/opencode,type=volume",
+    "source=opencode-state-${devcontainerId},target=/home/node/.local/state/opencode,type=volume"
   ],
   "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/node/workspace/.claude",
+    "CLAUDE_CONFIG_DIR": "/home/node/workspace/.claude"
   },
   "remoteEnv": {
-    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
+    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
   },
-  "forwardPorts": [8000, 8888],
-  "postCreateCommand": "git config --global --add safe.directory /workspace && pip install --user --no-cache-dir -e \"/workspace[dev,gpu]\"",
-  "postStartCommand": "if [ \"$JUPYTER_ENABLED\" != \"false\" ]; then nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace > /tmp/jupyter.log 2>&1 & fi; python --version",
+  "forwardPorts": [
+    8000,
+    8888
+  ],
+  "postCreateCommand": "git config --global --add safe.directory /workspace && python -c \"from sonitra.cli import app; print('sonitra OK')\"",
+  "postStartCommand": "if [ \"$JUPYTER_ENABLED\" != \"false\" ]; then nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --notebook-dir=/workspace > /tmp/jupyter.log 2>&1 & fi; python --version"
 }
