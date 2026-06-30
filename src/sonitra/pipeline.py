@@ -70,7 +70,11 @@ def _render_file(
     chain = _thread_local.chain
 
     try:
-        notes = parse_midi(midi_path)
+        _meta = parse_midi(midi_path, return_meta=True)
+        notes: List[Dict[str, Any]] = _meta["notes"]
+        native_bpm: float = _meta["bpm"]
+        if native_bpm > 0:
+            notes = _scale_note_timings(notes, native_bpm / cfg.pipeline.bpm)
         duration = _compute_duration(notes, cfg.pipeline.duration_padding_sec)
         audio = synth.render(notes, duration_sec=duration)
         audio = normalise_from_config(audio, cfg, stage="pre")
@@ -267,6 +271,17 @@ def run_pipeline(
         elapsed_seconds=elapsed,
         log=log,
     )
+
+
+def _scale_note_timings(
+    notes: List[Dict[str, Any]], scale: float
+) -> List[Dict[str, Any]]:
+    if abs(scale - 1.0) <= 1e-6:
+        return notes
+    return [
+        {**n, "start_sec": n["start_sec"] * scale, "duration_sec": n["duration_sec"] * scale}
+        for n in notes
+    ]
 
 
 def _compute_duration(notes: Iterable[Dict[str, Any]], padding_sec: float) -> float:
