@@ -14,7 +14,13 @@ services:
     build:
       args:
         GPU_EXTRAS: gpu          # installs tensorflow[and-cuda]==2.15.0
-    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility

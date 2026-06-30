@@ -12,6 +12,9 @@
 # Build tools are kept here and discarded in the runtime stage.
 # ---------------------------------------------------------------------------
 # Optional: pass GPU_EXTRAS=gpu to install tensorflow[and-cuda] for GPU inference.
+# NOTE: GPU extras are installed via uv pip install, NOT uv sync --frozen,
+# because the lockfile is generated without --extra gpu (GPU deps are platform-
+# constrained to linux+x86_64 and cannot be resolved on all dev machines).
 # Default is empty (CPU-only build).
 ARG GPU_EXTRAS=""
 
@@ -31,7 +34,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv from the official image — the single binary is all we need.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
@@ -42,11 +45,36 @@ COPY pyproject.toml uv.lock README.md ./
 
 # Install all third-party dependencies (but not the project package itself)
 # so this layer survives source-code-only changes.
-# GPU packages (multi-hundred MB CUDA wheels) are installed here — before COPY src/ —
-# so they land in a cache-stable layer that only invalidates when pyproject.toml/uv.lock change.
 RUN uv sync --frozen --no-dev --no-install-project
+
+# ────────────────────────────────────────────────────────────────────────────
+# GPU extras (optional, CPU-only by default)
+# ────────────────────────────────────────────────────────────────────────────
+# Installs the nvidia-* CUDA runtime wheels that TensorFlow 2.15 needs for
+# GPU inference. The tensorflow package itself is already in the venv from
+# the uv sync above; this step adds only the CUDA libraries alongside it.
+#
+# Why not "uv pip install tensorflow[and-cuda]==2.15.0"?  That meta-extra
+# depends on tensorrt-libs==8.6.1 which is NOT on public PyPI (it requires
+# NVIDIA's private index, https://pypi.nvidia.com), causing the build to
+# fail. Installing the nvidia-* CUDA wheels directly is equivalent for GPU
+# inference and uses only the standard PyPI index. Pinned to the exact
+# versions that tensorflow==2.15.0 declares as its and-cuda extras.
+# ────────────────────────────────────────────────────────────────────────────
 RUN if [ -n "$GPU_EXTRAS" ]; then \
-        uv sync --frozen --no-dev --extra "$GPU_EXTRAS" --no-install-project; \
+        uv pip install \
+            "nvidia-cublas-cu12==12.2.5.6" \
+            "nvidia-cuda-cupti-cu12==12.2.142" \
+            "nvidia-cuda-nvcc-cu12==12.2.140" \
+            "nvidia-cuda-nvrtc-cu12==12.2.140" \
+            "nvidia-cuda-runtime-cu12==12.2.140" \
+            "nvidia-cudnn-cu12==8.9.4.25" \
+            "nvidia-cufft-cu12==11.0.8.103" \
+            "nvidia-curand-cu12==10.3.3.141" \
+            "nvidia-cusolver-cu12==11.5.2.141" \
+            "nvidia-cusparse-cu12==12.1.2.141" \
+            "nvidia-nccl-cu12==2.16.5" \
+            "nvidia-nvjitlink-cu12==12.2.140"; \
     fi
 
 # Copy source and complete the install (editable install of sonitra itself).
@@ -66,6 +94,7 @@ FROM python:3.11-slim AS runtime
 #   libfftw3-double3  — FFTW used by DawDreamer
 #   fluidsynth        — SoundFont synthesis CLI (optional but low-cost to include)
 #   libgomp1          — OpenMP threading used by TensorFlow / NumPy
+#   libgl1            — tensorflow/basic-pitch: indirect OpenGL dep on headless Linux
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libsndfile1 \
@@ -76,7 +105,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring uv into the runtime image — it is used by the default CMD.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 
 # Non-root user for security hardening.
 RUN groupadd --system --gid 1001 sonitra \
@@ -93,13 +122,20 @@ ENV UV_CACHE_DIR=/app/.cache/uv
 # in a single pass via --chown (avoids a slow chown -R on a large tree).
 COPY --from=builder --chown=sonitra:sonitra /app /app
 
+# TF 2.15 [and-cuda] ships CUDA libs as pip wheels under
+# site-packages/nvidia/*/lib (here inside the uv venv), which are not on the
+# linker path by default (see tensorflow/tensorflow#65842). Expose them so
+# TensorFlow's dlopen finds them. Harmless on CPU-only builds (dirs absent).
+ENV NV=/app/.venv/lib/python3.11/site-packages/nvidia
+ENV LD_LIBRARY_PATH=$NV/cublas/lib:$NV/cuda_cupti/lib:$NV/cuda_nvrtc/lib:$NV/cuda_runtime/lib:$NV/cudnn/lib:$NV/cufft/lib:$NV/curand/lib:$NV/cusolver/lib:$NV/cusparse/lib:$NV/nccl/lib:$NV/nvjitlink/lib
+
 # Create named volume mount-points owned by the non-root user.
 # These directories are intended to be bind-mounted at runtime; they exist
 # in the image so the container starts cleanly even without mounts.
 # /app/.cache/uv is created here so uv can write its runtime cache without
 # requiring a home directory.
-RUN mkdir -p /app/corpus /app/output /app/config /app/.cache/uv \
-    && chown -R sonitra:sonitra /app/corpus /app/output /app/config /app/.cache/uv
+RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv
 
 # Entrypoint script lives in docker/ in the repo; build context is repo root.
 COPY docker/entrypoint.sh /entrypoint.sh
@@ -110,15 +146,9 @@ USER sonitra
 # REST API port.
 EXPOSE 8000
 
-# Lightweight health check using the stdlib so no extra tool is required.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python3 -c \
-        "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" \
-        || exit 1
-
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Default: start the FastAPI server.
 # Override this CMD for CLI usage, e.g.:
-#   docker compose run sonitra uv run sonitra benchmark --corpus /app/corpus --workdir /app/output
-CMD ["uv", "run", "sonitra", "serve", "--port", "8000"]
+#   docker compose run sonitra sonitra benchmark --corpus /app/corpus --workdir /app/output
+CMD ["/app/.venv/bin/sonitra", "serve", "--port", "8000"]
