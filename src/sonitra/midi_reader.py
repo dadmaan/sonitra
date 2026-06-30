@@ -18,12 +18,15 @@ def parse_midi(path: Path | str, return_meta: bool = False) -> List[Dict[str, An
     active_notes: Dict[Tuple[int, int], List[Tuple[float, int]]] = {}
     time_sec = 0.0
     bpm = mido.tempo2bpm(DEFAULT_TEMPO)
+    initial_bpm: float | None = None
     time_signature = (4, 4)
 
     for message in midi:
         time_sec += float(message.time)
         if message.type == "set_tempo":
             bpm = float(mido.tempo2bpm(message.tempo))
+            if initial_bpm is None:
+                initial_bpm = bpm
         elif message.type == "time_signature":
             time_signature = (message.numerator, message.denominator)
         elif message.type == "note_on" and message.velocity > 0:
@@ -46,6 +49,6 @@ def parse_midi(path: Path | str, return_meta: bool = False) -> List[Dict[str, An
             )
 
     if return_meta:
-        return {"notes": notes, "bpm": bpm, "time_signature": time_signature}
+        return {"notes": notes, "bpm": initial_bpm if initial_bpm is not None else mido.tempo2bpm(DEFAULT_TEMPO), "time_signature": time_signature}
 
     return notes
