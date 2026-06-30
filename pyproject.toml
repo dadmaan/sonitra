@@ -36,6 +36,9 @@ dev = [
     "pytest-anyio",
     "anyio",
 ]
+gpu = [
+    "tensorflow[and-cuda]==2.15.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [project.scripts]
 sonitra = "sonitra.cli:app"
