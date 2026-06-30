@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.devcontainer/` now installs `[dev,gpu]` extras by default (packages only; GPU device passthrough remains opt-in via the separate `docker-compose.gpu.yml` override) and sets `NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}` + `NVIDIA_DRIVER_CAPABILITIES: compute,utility` in the base compose file
 - `docker/Dockerfile` accepts a `GPU_EXTRAS` build ARG (default `""`) to opt into `tensorflow[and-cuda]` CUDA packages without changing the base image; GPU deps are installed before `COPY src/` for Docker layer cache efficiency
 
+### Fixed
+
+- Devcontainer GPU passthrough now actually activates: `docker-compose.gpu.yml` added to the `dockerComposeFile` array in `.devcontainer/devcontainer.json` (previously the override was documented but never referenced, so every rebuild was CPU-only)
+- GPU compose overrides (`.devcontainer/` and `docker/`) switched from the legacy `runtime: nvidia` to the `deploy.resources.reservations.devices` form, which is the syntax Docker Desktop / WSL2 honours (the nvidia runtime is not registered there)
+- `LD_LIBRARY_PATH` now points at the `tensorflow[and-cuda]` CUDA wheel directories (`site-packages/nvidia/*/lib`) in both `.devcontainer/Dockerfile` and `docker/Dockerfile`, fixing TensorFlow GPU dlopen discovery (tensorflow/tensorflow#65842); the previous GPU builds installed the CUDA wheels but TensorFlow could not locate them
+- GPU build failure in `.devcontainer/Dockerfile` (and latent same failure in `docker/Dockerfile`): the previous `pip install -e ".[gpu]"` / `uv pip install "tensorflow[and-cuda]==2.15.0"` forms both fail because `tensorflow[and-cuda]==2.15.0` transitively requires `tensorrt-libs==8.6.1`, which is only available on NVIDIA's private PyPI index (`pypi.nvidia.com`) and not on public PyPI; fixed by installing the 11 `nvidia-*` CUDA runtime wheels directly (pinned to the same versions that TF 2.15 declares as its `and-cuda` extras), which are all present on the standard PyPI index and are equivalent for GPU inference (TensorRT is not required for basic-pitch)
+
 ## [0.1.0] - 2026-06-26
 
 ### Added
