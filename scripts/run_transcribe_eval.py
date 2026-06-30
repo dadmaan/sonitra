@@ -28,6 +28,7 @@ import argparse
 import csv
 import json
 import math
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,7 +37,30 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CONFIGS_DIR = REPO / "config/examples"
 
-PYTHON = sys.executable
+
+def _resolve_python() -> list[str]:
+    """Return the Python command to use for subprocess sonitra invocations.
+
+    Prefers ``uv run python`` when ``uv`` is available on ``PATH`` — ``uv
+    run`` finds or creates the project's virtual environment automatically,
+    so the ``sonitra`` package is always available.  Falls back to
+    ``sys.executable`` (system Python) otherwise.
+
+    The previous heuristic also required ``.venv/`` to exist on disk, but
+    that failed inside devcontainers where a bind mount hides the build-time
+    ``.venv`` until ``postCreateCommand`` re-creates it.  Relying on ``uv``
+    alone is more robust.
+
+    Returns:
+        A list of strings suitable for unpacking into a ``subprocess.run``
+        command, e.g. ``["uv", "run", "python"]`` or ``["/usr/local/bin/python"]``.
+    """
+    if shutil.which("uv"):
+        return ["uv", "run", "python"]
+    return [sys.executable]
+
+
+_PYTHON: list[str] = _resolve_python()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -204,7 +228,7 @@ def _process_config(
 
     if not args.skip_render:
         print(f"  step 1: render     -> {audio_dir}/")
-        render_cmd = [PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
+        render_cmd = [*_PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
         if args.dataset is not None:
             render_cmd += ["--dataset", args.dataset]
         if args.limit is not None:
@@ -232,7 +256,7 @@ def _process_config(
     print(f"  step 2: transcribe -> {transcription_out}/")
     rc = _run(
         [
-            PYTHON,
+            *_PYTHON,
             "-m",
             "sonitra",
             "transcribe",
@@ -265,7 +289,7 @@ def _process_config(
     print(f"  step 3: evaluate   -> {eval_out}")
     rc = _run(
         [
-            PYTHON,
+            *_PYTHON,
             "-m",
             "sonitra",
             "evaluate",
