@@ -5,15 +5,18 @@ services:
       dockerfile: .devcontainer/Dockerfile
       args:
         TZ: ${TZ:-America/Los_Angeles}
-    # Uncomment the lines below if you have NVIDIA Container Toolkit installed
-    # and want GPU access inside the container. Sonitra works on CPU by default.
+    # GPU passthrough is opt-in. To enable it, add docker-compose.gpu.yml to the
+    # dockerComposeFile array in devcontainer.json, or run compose with:
+    #   docker compose -f .devcontainer/docker-compose.yml \
+    #                  -f .devcontainer/docker-compose.gpu.yml up
     # runtime: nvidia
     volumes:
       # Mount local notes directory. Set LOCAL_NOTES_DIR env var, or default to
       # the project-root .local/notes folder relative to this compose file.
       - ${LOCAL_NOTES_DIR:-../.local/notes}:/workspace/.local/notes
     environment:
-      # NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE:-4096}
       JUPYTER_ENABLED: ${JUPYTER_ENABLED:-true}
       CLAUDE_CONFIG_DIR: /home/node/workspace/.claude
