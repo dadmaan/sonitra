@@ -377,9 +377,9 @@ def benchmark(
     if workdir is not None:
         actual_workdir = workdir
     elif dataset is not None:
-        actual_workdir = Path(cfg.io.corpus_root) / dataset / "benchmark"
+        actual_workdir = Path(cfg.io.corpus_root) / dataset / "benchmark" / config.stem
     else:
-        actual_workdir = Path("benchmark")
+        actual_workdir = Path("benchmark") / config.stem
 
     midi_paths = _discover_midi_files(actual_corpus)
     if not midi_paths:
