@@ -21,9 +21,9 @@ condition).
 
 ---
 
-## How they differ from top-level `config/*.yaml` presets
+## How they differ from top-level `config/examples/*.yaml` presets
 
-| Preset (`config/*.yaml`) | Benchmark config (`config/benchmark/*.yaml`) |
+| Preset (`config/examples/*.yaml`) | Benchmark config (`config/benchmark/*.yaml`) |
 |---|---|
 | One fixed pipeline run | Many experimental conditions from one file |
 | Run via `sonitra render` / `sonitra transcribe` / `sonitra evaluate` | Run via `sonitra benchmark` |
