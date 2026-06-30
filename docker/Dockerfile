@@ -11,7 +11,13 @@
 # Installs uv and syncs the full dependency tree into /app/.venv.
 # Build tools are kept here and discarded in the runtime stage.
 # ---------------------------------------------------------------------------
+# Optional: pass GPU_EXTRAS=gpu to install tensorflow[and-cuda] for GPU inference.
+# Default is empty (CPU-only build).
+ARG GPU_EXTRAS=""
+
 FROM python:3.11-slim AS builder
+# Re-declare so this stage inherits the global ARG value.
+ARG GPU_EXTRAS
 
 # System packages needed only at build time (compilers, headers).
 # Most project dependencies ship as manylinux wheels so this layer is a
@@ -36,7 +42,12 @@ COPY pyproject.toml uv.lock README.md ./
 
 # Install all third-party dependencies (but not the project package itself)
 # so this layer survives source-code-only changes.
+# GPU packages (multi-hundred MB CUDA wheels) are installed here — before COPY src/ —
+# so they land in a cache-stable layer that only invalidates when pyproject.toml/uv.lock change.
 RUN uv sync --frozen --no-dev --no-install-project
+RUN if [ -n "$GPU_EXTRAS" ]; then \
+        uv sync --frozen --no-dev --extra "$GPU_EXTRAS" --no-install-project; \
+    fi
 
 # Copy source and complete the install (editable install of sonitra itself).
 COPY src/ src/

@@ -1,0 +1,20 @@
+# =============================================================================
+# Sonitra — GPU override for docker-compose.yml
+#
+# Requires NVIDIA drivers + NVIDIA Container Toolkit on the host.
+# On Docker Desktop (Windows/Mac) GPU passthrough is built-in; no toolkit
+# install is needed beyond the NVIDIA GPU driver.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up --build
+# =============================================================================
+
+services:
+  sonitra:
+    build:
+      args:
+        GPU_EXTRAS: gpu          # installs tensorflow[and-cuda]==2.15.0
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
