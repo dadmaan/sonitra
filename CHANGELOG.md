@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_config_new_fields.py` — config schema validation tests for new field combinations
 - `tests/test_fluid_synth_bpm.py` — 6 BPM timing invariance tests for FluidSynth backend
 - 5 CLI init output verification tests (`synth_backend`, `effects_chain`, no `rendering_mode`, `fluidsynth` section present, no section-level `enabled`)
+- `--limit` / `--seed` CLI flags on `sonitra benchmark` command for quick smoke tests on large corpora
+- `config/benchmark/` directory with benchmark configuration files for parametric AMT evaluation studies: reverb sweep (11 conditions), compression sweep (13), distortion sweep (9), effects combinations (7), synthesis backends comparison (3 backends), and a quick smoke test (4 conditions)
 
 ### Changed
 
@@ -40,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_synth()` in `protocol.py` automatically falls back to `FluidSynth` when `synth_backend=pedalboard_instrument` has `plugin_path: null` but `fluidsynth.soundfont_path` is configured, with a logged warning
 - `sonitra init` now writes starter config using `SynthBackend.DAWDREAMER_FAUST` and `EffectsChain.NONE` with explicit `fluidsynth`/`dawdreamer` sections
 - All preset configs and test fixtures updated from `rendering_mode`/`soundfont_path`/`bpm` to the new config structure
+- Config directory restructured: flat `config/*.yaml` presets moved to `config/examples/`; benchmark-specific configs organized under `config/benchmark/` with dedicated parametric study files (reverb sweep, compression sweep, distortion sweep, effects combinations, synthesis backends)
 
 ## [0.1.0] - 2026-06-26
 
