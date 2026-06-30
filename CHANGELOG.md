@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_scale_note_timings()` helper in `pipeline.py` for scaling note timing arrays by a tempo ratio
 - BPM scaling in `_render_file()`: native MIDI BPM is read and note timings are scaled by `native_bpm / cfg.pipeline.bpm`, allowing config BPM to differ from the MIDI's native tempo
 - `tests/test_bpm_scaling.py` — 5 unit tests for `_scale_note_timings` and 1 integration test for `_render_file` BPM scaling
+- `[gpu]` optional extras group in `pyproject.toml` — installs `tensorflow[and-cuda]==2.15.0` (linux/x86_64 only) for TensorFlow GPU auto-detection via the correct CUDA 12.2 + cuDNN 8.9 stack; install with `pip install ".[gpu]"` or `uv sync --extra gpu`
+- `docker/docker-compose.gpu.yml` — Compose override enabling GPU passthrough for the production image; usage: `docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up --build`
+- `.devcontainer/docker-compose.gpu.yml` — opt-in GPU override for the devcontainer; activate by adding this file to the `dockerComposeFile` array in `devcontainer.json`
 
 ### Changed
 
@@ -50,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonitra benchmark` output directory now scoped by config stem: `benchmark/<config_stem>/` instead of `benchmark/`
 - `scripts/run_transcribe_eval.py` config discovery path updated from `config/` to `config/examples/`
 - `config/source.yaml` bpm comment updated to note MIDI-derived default behaviour when the `bpm` field is commented out
+- `.devcontainer/` now installs `[dev,gpu]` extras by default (packages only; GPU device passthrough remains opt-in via the separate `docker-compose.gpu.yml` override) and sets `NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}` + `NVIDIA_DRIVER_CAPABILITIES: compute,utility` in the base compose file
+- `docker/Dockerfile` accepts a `GPU_EXTRAS` build ARG (default `""`) to opt into `tensorflow[and-cuda]` CUDA packages without changing the base image; GPU deps are installed before `COPY src/` for Docker layer cache efficiency
 
 ## [0.1.0] - 2026-06-26
 
