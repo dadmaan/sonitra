@@ -358,6 +358,12 @@ def benchmark(
             "outputs to corpus/{subdir}/{dataset}/{config}/"
         ),
     ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-n", help="Maximum MIDI files to benchmark (random subset)."
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="RNG seed for --limit sampling."
+    ),
 ) -> None:
     """Run the full AMT benchmark: render, transcribe, and evaluate per condition."""
     from sonitra.benchmark.runner import run_benchmark
@@ -379,6 +385,7 @@ def benchmark(
     if not midi_paths:
         typer.echo(f"No MIDI files found in {actual_corpus}")
         raise typer.Exit(code=1)
+    midi_paths = _apply_subset(midi_paths, limit, seed)
 
     result = run_benchmark(midi_paths, actual_workdir, cfg, corpus_root=actual_corpus)
     succeeded = sum(1 for record in result.records if record.status == "succeeded")
