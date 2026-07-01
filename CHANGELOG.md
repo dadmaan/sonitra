@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+`(no changes yet)`
+
+## [0.2.0] - 2026-07-01
+
 ### Added
 
 - `max_workers` config field in `transcription`, `evaluation`, and `benchmark` sections for controlling parallel execution granularity
@@ -176,5 +180,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to
   `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.1.0
