@@ -19,7 +19,7 @@ python scripts/download_datasets.py --all           # download everything
 python scripts/download_datasets.py maestro-v3 --output-dir /data/corpus  # custom path
 ```
 
-The script is stdlib-only (no venv required) and idempotent — re-running it skips datasets that are already present.
+The script is stdlib-only (no venv required) and idempotent: re-running it skips datasets that are already present.
 
 Currently supported:
 
@@ -27,7 +27,7 @@ Currently supported:
 |---|---|---|
 | `maestro-v3` | [MAESTRO V3.0.0](https://magenta.withgoogle.com/datasets/maestro) MIDI-only | ~1,276 piano MIDI files |
 
-Downloaded files land under `corpus/{dataset}/midi/` following the dataset-first layout (e.g. `corpus/maestro-v3/midi/2004/…`). The corpus will grow to cover additional datasets and instruments in future phases.
+Downloaded files land under `corpus/{dataset}/midi/` following the dataset-first layout (e.g. `corpus/maestro-v3/midi/2004/…`). Additional datasets and instrument types are planned for future releases.
 
 ## Requirements
 
@@ -112,7 +112,7 @@ sonitra --version
 uv sync --extra gpu   # installs tensorflow[and-cuda] for GPU inference
 ```
 
-Enable GPU inference for Basic Pitch by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). GPU device passthrough inside Docker or a devcontainer requires the GPU compose override — see the Docker section below.
+Enable GPU inference for Basic Pitch by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). GPU device passthrough inside Docker or a devcontainer requires the GPU compose override. See the Docker section below.
 
 ## Data and plugins
 
@@ -220,7 +220,7 @@ cp env.example .env        # create the env file (edit values as needed)
 mkdir -p corpus/test/midi config
 ```
 
-Place your MIDI files under `./corpus/{dataset}/midi/` (e.g. `./corpus/test/midi/`). Then generate a starter config — **this step is required before the server can start**:
+Place your MIDI files under `./corpus/{dataset}/midi/` (e.g. `./corpus/test/midi/`). Then generate a starter config. **This step is required before the server can start**:
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm sonitra \
