@@ -83,7 +83,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 uv sync --extra dev
 ```
 
-> **Windows note:** DawDreamer rendering modes are not parallel-safe. Sonitra automatically enforces `max_workers=1` when a DawDreamer mode is active.
+> **Windows note:** DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) are not parallel-safe. Sonitra automatically enforces `max_workers=1` when a DawDreamer backend is active.
 
 > **WSL2 note:** If your repo lives on the Windows filesystem (e.g., a devcontainer mount), `uv sync` may fail with an I/O error when installing TensorFlow's deep CUDA headers. Avoid this by cloning on the Linux filesystem (e.g., `~/projects/sonitra`), or redirect the venv: `UV_PROJECT_ENVIRONMENT=~/.venvs/sonitra uv sync --extra dev`.
 
@@ -105,6 +105,14 @@ sonitra --version
 ```
 
 > **pip fallback:** `pip install -e ".[dev]"` still works if you prefer not to use uv.
+
+### GPU (optional — Linux x86_64 only)
+
+```bash
+uv sync --extra gpu   # installs tensorflow[and-cuda] for GPU inference
+```
+
+Enable GPU inference for Basic Pitch by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). GPU device passthrough inside Docker or a devcontainer requires the GPU compose override — see the Docker section below.
 
 ## Data and plugins
 
@@ -148,9 +156,12 @@ plugin/
         Vital.vst3
 ```
 
-3. Set `dawdreamer.plugin_path` in your config:
+3. Set `dawdreamer.plugin_path` and `pipeline.synth_backend` in your config:
 
 ```yaml
+pipeline:
+  synth_backend: dawdreamer_vst   # required when using a VST3 instrument plugin
+
 dawdreamer:
   plugin_path: plugin/vital/lib/vst3/Vital.vst3
 ```
@@ -184,7 +195,7 @@ sudo apt install fluid-soundfont-gm
 brew install fluid-synth
 ```
 
-Then set `dawdreamer.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2` (or the path on your system).
+Then set `pipeline.synth_backend: fluidsynth` and `fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2` (or the path on your system) in your config.
 
 ### Core dependencies installed automatically
 
@@ -225,6 +236,14 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 The REST API is available at `http://localhost:8000`. The `/health` endpoint confirms the server is ready.
+
+### GPU passthrough (optional)
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up --build
+```
+
+Enables NVIDIA device reservation and installs CUDA wheels inside the image. Requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) on the host.
 
 ### Run CLI commands
 
@@ -279,19 +298,19 @@ python scripts/run_transcribe_eval.py --dataset maestro-v3 --config pedalboard_b
 # --- or run each step individually ---
 
 # 2a. Render MIDI to audio (recursive discovery, both .mid and .midi)
-sonitra render --config config/pedalboard_baseline.yaml --dataset maestro-v3
+sonitra render --config config/examples/pedalboard_baseline.yaml --dataset maestro-v3
 
 # Render only 4 files for a quick smoke test
-sonitra render --config config/pedalboard_baseline.yaml --dataset maestro-v3 --limit 4 --seed 123
+sonitra render --config config/examples/pedalboard_baseline.yaml --dataset maestro-v3 --limit 4 --seed 123
 
 # 2b. Transcribe the rendered audio
-sonitra transcribe --config config/pedalboard_baseline.yaml
+sonitra transcribe --config config/examples/pedalboard_baseline.yaml
 
 # 2c. Score transcriptions against reference MIDI
-sonitra evaluate --config config/pedalboard_baseline.yaml
+sonitra evaluate --config config/examples/pedalboard_baseline.yaml
 
 # 2d. Run a full benchmark sweep (render + transcribe + evaluate per condition)
-sonitra benchmark --config config/pedalboard_baseline.yaml
+sonitra benchmark --config config/examples/pedalboard_baseline.yaml
 
 # --- explicit path overrides still work ---
 sonitra render --config config.yaml --corpus corpus/test/midi --output corpus/test/audio/my_run
@@ -305,14 +324,14 @@ sonitra init     --config FILE                                                  
 sonitra render   --config FILE [--corpus DIR] [--output DIR] [--dataset NAME] [--workers N] [--limit N] [--seed N]
 sonitra transcribe --config FILE [--audio DIR] [--output DIR] [--dataset NAME] [--transcriber NAME]
 sonitra evaluate --config FILE [--reference DIR] [--estimate DIR] [--dataset NAME] [--output FILE]
-sonitra benchmark --config FILE [--corpus DIR] [--workdir DIR] [--dataset NAME]
+sonitra benchmark --config FILE [--corpus DIR] [--workdir DIR] [--dataset NAME] [--limit N] [--seed N]
 sonitra serve    --port 8000                                                                # start the FastAPI server
 sonitra --version
 ```
 
 `--limit N` renders a reproducible random subset of N MIDI files (useful for smoke testing). `--seed` controls the random draw (default: 123). Both flags are also available on the batch runner (`scripts/run_transcribe_eval.py`).
 
-The batch runner additionally accepts `--config NAME [NAME …]` to run only the named preset configs instead of all configs under `config/`.
+The batch runner additionally accepts `--config NAME [NAME …]` to run only the named preset configs instead of all configs under `config/examples/`, and `--jobs N` (default: 1) to process N configs in parallel (each config's render→transcribe→evaluate steps still run serially within the worker).
 
 When `--dataset` is set on the CLI it overrides `io.dataset` from the config file. When `--corpus`/`--audio`/`--reference`/`--estimate` are omitted, the paths are resolved from `io.corpus_root` and `io.dataset` in the config.
 
@@ -330,10 +349,11 @@ Key sections and their purpose:
 
 | Section | Controls |
 |---|---|
-| `pipeline` | Rendering mode, sample rate, bit depth, channels, parallelism |
+| `pipeline` | Synth backend (`synth_backend`), effects chain (`effects_chain`), BPM, sample rate, bit depth, channels, parallelism (`max_workers`) |
 | `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template |
-| `dawdreamer` | Faust script path, VST3 plugin path, SoundFont path |
-| `pedalboard` | Instrument plugin path, effects chain |
+| `dawdreamer` | Faust script path, VST3 plugin path, preset path — required when `synth_backend: dawdreamer_vst`; `plugin_path` must NOT be set for `synth_backend: dawdreamer_faust` |
+| `fluidsynth` | `soundfont_path` — path to the `.sf2` SoundFont file; required when `synth_backend: fluidsynth` |
+| `pedalboard` | Pedalboard effects chain (`pedalboard.effects`); `pedalboard.instrument` sub-section configures the VST3 instrument plugin for the `pedalboard_instrument` backend |
 | `normalisation` | Peak or RMS normalisation, target dB, pre/post effects |
 | `quality_gates` | Silence, clipping, and minimum duration checks |
 | `transcription` | Transcriber backends, output directory, per-backend thresholds |
@@ -341,21 +361,31 @@ Key sections and their purpose:
 | `benchmark` | Conditions, parameter sweeps, baseline name |
 | `observability` | JSONL manifest, failed-file list, SSE event emission |
 
-### Rendering modes
+### Synthesis backend and effects chain
 
-| Mode | Synth | Effects |
+Set `pipeline.synth_backend` and `pipeline.effects_chain` in your config to select synthesis and effects behaviour.
+
+**`pipeline.synth_backend`**
+
+| Value | Synth engine | Requires |
 |---|---|---|
-| `dawdreamer_only` | DawDreamer (Faust/VST) | None |
-| `pedalboard_only` | Pedalboard instrument plugin | Configurable effects chain |
-| `dawdreamer_synth_pedalboard_fx` | DawDreamer | Pedalboard effects chain |
+| `dawdreamer_faust` | DawDreamer + built-in Faust oscillator | — |
+| `dawdreamer_vst` | DawDreamer + VST3 instrument | `dawdreamer.plugin_path` |
+| `fluidsynth` | FluidSynth CLI + SoundFont | `fluidsynth.soundfont_path` |
+| `pedalboard_instrument` | Pedalboard VST3 instrument | `pedalboard.instrument.plugin_path` |
 
-Set `pipeline.rendering_mode` in your config to select a mode.
+**`pipeline.effects_chain`**
+
+| Value | Behaviour |
+|---|---|
+| `none` | No effects processing after synthesis |
+| `pedalboard` | Apply the `pedalboard.effects` chain after synthesis |
 
 ### Transcription backends
 
 | Backend | `type` value | Notes |
 |---|---|---|
-| Spotify Basic Pitch | `basic_pitch` | Installed by default |
+| Spotify Basic Pitch | `basic_pitch` | Installed by default; supports `device` field (default: `cpu`; set to `GPU:0` for GPU inference — requires `[gpu]` extras on Linux x86_64) |
 | Pre-exported MIDI | `precomputed` | Point at a directory of MIDI from external tools |
 | Any CLI tool | `external_command` | Template: `"tool transcribe {input} -o {output}"` |
 
@@ -381,7 +411,7 @@ from sonitra.config import load_config, resolve_corpus_paths
 from sonitra.pipeline import run_pipeline
 from pathlib import Path
 
-cfg = load_config("config/pedalboard_baseline.yaml")
+cfg = load_config("config/examples/pedalboard_baseline.yaml")
 paths = resolve_corpus_paths(cfg, config_name="pedalboard_baseline")
 # paths.midi          → corpus/test/midi
 # paths.audio         → corpus/test/audio/pedalboard_baseline
