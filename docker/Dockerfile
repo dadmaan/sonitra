@@ -96,6 +96,7 @@ FROM python:3.11-slim AS runtime
 #   fluidsynth        — SoundFont synthesis CLI (optional but low-cost to include)
 #   libgomp1          — OpenMP threading used by TensorFlow / NumPy
 #   libgl1            — tensorflow/basic-pitch: indirect OpenGL dep on headless Linux
+#   gosu              — step-down privilege tool used by the entrypoint
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libsndfile1 \
@@ -103,6 +104,7 @@ RUN apt-get update \
         fluidsynth \
         libgomp1 \
         libgl1 \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring uv into the runtime image — it is used by the default CMD.
@@ -143,7 +145,10 @@ RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER sonitra
+# The entrypoint runs as root so it can fix bind-mount ownership before
+# stepping down to the sonitra user via gosu.  The application itself never
+# runs as root — see entrypoint.sh.
+USER root
 
 # REST API port.
 EXPOSE 8000
