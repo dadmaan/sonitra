@@ -136,7 +136,8 @@ ENV LD_LIBRARY_PATH=$NV/cublas/lib:$NV/cuda_cupti/lib:$NV/cuda_nvrtc/lib:$NV/cud
 # /app/.cache/uv is created here so uv can write its runtime cache without
 # requiring a home directory.
 RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
-    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv \
+    && chown sonitra:sonitra /app
 
 # Entrypoint script lives in docker/ in the repo; build context is repo root.
 COPY docker/entrypoint.sh /entrypoint.sh
