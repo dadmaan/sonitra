@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-`(no changes yet)`
+### Changed
+
+- `README.md`: GPU setup section rewritten to document the `nvidia-*` CUDA wheel
+  approach with an explanation of why `tensorflow[and-cuda]` does not work; Docker
+  CLI commands now use `--no-sync` to prevent dependency re-resolution inside the
+  container; WSL2 note generalized from "TensorFlow's deep CUDA headers" to
+  "packages with deeply nested file trees"
+- `docker/Dockerfile` GPU extras comment updated to reference `pyproject.toml`'s
+  `[gpu]` extra instead of the removed `tensorflow[and-cuda]` workaround
+
+### Fixed
+
+- `[gpu]` optional extras: `tensorflow[and-cuda]==2.15.0` replaced with 11
+  `nvidia-*` CUDA runtime wheels. The former dependency transitively required
+  `tensorrt-libs==8.6.1` from NVIDIA's private PyPI (not available on the public
+  index), causing `uv sync --extra gpu` / `pip install ".[gpu]"` to fail on Linux
+  x86_64. The `nvidia-*` wheels are available on the standard PyPI, pinned to the
+  same versions TF 2.15 declares as its `and-cuda` extras, and are equivalent
+  for GPU inference.
 
 ## [0.2.0] - 2026-07-01
 
