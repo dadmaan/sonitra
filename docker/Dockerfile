@@ -54,12 +54,13 @@ RUN uv sync --frozen --no-dev --no-install-project
 # GPU inference. The tensorflow package itself is already in the venv from
 # the uv sync above; this step adds only the CUDA libraries alongside it.
 #
-# Why not "uv pip install tensorflow[and-cuda]==2.15.0"?  That meta-extra
-# depends on tensorrt-libs==8.6.1 which is NOT on public PyPI (it requires
-# NVIDIA's private index, https://pypi.nvidia.com), causing the build to
-# fail. Installing the nvidia-* CUDA wheels directly is equivalent for GPU
-# inference and uses only the standard PyPI index. Pinned to the exact
-# versions that tensorflow==2.15.0 declares as its and-cuda extras.
+# These are the same 11 wheels listed in pyproject.toml's [gpu] extra.
+# We re-list them here rather than using "uv sync --extra gpu" with
+# --frozen because the nvidia-* packages are platform-constrained to
+# linux+x86_64 and the lockfile is generated on all platforms.
+#
+# Pinned to the exact versions that tensorflow==2.15.0 declares as its
+# and-cuda extras.
 # ────────────────────────────────────────────────────────────────────────────
 RUN if [ -n "$GPU_EXTRAS" ]; then \
         uv pip install \
