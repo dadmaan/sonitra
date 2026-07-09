@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   x86_64. The `nvidia-*` wheels are available on the standard PyPI, pinned to the
   same versions TF 2.15 declares as its `and-cuda` extras, and are equivalent
   for GPU inference.
+- `docker/Dockerfile`: `/app` directory now explicitly `chown`'d to `sonitra` at
+  build time, fixing the `PermissionError: [Errno 13] Permission denied:
+  'renders.jsonl'` when writing the default manifest path as a non-root user
+- `docker/Dockerfile` and `docker/entrypoint.sh`: entrypoint rewritten to run
+  as root temporarily so it can `chown` bind-mounted directories (`/app/corpus`,
+  `/app/output`, `/app/config`) to the `sonitra` user, then step down via `gosu`
+  for security; this fixes permission errors on Docker Desktop for Windows and
+  macOS where host directories are mounted as root inside the container
 
 ## [0.2.0] - 2026-07-01
 
