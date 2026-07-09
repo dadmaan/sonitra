@@ -85,7 +85,7 @@ uv sync --extra dev
 
 > **Windows note:** DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) are not parallel-safe. Sonitra automatically enforces `max_workers=1` when a DawDreamer backend is active.
 
-> **WSL2 note:** If your repo lives on the Windows filesystem (e.g., a devcontainer mount), `uv sync` may fail with an I/O error when installing TensorFlow's deep CUDA headers. Avoid this by cloning on the Linux filesystem (e.g., `~/projects/sonitra`), or redirect the venv: `UV_PROJECT_ENVIRONMENT=~/.venvs/sonitra uv sync --extra dev`.
+> **WSL2 note:** If your repo lives on the Windows filesystem (e.g., a devcontainer mount), `uv sync` may fail with an I/O error when installing packages with deeply nested file trees (TensorFlow, CUDA wheels). Avoid this by cloning on the Linux filesystem (e.g., `~/projects/sonitra`), or redirect the venv: `UV_PROJECT_ENVIRONMENT=~/.venvs/sonitra uv sync --extra dev`.
 
 ### Running commands
 
@@ -108,11 +108,21 @@ sonitra --version
 
 ### GPU (optional — Linux x86_64 only)
 
+GPU inference for Basic Pitch requires the NVIDIA CUDA runtime libraries alongside TensorFlow.
+
 ```bash
-uv sync --extra gpu   # installs tensorflow[and-cuda] for GPU inference
+uv sync --extra gpu
 ```
 
-Enable GPU inference for Basic Pitch by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). GPU device passthrough inside Docker or a devcontainer requires the GPU compose override. See the Docker section below.
+This installs the 11 `nvidia-*` CUDA runtime wheels pinned to the versions that TensorFlow 2.15 declares as its `and-cuda` extras. TensorFlow itself is already installed as a core dependency (via Basic Pitch) — the `[gpu]` extra only adds the CUDA libraries alongside it.
+
+> **Why not `tensorflow[and-cuda]`?** That meta-extra transitively depends on
+> `tensorrt-libs==8.6.1` which is only available on NVIDIA's private PyPI index
+> (https://pypi.nvidia.com), not the public one. Installing the `nvidia-*` CUDA
+> wheels directly is equivalent for GPU inference and avoids pulling in
+> TensorRT entirely.
+
+Enable GPU inference by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). GPU device passthrough inside Docker or a devcontainer requires the GPU compose override. See the Docker section below.
 
 ## Data and plugins
 
@@ -224,7 +234,7 @@ Place your MIDI files under `./corpus/{dataset}/midi/` (e.g. `./corpus/test/midi
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra init --config /app/config/config.yaml
+    uv run --no-sync sonitra init --config /app/config/config.yaml
 ```
 
 > **Why the config is required:** The `./config` volume mount replaces the bundled reference config inside the container. If `./config/config.yaml` (or the path set by `SONITRA_CONFIG`) does not exist when the server starts, it will exit immediately with a file-not-found error. Run `init` once to create it.
@@ -250,19 +260,19 @@ Enables NVIDIA device reservation and installs CUDA wheels inside the image. Req
 ```bash
 # Render MIDI to audio (paths resolved from config's corpus_root + dataset)
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra render --config /app/config/config.yaml
+    uv run --no-sync sonitra render --config /app/config/config.yaml
 
 # Full benchmark sweep (render + transcribe + evaluate per condition)
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra benchmark --config /app/config/config.yaml
+    uv run --no-sync sonitra benchmark --config /app/config/config.yaml
 
 # Transcribe only
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra transcribe --config /app/config/config.yaml
+    uv run --no-sync sonitra transcribe --config /app/config/config.yaml
 
 # Evaluate transcriptions against reference MIDI
 docker compose -f docker/docker-compose.yml run --rm sonitra \
-    uv run sonitra evaluate --config /app/config/config.yaml
+    uv run --no-sync sonitra evaluate --config /app/config/config.yaml
 ```
 
 ### Volume and environment reference
