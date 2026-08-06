@@ -98,3 +98,49 @@ would require extending the `bsed` entry's `extract_map` in
 `scripts/download_datasets.py` with an `annotations/` target, and adding an
 alignment-format reference loader under `evaluation/` that consumes the CSV/npz
 alignment format instead of parsing MIDI directly.
+
+## Parallel benchmark conditions on GPU
+
+**Status:** Blocked on TensorFlow GPU memory configuration; `benchmark.max_workers`
+is pinned to 1 in every `config/benchmark/*.yaml` preset as a result.
+
+`benchmark.max_workers` is the only knob that parallelises `sonitra benchmark`, and it
+drives a `ProcessPoolExecutor` over conditions (`benchmark/runner.py`), not a thread
+pool. Each worker is therefore a separate process with its own TensorFlow runtime.
+Nothing in `src/` calls `tf.config.experimental.set_memory_growth`, so TensorFlow
+falls back to its default of pre-allocating nearly all device memory on init: the
+first process was observed claiming ~22 GB of a 24 GB RTX 3090, leaving a second
+worker nothing. Combining `transcription.transcribers[].device: GPU:0` with
+`benchmark.max_workers > 1` is expected to OOM, so the two are mutually exclusive
+today.
+
+`transcription.max_workers` and `evaluation.max_workers` are unaffected — both are
+thread pools sharing one process (and so one GPU context), and both are already raised
+above 1 in the benchmark presets. They are honoured by `sonitra transcribe` and
+`sonitra evaluate` respectively, not by `sonitra benchmark`.
+
+Planned design:
+- Enable memory growth before the model loads in `transcribe/basic_pitch.py`, so each
+  process caps at what it uses (the ICASSP 2022 model is small):
+  ```python
+  for gpu in tf.config.list_physical_devices("GPU"):
+      tf.config.experimental.set_memory_growth(gpu, True)
+  ```
+  This must run before any GPU-touching TF call in the process, and raises
+  `RuntimeError` if the device is already initialised — so it belongs at the top of
+  the lazy-import block, guarded, not at module import time.
+- Consider making it configurable rather than unconditional (e.g. a
+  `gpu_memory_growth` flag on the transcription section), since memory growth trades
+  some allocator efficiency for the ability to share the device.
+- Once in place, raise `benchmark.max_workers` in the presets and measure — the win
+  is bounded by how much of a condition's wall time is GPU inference versus
+  rendering, which is serial for the `fluidsynth`/`dawdreamer_*` backends these
+  presets use (see `pipeline.max_workers` note below).
+- A cap on concurrent workers may still be needed: N processes each loading a
+  TensorFlow runtime carries a host-RAM cost independent of GPU memory.
+
+Related: `pipeline.max_workers` is only honoured for the `pedalboard_instrument`
+synth backend (`pipeline.py`); `fluidsynth` and `dawdreamer_*` render serially
+regardless, and `validate_worker_constraint()` force-resets the value to 1 for
+DawDreamer because JUCE is not concurrency-safe. Parallel rendering for the
+FluidSynth CLI backend is a separate opportunity.
