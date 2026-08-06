@@ -1,53 +1,87 @@
 # =============================================================================
 # Sonitra — Docker Compose
 #
-# Run all commands from the repository root:
+# Run all commands from the repository root. A profile is always required —
+# there is no profile-less default — so the CPU and GPU containers can never
+# both start at once and collide on port 8000.
 #
-#   cp env.example .env                                    # first-time setup
-#   docker compose -f docker/docker-compose.yml up --build
+#   cp env.example .env                                              # first-time setup
+#   docker compose -f docker/docker-compose.yml --profile cpu up --build
+#   docker compose -f docker/docker-compose.yml --profile gpu up --build
 #
 # Volume layout (relative to repo root):
 #   ./corpus/   MIDI files (input) and rendered audio (intermediate output)
 #   ./config/   Pipeline YAML configs — place your config.yaml here
 #   ./output/   Transcriptions, evaluation results, benchmark outputs
 #
-# CLI one-off commands:
-#   docker compose -f docker/docker-compose.yml run --rm sonitra \
+# CLI one-off commands (name the service explicitly alongside --profile):
+#   docker compose -f docker/docker-compose.yml --profile cpu run --rm sonitra \
 #       uv run sonitra benchmark --corpus /app/corpus --workdir /app/output
+#
+# GPU passthrough requires the NVIDIA Container Toolkit on the host:
+# https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/
 # =============================================================================
+
+x-sonitra-base: &sonitra-base
+  volumes:
+    - ../corpus:/app/corpus
+    - ../config:/app/config
+    - ../output:/app/output
+  # Source environment variables from .env when present.
+  # Copy env.example to .env and adjust values before first run.
+  env_file:
+    - path: ../.env
+      required: false
+  restart: unless-stopped
+  healthcheck:
+    test:
+      - CMD
+      - python3
+      - -c
+      - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+    interval: 30s
+    timeout: 10s
+    start_period: 60s
+    retries: 3
 
 services:
 
   sonitra:
+    <<: *sonitra-base
+    profiles: ["cpu"]
     build:
       context: ..
       dockerfile: docker/Dockerfile
     image: sonitra:latest
     ports:
       - "8000:8000"
-    volumes:
-      - ../corpus:/app/corpus
-      - ../config:/app/config
-      - ../output:/app/output
-    # Source environment variables from .env when present.
-    # Copy env.example to .env and adjust values before first run.
-    env_file:
-      - path: ../.env
-        required: false
     environment:
       # Path to the pipeline config YAML inside the container.
       # The entrypoint symlinks this to /app/config.yaml at startup.
       SONITRA_CONFIG: ${SONITRA_CONFIG:-/app/config/config.yaml}
       # Uvicorn log level (used when overriding CMD with uvicorn directly).
       LOG_LEVEL: ${LOG_LEVEL:-info}
-    restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD
-        - python3
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
-      interval: 30s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
+
+  sonitra-gpu:
+    <<: *sonitra-base
+    profiles: ["gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        GPU_EXTRAS: gpu          # installs tensorflow[and-cuda]==2.15.0
+    image: sonitra:gpu
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      SONITRA_CONFIG: ${SONITRA_CONFIG:-/app/config/config.yaml}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
