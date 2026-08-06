@@ -23,12 +23,12 @@ MIDI → audio synthesis → stem separation → transcription → evaluation vs
 
 ## Additional datasets and instruments
 
-**Status:** Not yet started.
+**Status:** Piano and orchestral corpora available; further expansion not yet started.
 
-The current corpus targets piano. MAESTRO V3.0.0 MIDI files can be downloaded via
-`scripts/download_datasets.py`. Planned expansion to cover additional instruments,
-multi-instrument datasets (e.g. Slakh2100), and automated download support for
-further datasets.
+`scripts/download_datasets.py` currently supports MAESTRO V3.0.0 (piano, MIDI-only)
+and BSED (orchestral — Beethoven symphony excerpts, MIDI + real recordings, see
+below). Planned expansion to cover further instruments, multi-instrument datasets
+(e.g. Slakh2100), and automated download support for further datasets.
 
 ## Additional transcription backends
 
@@ -72,3 +72,29 @@ Planned design:
   synthesize-then-transcribe workflow.
 - This mode is distinct from the current pipeline where rendering fidelity is part of
   what is being benchmarked.
+
+BSED (see "Additional datasets and instruments" above) is a simpler first target for
+this mode than MAESTRO: `scripts/download_datasets.py bsed` already fetches real
+recordings into `corpus/bsed/recordings/` alongside `corpus/bsed/midi/`, and the two
+share a common `BSED-<NN>_...` filename prefix — pairing a score to its recordings is
+a filename match, no metadata CSV lookup required.
+
+## Note-level performance-alignment annotations (BSED)
+
+**Status:** Not yet started.
+
+BSED ships manually-verified note-level alignments between each score and its real
+recordings under `03_NoteAnnotations/Note-Level-Alignment/` (CSV + `.npz`), plus a
+less-precise `Sequence-Alignment/` variant — neither is currently fetched by
+`scripts/download_datasets.py`. These map each score note to its actual onset/offset
+in a specific real recording, a more precise reference than the nominal MIDI-score
+timing the evaluation pipeline uses today, since real performances deviate from the
+score (rubato, systematic delays, etc.).
+
+Planned use: once real-audio transcription mode (above) exists, evaluation could
+optionally use the per-recording aligned annotation as ground truth instead of raw
+score MIDI, giving a tighter accuracy measurement for orchestral transcription. This
+would require extending the `bsed` entry's `extract_map` in
+`scripts/download_datasets.py` with an `annotations/` target, and adding an
+alignment-format reference loader under `evaluation/` that consumes the CSV/npz
+alignment format instead of parsing MIDI directly.
