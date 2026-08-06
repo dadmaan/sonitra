@@ -19,20 +19,31 @@ set -e
 # ---------------------------------------------------------------------------
 # 1. Fix bind-mount ownership
 # ---------------------------------------------------------------------------
-# chown -R is safe here because /app/corpus, /app/output, and /app/config are
-# either bind-mounted empty dirs or image-owned dirs with the right content.
-# We run as root so the sonitra user gets write access regardless of the host
-# OS (Windows, macOS, or Linux with a mismatched UID).
+# The image is built with the `sonitra` user's UID/GID matching the host
+# user (see HOST_UID/HOST_GID in docker/Dockerfile + docker-compose.yml), so
+# in the common case these directories already have the right ownership and
+# no chown is needed. We only recurse into a directory when its top-level
+# ownership doesn't already match `sonitra` — this covers Docker Desktop
+# (which mounts host dirs as root regardless of HOST_UID/HOST_GID) and
+# first-run bind mounts of fresh/empty host directories, without repeatedly
+# rewriting ownership of a repo directory that a Linux host user already
+# owns correctly (which would otherwise lock them out again on every run if
+# HOST_UID/HOST_GID were ever left unset).
+SONITRA_UID="$(id -u sonitra)"
+SONITRA_GID="$(id -g sonitra)"
 for dir in /app/corpus /app/output /app/config; do
     if [ -d "$dir" ]; then
-        chown -R sonitra:sonitra "$dir"
+        current_uid="$(stat -c '%u' "$dir")"
+        if [ "$current_uid" != "$SONITRA_UID" ]; then
+            chown -R "$SONITRA_UID:$SONITRA_GID" "$dir"
+        fi
     fi
 done
 
 # The /app root must also be writable for files like renders.jsonl (default
 # manifest path).  This is already set during the image build but Docker
 # Desktop for Windows / macOS does not persist image ownership into runtime.
-chown sonitra:sonitra /app
+chown "$SONITRA_UID:$SONITRA_GID" /app
 
 # ---------------------------------------------------------------------------
 # 2. Resolve the pipeline config symlink

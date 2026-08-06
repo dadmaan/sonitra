@@ -6,8 +6,16 @@
 # both start at once and collide on port 8000.
 #
 #   cp env.example .env                                              # first-time setup
+#   echo "HOST_UID=$(id -u)" >> .env && echo "HOST_GID=$(id -g)" >> .env
 #   docker compose -f docker/docker-compose.yml --profile cpu up --build
 #   docker compose -f docker/docker-compose.yml --profile gpu up --build
+#
+# HOST_UID/HOST_GID: on native Linux hosts, bind mounts (below) share the
+# host filesystem directly. Setting these to your own `id -u`/`id -g` makes
+# the in-container `sonitra` user own the mounted files as your host user,
+# so nothing needs to chown ./corpus, ./config, or ./output back and forth.
+# Skippable on Docker Desktop (macOS/Windows), where bind mounts already go
+# through a translation layer; defaults to 1000 if unset.
 #
 # Volume layout (relative to repo root):
 #   ./corpus/   MIDI files (input) and rendered audio (intermediate output)
@@ -52,6 +60,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: sonitra:latest
     ports:
       - "8000:8000"
@@ -70,6 +81,8 @@ services:
       dockerfile: docker/Dockerfile
       args:
         GPU_EXTRAS: gpu          # installs tensorflow[and-cuda]==2.15.0
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: sonitra:gpu
     ports:
       - "8000:8000"
