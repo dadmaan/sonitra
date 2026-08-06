@@ -26,8 +26,6 @@ Key sections and their purpose:
 
 ## Synthesis backend and effects chain
 
-Set `pipeline.synth_backend` and `pipeline.effects_chain` in your config to select synthesis and effects behaviour.
-
 **`pipeline.synth_backend`**
 
 | Value | Synth engine | Requires |

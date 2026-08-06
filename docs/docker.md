@@ -1,6 +1,6 @@
 # Docker
 
-The fastest way to run Sonitra without installing Python or system dependencies locally. Docker files live under `docker/`; all commands are run from the **repository root**.
+Run Sonitra without installing Python or system dependencies locally. Docker files live under `docker/`; all commands are run from the **repository root**.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-This file tracks planned features and capabilities that are not yet implemented.
+This file tracks planned work that is not yet implemented.
 
 ## Stem separation
 
@@ -27,8 +27,8 @@ MIDI → audio synthesis → stem separation → transcription → evaluation vs
 
 `scripts/download_datasets.py` currently supports MAESTRO V3.0.0 (piano, MIDI-only)
 and BSED (orchestral — Beethoven symphony excerpts, MIDI + real recordings, see
-below). Planned expansion to cover further instruments, multi-instrument datasets
-(e.g. Slakh2100), and automated download support for further datasets.
+below). Planned expansion covers more instruments, multi-instrument datasets
+(e.g. Slakh2100), and automated download support for them.
 
 ## Additional transcription backends
 
@@ -56,11 +56,11 @@ The nav section in `zensical.toml` is commented out until pages are written.
 
 **Status:** Not yet started.
 
-Currently Sonitra only transcribes synthesized audio rendered from MIDI. A planned mode
+Sonitra currently transcribes only synthesised audio rendered from MIDI. A planned mode
 would feed a dataset's original recordings directly into the transcription step, bypassing
-the render pipeline — enabling benchmarking on real instrument audio, which is the
-canonical AMT evaluation scenario in the literature. For MAESTRO V3.0.0 this means using
-the paired `.flac` recordings rather than re-synthesizing from MIDI.
+the render pipeline — enabling benchmarking on real instrument audio, the canonical AMT
+evaluation scenario in the literature. For MAESTRO V3.0.0 this means using the paired
+`.flac` recordings rather than re-synthesising from MIDI.
 
 Planned design:
 - Pairing logic reads the dataset metadata CSV (e.g. `maestro-v3.0.0.csv`) to map each
@@ -69,9 +69,9 @@ Planned design:
   exactly as in the current workflow.
 - Requires the full dataset audio download (MAESTRO V3.0.0 audio is ~120 GB); the
   MIDI-only zip (~57 MB) fetched by `scripts/download_datasets.py` is sufficient for the
-  synthesize-then-transcribe workflow.
-- This mode is distinct from the current pipeline where rendering fidelity is part of
-  what is being benchmarked.
+  synthesise-then-transcribe workflow.
+- Distinct from the current pipeline, where rendering fidelity is itself part of what
+  is being benchmarked.
 
 BSED (see "Additional datasets and instruments" above) is a simpler first target for
 this mode than MAESTRO: `scripts/download_datasets.py bsed` already fetches real
@@ -86,18 +86,18 @@ a filename match, no metadata CSV lookup required.
 BSED ships manually-verified note-level alignments between each score and its real
 recordings under `03_NoteAnnotations/Note-Level-Alignment/` (CSV + `.npz`), plus a
 less-precise `Sequence-Alignment/` variant — neither is currently fetched by
-`scripts/download_datasets.py`. These map each score note to its actual onset/offset
-in a specific real recording, a more precise reference than the nominal MIDI-score
-timing the evaluation pipeline uses today, since real performances deviate from the
-score (rubato, systematic delays, etc.).
+`scripts/download_datasets.py`. Each maps a score note to its onset/offset in a
+specific real recording, a more precise reference than the nominal MIDI-score timing
+the evaluation pipeline uses today, since real performances deviate from the score
+(rubato, systematic delays, etc.).
 
 Planned use: once real-audio transcription mode (above) exists, evaluation could
 optionally use the per-recording aligned annotation as ground truth instead of raw
 score MIDI, giving a tighter accuracy measurement for orchestral transcription. This
 would require extending the `bsed` entry's `extract_map` in
-`scripts/download_datasets.py` with an `annotations/` target, and adding an
-alignment-format reference loader under `evaluation/` that consumes the CSV/npz
-alignment format instead of parsing MIDI directly.
+`scripts/download_datasets.py` with an `annotations/` target, and adding a reference
+loader under `evaluation/` that consumes the CSV/npz alignment format instead of
+parsing MIDI directly.
 
 ## Parallel benchmark conditions on GPU
 
