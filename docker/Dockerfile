@@ -97,6 +97,7 @@ FROM python:3.11-slim AS runtime
 #   libgomp1          — OpenMP threading used by TensorFlow / NumPy
 #   libgl1            — tensorflow/basic-pitch: indirect OpenGL dep on headless Linux
 #   gosu              — step-down privilege tool used by the entrypoint
+#   tmux              — interactive terminal multiplexer for `docker exec` sessions
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libsndfile1 \
@@ -105,6 +106,7 @@ RUN apt-get update \
         libgomp1 \
         libgl1 \
         gosu \
+        tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring uv into the runtime image — it is used by the default CMD.

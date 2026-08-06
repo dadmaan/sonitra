@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docker/Dockerfile` runtime stage: `tmux` installed for interactive
+  `docker exec` terminal sessions into running containers
+
 ### Changed
 
 - **BREAKING:** `docker/docker-compose.yml` and `docker/docker-compose.gpu.yml` merged
