@@ -43,7 +43,7 @@ The REST API is available at `http://localhost:8000`. The `/health` endpoint con
 docker compose -f docker/docker-compose.yml --profile gpu up --build
 ```
 
-Enables NVIDIA device reservation and installs CUDA wheels inside the image (as the `sonitra-gpu` service, tagged `sonitra:gpu`). Requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) on the host.
+Enables NVIDIA device reservation and builds on an `nvidia/cuda` base image with CUDA/cuDNN installed system-wide via apt (as the `sonitra-gpu` service, tagged `sonitra:gpu`). Requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) on the host.
 
 ## Run CLI commands
 
