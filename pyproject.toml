@@ -37,6 +37,13 @@ dev = [
     "anyio",
 ]
 gpu = [
+    # For bare-metal (non-Docker) installs only. docker/Dockerfile's GPU
+    # image (target `runtime-gpu`) no longer uses this extra — it installs
+    # CUDA/cuDNN system-wide via apt on an nvidia/cuda base image instead,
+    # after this pip-wheel approach hit a reproducible TensorFlow 2.15 GPU
+    # registration bug (see the Dockerfile's Stage 3 comment). Left here for
+    # bare-metal installs where the pip-wheel approach may still be fine.
+    #
     # Install nvidia-* CUDA runtime wheels directly instead of
     # tensorflow[and-cuda]==2.15.0 because that extra transitively depends on
     # tensorrt-libs==8.6.1 which is NOT on public PyPI (NVIDIA private index
