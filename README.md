@@ -11,14 +11,14 @@ MIDI → audio synthesis → transcription → evaluation vs. reference
 ## Requirements
 
 - Python >= 3.11
-- [uv](https://docs.astral.sh/uv/) (recommended package manager — install once, works everywhere)
+- [uv](https://docs.astral.sh/uv/) (recommended package manager)
 - [fluidsynth](https://www.fluidsynth.org/) CLI (optional, for SoundFont-based synthesis — see platform notes below)
 - A VST3 plugin (optional, for synthesis and effects)
 - Docker (optional, alternative to a local Python install — see [Docker](#docker) below)
 
 ## Installation
 
-[uv](https://docs.astral.sh/uv/) is the recommended way to install Sonitra. It resolves dependencies from the checked-in `uv.lock` for reproducible installs and is faster than pip. If you prefer pip, see the fallback note at the end of this section.
+[uv](https://docs.astral.sh/uv/) is the recommended way to install Sonitra: it resolves dependencies from the checked-in `uv.lock`, so installs are reproducible. A pip fallback is noted at the end of this section.
 
 ### Linux
 
@@ -71,7 +71,7 @@ uv sync --extra dev
 
 ### Docker
 
-The fastest way to run Sonitra without installing Python or system dependencies locally. Run from the repository root:
+Run Sonitra without installing Python or system dependencies locally. All commands run from the repository root:
 
 ```bash
 cp env.example .env
@@ -111,7 +111,7 @@ GPU inference for Basic Pitch requires the NVIDIA CUDA runtime libraries alongsi
 uv sync --extra gpu
 ```
 
-This installs the 11 `nvidia-*` CUDA runtime wheels pinned to the versions that TensorFlow 2.15 declares as its `and-cuda` extras. TensorFlow itself is already installed as a core dependency (via Basic Pitch) — the `[gpu]` extra only adds the CUDA libraries alongside it. (Not `tensorflow[and-cuda]` directly — that meta-extra depends on `tensorrt-libs`, which is only available on NVIDIA's private PyPI index.)
+This installs the 11 `nvidia-*` CUDA runtime wheels, pinned to the versions TensorFlow 2.15 declares in its `and-cuda` extras. TensorFlow itself arrives as a core dependency via Basic Pitch, so the `[gpu]` extra adds only the CUDA libraries. (Not `tensorflow[and-cuda]` directly — that meta-extra depends on `tensorrt-libs`, which is only available on NVIDIA's private PyPI index.)
 
 Enable GPU inference by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). For GPU passthrough inside Docker, see [docs/docker.md](docs/docker.md).
 
@@ -125,7 +125,7 @@ Files land under `corpus/{dataset}/midi/`. See **[docs/datasets.md](docs/dataset
 
 ## MIDI input files
 
-Sonitra uses a dataset-first corpus layout. Place your MIDI files under `corpus/{dataset}/midi/`:
+Sonitra uses a dataset-first corpus layout: place your MIDI files under `corpus/{dataset}/midi/`.
 
 ```
 corpus/
