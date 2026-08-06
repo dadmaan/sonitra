@@ -121,6 +121,11 @@ RUN groupadd --system --gid 1001 sonitra \
 
 WORKDIR /app
 
+# Put the venv's console scripts (sonitra, uvicorn, ...) on PATH so `sonitra`
+# works directly in interactive `docker exec` sessions, not just via the
+# full path or `uv run`.
+ENV PATH="/app/.venv/bin:$PATH"
+
 # Redirect uv's cache away from the (non-existent) home directory so it
 # writes to /app/.cache/uv, which is owned by the sonitra user.
 ENV UV_CACHE_DIR=/app/.cache/uv
@@ -162,4 +167,4 @@ ENTRYPOINT ["/entrypoint.sh"]
 # Default: start the FastAPI server.
 # Override this CMD for CLI usage, e.g.:
 #   docker compose run sonitra sonitra benchmark --corpus /app/corpus --workdir /app/output
-CMD ["/app/.venv/bin/sonitra", "serve", "--port", "8000"]
+CMD ["sonitra", "serve", "--port", "8000"]
