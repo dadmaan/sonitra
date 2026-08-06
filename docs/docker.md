@@ -9,6 +9,15 @@ cp env.example .env        # create the env file (edit values as needed)
 mkdir -p corpus/test/midi config
 ```
 
+On native Linux hosts (including remote servers), also set `HOST_UID`/`HOST_GID` in `.env` so the container's non-root user matches your host account:
+
+```bash
+echo "HOST_UID=$(id -u)" >> .env
+echo "HOST_GID=$(id -g)" >> .env
+```
+
+> **Why this matters:** `./corpus`, `./config`, and `./output` are bind-mounted straight through to the host filesystem on Linux (unlike Docker Desktop's translation layer on macOS/Windows). Without matching `HOST_UID`/`HOST_GID`, the container's entrypoint has to `chown` those directories to a container-only UID so its non-root user can write to them — which also reassigns their ownership *on the host*, locking your own user out until you `sudo chown` them back. Setting these before the first `--build` avoids that entirely. If you change them later, rebuild with `--build` to pick up the new UID/GID.
+
 Place your MIDI files under `./corpus/{dataset}/midi/` (e.g. `./corpus/test/midi/`). Then generate a starter config. **This step is required before the server can start**:
 
 ```bash

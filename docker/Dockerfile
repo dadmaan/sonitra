@@ -92,6 +92,18 @@ RUN uv sync --frozen --no-dev
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim AS runtime
 
+# UID/GID for the non-root `sonitra` user, overridable at build time so it
+# matches the host user on native Linux hosts (docker-compose.yml passes
+# these through as HOST_UID/HOST_GID). On Linux, bind mounts share the host
+# filesystem directly, so a mismatched container UID either can't write to
+# the mounted ./corpus, ./config, ./output directories, or forces the
+# entrypoint to chown them to a UID that doesn't belong to the host user —
+# locking the host user out of their own repo files. Matching UIDs at build
+# time avoids both. Defaults to 1000, the first non-root UID on most
+# single-user Linux installs.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+
 # Runtime system libraries required by the core Python packages:
 #   libsndfile1       — audio file I/O (pedalboard, soundfile)
 #   libfftw3-double3  — FFTW used by DawDreamer
@@ -114,9 +126,11 @@ RUN apt-get update \
 # Bring uv into the runtime image — it is used by the default CMD.
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 
-# Non-root user for security hardening.
-RUN groupadd --system --gid 1001 sonitra \
-    && useradd --system --uid 1001 --gid 1001 \
+# Non-root user for security hardening. UID/GID matches the host user by
+# default (see HOST_UID/HOST_GID above) so bind-mounted repo directories
+# never need their ownership rewritten at runtime.
+RUN groupadd --system --gid "$HOST_GID" sonitra \
+    && useradd --system --uid "$HOST_UID" --gid "$HOST_GID" \
                --no-create-home --shell /bin/false sonitra
 
 WORKDIR /app
