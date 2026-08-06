@@ -4,10 +4,10 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
       args:
-        TZ: ${TZ:-America/Los_Angeles}
+        TZ: ${TZ:-Europe/Oslo}
         GPU_EXTRAS: ${GPU_EXTRAS:-}
     # GPU / NVIDIA CUDA passthrough (OPTIONAL)
-    # 
+    #
     # To activate, ADD docker-compose.gpu.yml to the dockerComposeFile array
     # in devcontainer.json, then rebuild the container:
     #
