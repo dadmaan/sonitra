@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- All six `config/benchmark/*.yaml` presets now set `device: GPU:0` on their
+  `basic_pitch` transcriber (previously unset, defaulting to `cpu` — so
+  Basic Pitch ran CPU inference even inside a working GPU container), and
+  raise `transcription.max_workers` and `evaluation.max_workers` from 1 to 4.
+  `pipeline.max_workers` and `benchmark.max_workers` stay at 1, each with an
+  inline comment recording why: the former is only honoured for the
+  `pedalboard_instrument` synth backend, and the latter spawns a process pool
+  whose workers would each need their own GPU memory allocation.
 - `README.md` condensed from ~490 to ~210 lines: the Docker quick-start now
   lives alongside Linux/macOS/Windows under Installation instead of appearing
   after "Data and plugins"; detailed reference material (Docker, VST3/preset/
