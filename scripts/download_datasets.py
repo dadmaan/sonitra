@@ -7,6 +7,7 @@ can be run before the project environment is set up.
 Usage:
     python scripts/download_datasets.py --list
     python scripts/download_datasets.py maestro-v3
+    python scripts/download_datasets.py bsed
     python scripts/download_datasets.py --all
     python scripts/download_datasets.py maestro-v3 --output-dir /data/corpus
 """
@@ -20,7 +21,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Tuple
 from urllib.request import urlretrieve
 
 REPO: Path = Path(__file__).resolve().parent.parent
@@ -29,6 +30,12 @@ REPO: Path = Path(__file__).resolve().parent.parent
 # Dataset registry
 # ---------------------------------------------------------------------------
 # To add a new dataset: copy one entry below and fill in the fields.
+# `extract_map` is a list of (zip_source_prefix, target_subdir) pairs: any zip
+# member whose path starts with a given prefix is extracted (with that prefix
+# stripped) under corpus_subdir/target_subdir/. Members matching no prefix are
+# skipped. Most datasets need a single ("<top-level-dir>/", "midi") pair;
+# multi-modal datasets (e.g. MIDI + audio) can route different zip subfolders
+# to different target subdirs.
 DATASETS: Dict[str, Dict] = {
     "maestro-v3": {
         "name": "MAESTRO V3.0.0 (MIDI only)",
@@ -38,7 +45,23 @@ DATASETS: Dict[str, Dict] = {
         ),
         "url": "https://storage.googleapis.com/magentadata/datasets/maestro/v3.0.0/maestro-v3.0.0-midi.zip",
         "corpus_subdir": "maestro-v3",
-        "zip_strip_prefix": "maestro-v3.0.0",
+        "extract_map": [("maestro-v3.0.0/", "midi")],
+    },
+    "bsed": {
+        "name": "Beethoven Symphony Excerpt Dataset (BSED) v1.0",
+        "description": (
+            "20 Beethoven symphony excerpts: MIDI scores paired with 4 real concert "
+            "recordings + 1 synthetic rendition each (pitch-corrected to A440). "
+            "Note-level score-audio alignment annotations and MusicXML/Sibelius scores "
+            "are also on Zenodo but not fetched by this script — see ROADMAP.md. "
+            "CC BY-NC-SA 4.0 (noncommercial). Berendes et al., TISMIR 2026."
+        ),
+        "url": "https://zenodo.org/records/20344500/files/BSED.zip",
+        "corpus_subdir": "bsed",
+        "extract_map": [
+            ("BSED_1.0/01_ScoreData/MIDI/", "midi"),
+            ("BSED_1.0/02_Audio/wav_44100_440Hz/", "recordings"),
+        ],
     },
 }
 
@@ -48,16 +71,17 @@ DATASETS: Dict[str, Dict] = {
 # ---------------------------------------------------------------------------
 
 
-def _midi_dir(output_dir: Path, spec: Dict) -> Path:
-    return output_dir / spec["corpus_subdir"] / "midi"
+def _target_dirs(output_dir: Path, spec: Dict) -> List[Path]:
+    """Return one path per distinct target subdir named in spec's extract_map."""
+    dataset_dir = output_dir / spec["corpus_subdir"]
+    subdirs = sorted({target_subdir for _, target_subdir in spec["extract_map"]})
+    return [dataset_dir / subdir for subdir in subdirs]
 
 
 def _is_already_present(output_dir: Path, spec: Dict) -> bool:
-    """Return True when the target midi directory exists and contains at least one file."""
-    midi_dir = _midi_dir(output_dir, spec)
-    if not midi_dir.is_dir():
-        return False
-    return any(midi_dir.iterdir())
+    """Return True when every target subdir exists and contains at least one file."""
+    dirs = _target_dirs(output_dir, spec)
+    return all(d.is_dir() and any(d.iterdir()) for d in dirs)
 
 
 def _print_list(output_dir: Path) -> None:
@@ -65,7 +89,7 @@ def _print_list(output_dir: Path) -> None:
     print(f"{'Dataset':<{col_name}}  {'Target path':<40}  Description")
     print("-" * 120)
     for key, spec in DATASETS.items():
-        target = _midi_dir(output_dir, spec)
+        target = output_dir / spec["corpus_subdir"]
         print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}")
 
 
@@ -96,8 +120,8 @@ def _make_reporthook(name: str):
 def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
     """Download and extract one dataset. Returns the number of files extracted."""
     name: str = spec["name"]
-    midi_dir: Path = _midi_dir(output_dir, spec)
-    strip_prefix: str = spec["zip_strip_prefix"] + "/"
+    dataset_dir: Path = output_dir / spec["corpus_subdir"]
+    extract_map: List[Tuple[str, str]] = spec["extract_map"]
 
     tmp_path: str = ""
     tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -113,16 +137,18 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
             for member in zf.infolist():
                 if member.is_dir():
                     continue
-                relative: str = member.filename
-                if relative.startswith(strip_prefix):
-                    relative = relative[len(strip_prefix) :]
-                if not relative:
-                    continue
-                dest: Path = midi_dir / relative
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(member) as src, dest.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
-                files_extracted += 1
+                for src_prefix, target_subdir in extract_map:
+                    if not member.filename.startswith(src_prefix):
+                        continue
+                    relative: str = member.filename[len(src_prefix) :]
+                    if not relative:
+                        break
+                    dest: Path = dataset_dir / target_subdir / relative
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, dest.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    files_extracted += 1
+                    break
 
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -144,6 +170,7 @@ def _parse_args() -> argparse.Namespace:
                 "Examples:",
                 "  python scripts/download_datasets.py --list",
                 "  python scripts/download_datasets.py maestro-v3",
+                "  python scripts/download_datasets.py bsed",
                 "  python scripts/download_datasets.py --all",
             ]
         ),
@@ -212,14 +239,14 @@ def main() -> int:
 
     any_failure: bool = False
     for key, spec in targets.items():
-        midi_dir: Path = _midi_dir(output_dir, spec)
+        dataset_dir: Path = output_dir / spec["corpus_subdir"]
         if _is_already_present(output_dir, spec):
-            print(f"[skip] {spec['name']} — already present at {midi_dir}")
+            print(f"[skip] {spec['name']} — already present at {dataset_dir}")
             continue
 
         try:
             n_files: int = _download_and_extract(key, spec, output_dir)
-            print(f"[done] {spec['name']}  {n_files} files extracted -> {midi_dir}")
+            print(f"[done] {spec['name']}  {n_files} files extracted -> {dataset_dir}")
         except Exception as exc:
             print(f"[error] {spec['name']}: {exc}", file=sys.stderr)
             any_failure = True
