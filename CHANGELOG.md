@@ -37,6 +37,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `docker/Dockerfile` GPU image (`sonitra-gpu` service, `runtime-gpu` target):
+  rebuilt on an `nvidia/cuda:12.2.2-devel-ubuntu22.04` base with CUDA/cuDNN
+  installed system-wide via apt, replacing the pip `nvidia-*-cu12` wheel
+  approach. The wheel approach hit a reproducible TensorFlow 2.15 bug where
+  `tf.config.list_physical_devices('GPU')` returns `[]` and TF logs "Could not
+  find cuda drivers on your machine" even though the NVIDIA driver, Container
+  Toolkit passthrough, and a raw `dlopen`/`cuInit()` of `libcuda.so.1` all
+  succeed (see upstream tensorflow/tensorflow#62412, reproduced there with an
+  exactly-matched driver/CUDA version — not a version-skew issue). `docker
+  -compose.yml`'s `sonitra` (CPU) and `sonitra-gpu` services now set an
+  explicit `target:` (`runtime`/`runtime-gpu`) since the Dockerfile gained a
+  third stage. `pyproject.toml`'s `[gpu]` extra is unchanged and still
+  available for bare-metal (non-Docker) installs.
 - `docker/Dockerfile` builder stage: `scripts/` directory was never copied
   into the image, so `scripts/run_transcribe_eval.py` (the batch runner) was
   missing at runtime; now copied alongside `src/` and `config/`
