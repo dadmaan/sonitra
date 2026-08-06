@@ -6,7 +6,6 @@ ARG TZ
 ARG GPU_EXTRAS=""
 ARG CLAUDE_CODE_VERSION=latest
 ARG OPENCODE_VERSION=latest
-ARG GEMINI_CLI_VERSION=latest
 ARG GIT_DELTA_VERSION=0.18.2
 ARG ZSH_IN_DOCKER_VERSION=1.2.1
 
@@ -108,14 +107,13 @@ ENV CLAUDE_CONFIG_DIR="/home/node/workspace/.claude"
 # Install Claude CLI globally as node user
 USER node
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-    && npm install -g opencode-ai@${OPENCODE_VERSION} \
-    && npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION}
+    && npm install -g opencode-ai@${OPENCODE_VERSION}
 RUN git config --global --add safe.directory /workspace
 ENV NODE_OPTIONS="--max-old-space-size=4096" CLAUDE_CONFIG_DIR="/home/node/workspace/.claude" POWERLEVEL9K_DISABLE_GITSTATUS="true"
 ENV PATH="$PATH:/home/node/.local/bin"
 
 WORKDIR /workspace
-    
+
 # Install Python packages from pyproject.toml
 COPY pyproject.toml README.md ./
 COPY src ./src
