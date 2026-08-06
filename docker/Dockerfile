@@ -82,6 +82,8 @@ RUN if [ -n "$GPU_EXTRAS" ]; then \
 COPY src/ src/
 # config/source.yaml is the reference config read by default_config_path().
 COPY config/ config/
+# scripts/run_transcribe_eval.py — batch runner invoked directly, not part of the package.
+COPY scripts/ scripts/
 RUN uv sync --frozen --no-dev
 
 # ---------------------------------------------------------------------------
