@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `README.md` condensed from ~490 to ~210 lines: the Docker quick-start now
+  lives alongside Linux/macOS/Windows under Installation instead of appearing
+  after "Data and plugins"; detailed reference material (Docker, VST3/preset/
+  SoundFont setup, full CLI flags, configuration tables, evaluation metrics,
+  Python API, REST API, datasets) moved to individual pages under `docs/`,
+  linked from the corresponding condensed README section
 - **BREAKING:** `docker/docker-compose.yml` and `docker/docker-compose.gpu.yml` merged
   into a single `docker/docker-compose.yml` with two Compose profiles: `sonitra`
   (`--profile cpu`) and `sonitra-gpu` (`--profile gpu`, tagged `sonitra:gpu`), sharing
@@ -31,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `docker/Dockerfile` builder stage: `scripts/` directory was never copied
+  into the image, so `scripts/run_transcribe_eval.py` (the batch runner) was
+  missing at runtime; now copied alongside `src/` and `config/`
 - `[gpu]` optional extras: `tensorflow[and-cuda]==2.15.0` replaced with 11
   `nvidia-*` CUDA runtime wheels. The former dependency transitively required
   `tensorrt-libs==8.6.1` from NVIDIA's private PyPI (not available on the public
