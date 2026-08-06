@@ -115,7 +115,7 @@ The script accepts `--jobs N` (default: 1) to process N configs in parallel; eac
 
 The `[gpu]` optional extras (`uv sync --extra gpu`, Linux x86_64 only) install `tensorflow[and-cuda]` to enable GPU inference for Basic Pitch. Set `device: GPU:0` (or the relevant TF device string) on any `basic_pitch` transcriber entry in the `transcription.transcribers` list. The default is `device: cpu`.
 
-Docker GPU passthrough requires `docker/docker-compose.gpu.yml`; devcontainer GPU passthrough requires `.devcontainer/docker-compose.gpu.yml`.
+Docker GPU passthrough is a profile on the single `docker/docker-compose.yml` (`--profile gpu`, service `sonitra-gpu`; `--profile cpu`/service `sonitra` for the default build — a profile is always required, there is no profile-less default). Devcontainer GPU passthrough is a separate override file, `.devcontainer/docker-compose.gpu.yml` (added to the `dockerComposeFile` array in `devcontainer.json`), since VS Code's Dev Containers tooling doesn't support Compose profiles.
 
 ## Conventions
 
