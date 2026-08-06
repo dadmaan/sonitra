@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** `docker/docker-compose.yml` and `docker/docker-compose.gpu.yml` merged
+  into a single `docker/docker-compose.yml` with two Compose profiles: `sonitra`
+  (`--profile cpu`) and `sonitra-gpu` (`--profile gpu`, tagged `sonitra:gpu`), sharing
+  common config via a YAML anchor. A profile must now always be passed — there is no
+  profile-less default — so the CPU and GPU containers can never both start at once and
+  collide on port 8000. `docker/docker-compose.gpu.yml` is removed; all `README.md`
+  Docker invocations updated to include `--profile cpu`/`--profile gpu`.
 - `README.md`: GPU setup section rewritten to document the `nvidia-*` CUDA wheel
   approach with an explanation of why `tensorflow[and-cuda]` does not work; Docker
   CLI commands now use `--no-sync` to prevent dependency re-resolution inside the
