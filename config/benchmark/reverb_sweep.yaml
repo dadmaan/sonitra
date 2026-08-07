@@ -14,10 +14,6 @@ pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
-  # Render parallelism. Only honoured when synth_backend is
-  # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
-  # regardless (see pipeline.py), and dawdreamer is forced to 1 by
-  # validate_worker_constraint() because JUCE is not concurrency-safe.
   max_workers: 1
   log_level: INFO
 
@@ -88,16 +84,11 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  # Thread pool over audio files, sharing one TensorFlow process (and so one
-  # GPU context) — safe to raise. Honoured by `sonitra transcribe`;
-  # `sonitra benchmark` parallelises via benchmark.max_workers instead.
-  max_workers: 4
+
+  max_workers: 1
   transcribers:
     - type: basic_pitch
       enabled: true
-      # TensorFlow device string for inference. Requires the GPU image
-      # (docker compose --profile gpu) or a bare-metal `[gpu]` install;
-      # set to "cpu" to force CPU inference.
       device: GPU:0
       onset_threshold: 0.5
       frame_threshold: 0.3
@@ -123,8 +114,6 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  # Thread pool over per-file metric computation (NumPy/SciPy, CPU-bound).
-  # Honoured by `sonitra evaluate`.
   max_workers: 4
 
 benchmark:
@@ -141,10 +130,4 @@ benchmark:
       values: [0.0, 0.15, 0.3, 0.6, 0.9]
     - parameter: pedalboard.effects.1.room_size
       values: [0.1, 0.4, 0.7, 0.95]
-  # Process pool over conditions — the only knob that parallelises
-  # `sonitra benchmark`. Kept at 1 because each worker is a separate process
-  # with its own TensorFlow runtime, and TF pre-allocates almost all GPU
-  # memory on init (~22 GB of 24 GB in the first process), so a second worker
-  # is left with nothing. Raising this requires enabling GPU memory growth
-  # first, or setting transcription device back to "cpu".
   max_workers: 1
