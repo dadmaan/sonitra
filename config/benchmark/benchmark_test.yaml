@@ -90,7 +90,7 @@ transcription:
   # Thread pool over audio files, sharing one TensorFlow process (and so one
   # GPU context) — safe to raise. Honoured by `sonitra transcribe`;
   # `sonitra benchmark` parallelises via benchmark.max_workers instead.
-  max_workers: 1
+  max_workers: 6
   transcribers:
     - type: basic_pitch
       enabled: true

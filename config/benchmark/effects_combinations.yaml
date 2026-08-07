@@ -104,7 +104,7 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 1
+  max_workers: 6
   transcribers:
     - type: basic_pitch
       enabled: true
