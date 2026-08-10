@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Five new `pedalboard`-backed filter effect types available under
+  `pedalboard.effects`: `HighpassFilter`, `LowpassFilter`, `HighShelfFilter`,
+  `LowShelfFilter`, `PeakFilter`.
+- Three new grounded benchmark scenario studies under `config/benchmark/`,
+  following `old_recording/`'s real-world-grounding methodology (citations,
+  measured calibration tables, confound disclosure): `telephone_channel/`
+  (voice-channel bandwidth + AGC — ITU-T G.722 wideband VoIP, ITU-T G.711
+  narrowband PSTN, land-mobile-radio intercom; 4 conditions),
+  `venue_acoustics/` (RT60-calibrated `Reverb` ablation — studio, recital
+  hall, symphony hall, cathedral; 5 conditions), and `rotary_speaker/`
+  (Leslie rotary-speaker chorale/tremolo character via `Chorus`; 3
+  conditions). Config-and-documentation only, no `src/sonitra/` changes.
 - `docker/Dockerfile` runtime stage: `tmux` installed for interactive
   `docker exec` terminal sessions into running containers
 
