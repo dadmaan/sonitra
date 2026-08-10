@@ -1,0 +1,213 @@
+# Telephone / intercom channel: bandpass-limits a piano render to three real,
+# standardized voice-channel widths (ITU-T G.722 wideband VoIP, ITU-T G.711
+# narrowband PSTN, land-mobile-radio intercom), plus AGC-style compression
+# and, for the narrowest tier only, mild clipping-type saturation.
+#
+# Distinct from old_recording's AM-radio condition, which constrains only the
+# TOP end with no highpass at all -- telephone/radio voice channels constrain
+# BOTH ends and land considerably narrower. Does NOT model codec artifacts
+# (mu-law/A-law quantization, packet loss/jitter, the actual G.711/G.722
+# encode/decode pipeline), sidetone/echo-cancellation artifacts, or comfort
+# noise -- this is an analog-channel bandwidth proxy, not a codec simulation.
+# Post-effects peak normalisation cancels any modelling of the channel's
+# actual received level. See ./README.md for full grounding, measured
+# cascade calibration table, and interpretation constraints before drawing
+# conclusions from results produced by this config.
+#
+# Conditions (named only, no sweeps): 4 total -- baseline + 3 channel tiers.
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/telephone_channel/telephone_scenarios.yaml --dataset <name>
+pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: null
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    # Bandwidth (the "channel" the signal passes through) first, then
+    # leveling, then saturation. All 6 slots are declared here disabled;
+    # each condition's overrides turn on what it needs. See ./README.md
+    # Section 5 for the cascade calibration that produced every cutoff
+    # below.
+    - type: HighpassFilter   # index 0 — highpass cascade, stage 1 of 2
+      cutoff_frequency_hz: 100.0
+      enabled: false
+    - type: HighpassFilter   # index 1 — highpass cascade, stage 2 of 2
+      cutoff_frequency_hz: 100.0
+      enabled: false
+    - type: LowpassFilter    # index 2 — lowpass cascade, stage 1 of 2
+      cutoff_frequency_hz: 8000.0
+      enabled: false
+    - type: LowpassFilter    # index 3 — lowpass cascade, stage 2 of 2
+      cutoff_frequency_hz: 8000.0
+      enabled: false
+    - type: Compressor       # index 4 — AGC-style leveling
+      threshold_db: -18.0
+      ratio: 2.0
+      attack_ms: 5.0
+      release_ms: 100.0
+      enabled: false
+    - type: Distortion       # index 5 — clipping character, intercom_lofi only
+      drive_db: 10.0
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: peak
+  target_db: -1.0
+  # normalisation.pre_effects is a single-stage switch, not additive: true
+  # normalises ONLY before the effects chain, false normalises ONLY after
+  # (src/sonitra/normaliser.py normalise_from_config). Kept false (the
+  # default) so post-effects normalisation stays on -- see ./README.md
+  # Section 4 (confound disclosure) for why that matters here.
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  max_workers: 6
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      device: cpu   # explicit for portability; see ./README.md
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+  max_workers: 4
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  # true + an explicit `baseline` condition below is a hard crash
+  # (duplicate condition name) — see ./README.md.
+  include_baseline: false
+  baseline_name: baseline
+  save_audio: true
+  resume: false
+  conditions:
+    - name: baseline
+      overrides: {}
+
+    - name: voip_wideband
+      overrides:
+        # ITU-T G.722 wideband voice, 50-7000 Hz -3 dB. See ./README.md
+        # Section 5 for the nominal-per-stage cascade calibration.
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 32.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 32.1
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 9871.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 9871.0
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.threshold_db: -18.0
+        pedalboard.effects.4.ratio: 2.0
+
+    - name: pstn_narrowband
+      overrides:
+        # ITU-T G.711 narrowband voice, 300-3400 Hz -3 dB.
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 192.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 192.7
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 5152.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 5152.0
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.threshold_db: -20.0
+        pedalboard.effects.4.ratio: 4.0
+
+    - name: intercom_lofi
+      overrides:
+        # Land-mobile-radio FM voice practice, 300 Hz-3 kHz -3 dB. Same
+        # highpass target as pstn_narrowband (verified via the same cascade
+        # calibration — the nominal is a deterministic function of the -3 dB
+        # target only, so the measured nominal is identical), narrower
+        # lowpass, heavier compression, and clipping-type saturation.
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 192.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 192.7
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 4571.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 4571.0
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.threshold_db: -15.0
+        pedalboard.effects.4.ratio: 8.0
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.5.drive_db: 10.0
+  sweeps: []
+  max_workers: 1
