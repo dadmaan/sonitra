@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 import logging
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +12,14 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from sonitra.benchmark.conditions import Condition, apply_overrides, expand_conditions
-from sonitra.benchmark.results import BenchmarkRecord, ResultsWriter, degradation, summarise
+from sonitra.benchmark.results import (
+    BenchmarkRecord,
+    ResultsWriter,
+    compute_fingerprint,
+    degradation,
+    load_records,
+    summarise,
+)
 from sonitra.config import PipelineConfig
 from sonitra.evaluation.protocol import (
     AudioMetric,
@@ -74,13 +82,61 @@ def run_benchmark(
     if not transcriber_configs:
         raise ValueError("No enabled transcribers configured under 'transcription.transcribers'")
     transcribers = [make_transcriber(cfg) for cfg in transcriber_configs]
+    transcriber_names = [t.name for t in transcribers]
 
     conditions = expand_conditions(config.benchmark)
     symbolic_metrics = make_symbolic_metrics(config.evaluation)
     audio_metrics = make_audio_metrics(config.evaluation)
     n_workers = config.benchmark.max_workers
 
-    writer = ResultsWriter(work_dir / config.benchmark.results_path)
+    results_file = work_dir / config.benchmark.results_path
+    fingerprint_file = results_file.with_name(results_file.name + ".fingerprint")
+    current_fingerprint = compute_fingerprint(config)
+
+    records: list[BenchmarkRecord] = []
+    if config.benchmark.resume and results_file.exists():
+        if fingerprint_file.exists():
+            stored_fingerprint = fingerprint_file.read_text().strip()
+            if stored_fingerprint != current_fingerprint:
+                raise ValueError(
+                    "Cannot resume: the config no longer matches the one that produced "
+                    f"'{results_file}' (fingerprint mismatch). Either revert the config "
+                    "change or start a new work_dir."
+                )
+        else:
+            logger.warning(
+                "Resuming from '%s' with no stored fingerprint to verify against; "
+                "proceeding without a config-consistency check.",
+                results_file,
+            )
+        records = load_records(results_file)
+    elif results_file.exists():
+        logger.info(
+            "benchmark.resume is false; discarding existing results at '%s'", results_file
+        )
+        results_file.unlink()
+        fingerprint_file.unlink(missing_ok=True)
+
+    fingerprint_file.write_text(current_fingerprint)
+
+    completed_by_condition: dict[str, set[tuple[str, str]]] = {}
+    for record in records:
+        if record.status in {"succeeded", "failed", "render_failed"}:
+            completed_by_condition.setdefault(record.condition, set()).add(
+                (record.midi_path, record.transcriber)
+            )
+
+    expected_pairs = {(str(mp), name) for mp in midi_paths for name in transcriber_names}
+    pending_conditions = []
+    for condition in conditions:
+        done = completed_by_condition.get(condition.name, set())
+        if expected_pairs and done >= expected_pairs:
+            logger.info("Skipping already-completed condition '%s' (resume)", condition.name)
+            continue
+        pending_conditions.append(condition)
+    conditions = pending_conditions
+
+    writer = ResultsWriter(results_file)
     references: dict[Path, list[NoteEvent] | None] = {}
     for path in midi_paths:
         try:
@@ -89,7 +145,6 @@ def run_benchmark(
             logger.warning("Cannot parse reference MIDI %s: %s", path, exc)
             references[path] = None
 
-    records: list[BenchmarkRecord] = []
     if n_workers > 1:
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
             futures = {
@@ -102,6 +157,7 @@ def run_benchmark(
                     transcriber_configs,
                     work_dir,
                     corpus_root,
+                    completed_by_condition.get(condition.name, set()),
                 ): condition
                 for condition in conditions
             }
@@ -126,6 +182,7 @@ def run_benchmark(
                     work_dir,
                     writer,
                     corpus_root=corpus_root,
+                    completed=completed_by_condition.get(condition.name, set()),
                 )
             )
 
@@ -154,6 +211,7 @@ def _condition_worker(
     transcriber_cfgs: list,
     work_dir: Path,
     corpus_root: Path | None,
+    completed: set[tuple[str, str]] = frozenset(),
 ) -> list[BenchmarkRecord]:
     """Run one benchmark condition in a subprocess (for ProcessPoolExecutor).
 
@@ -175,6 +233,7 @@ def _condition_worker(
         work_dir,
         writer=None,
         corpus_root=corpus_root,
+        completed=completed,
     )
 
 
@@ -189,6 +248,7 @@ def _run_condition(
     work_dir: Path,
     writer: ResultsWriter | None = None,
     corpus_root: Path | None = None,
+    completed: set[tuple[str, str]] = frozenset(),
 ) -> list[BenchmarkRecord]:
     audio_dir = work_dir / "audio" / condition.slug
     render_result = run_pipeline(midi_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
@@ -201,6 +261,12 @@ def _run_condition(
 
     records: list[BenchmarkRecord] = []
     for midi_path in midi_paths:
+        pending_transcribers = [
+            t for t in transcribers if (str(midi_path), t.name) not in completed
+        ]
+        if not pending_transcribers:
+            continue
+
         entry = render_log.get(str(midi_path), {})
         audio_path = Path(entry["output"]) if "output" in entry else None
         if (
@@ -210,7 +276,7 @@ def _run_condition(
             or references[midi_path] is None
         ):
             reason = entry.get("error", "render failed or produced no output")
-            for transcriber in transcribers:
+            for transcriber in pending_transcribers:
                 record = BenchmarkRecord(
                     condition=condition.name,
                     transcriber=transcriber.name,
@@ -220,7 +286,8 @@ def _run_condition(
                     overrides=condition.overrides,
                     error=str(reason),
                 )
-                writer.write(record)
+                if writer is not None:
+                    writer.write(record)
                 records.append(record)
             continue
 
@@ -237,7 +304,7 @@ def _run_condition(
                 )
             transcribe_input = selected
 
-        for transcriber in transcribers:
+        for transcriber in pending_transcribers:
             records.append(
                 _evaluate_one(
                     condition,
@@ -254,7 +321,27 @@ def _run_condition(
                     corpus_root=corpus_root,
                 )
             )
+    _cleanup_condition_audio(condition_config, work_dir, condition, separator is not None)
     return records
+
+
+def _cleanup_condition_audio(
+    condition_config: PipelineConfig,
+    work_dir: Path,
+    condition: Condition,
+    had_separator: bool,
+) -> None:
+    """Remove a condition's rendered audio (and derived stems) once it's done.
+
+    Only the audio/stems that fed this condition's transcription+evaluation
+    pass are ever read again, and only during that pass (see _run_condition
+    and _audio_metric_values) - safe to delete once it returns.
+    """
+    if condition_config.benchmark.save_audio:
+        return
+    shutil.rmtree(work_dir / "audio" / condition.slug, ignore_errors=True)
+    if had_separator:
+        shutil.rmtree(work_dir / "stems" / condition.slug, ignore_errors=True)
 
 
 def _evaluate_one(

@@ -126,6 +126,8 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
+  save_audio: false
+  resume: false
   conditions:
     - name: heavy_compression
       overrides:
