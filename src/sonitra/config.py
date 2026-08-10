@@ -218,6 +218,8 @@ class BenchmarkSection(BaseModel):
     conditions: list[ConditionSection] = Field(default_factory=list)
     sweeps: list[SweepSection] = Field(default_factory=list)
     max_workers: int = 1
+    save_audio: bool = True
+    resume: bool = False
 
 
 class PipelineConfig(BaseModel):

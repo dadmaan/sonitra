@@ -140,6 +140,8 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: false
   baseline_name: baseline
+  save_audio: false
+  resume: false
   conditions:
     - name: baseline
       overrides: {}

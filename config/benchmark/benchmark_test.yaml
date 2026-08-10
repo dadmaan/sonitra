@@ -130,6 +130,8 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
+  save_audio: true
+  resume: false
   conditions:
     - name: no_reverb
       overrides:

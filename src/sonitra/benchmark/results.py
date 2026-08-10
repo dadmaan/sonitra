@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+from sonitra.config import PipelineConfig
 
 
 @dataclass
@@ -34,6 +37,29 @@ class ResultsWriter:
     def write(self, record: BenchmarkRecord) -> None:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record.to_dict()) + "\n")
+
+
+_FINGERPRINT_EXCLUDE = {
+    ("benchmark", "resume"),
+    ("benchmark", "max_workers"),
+    ("benchmark", "save_audio"),
+    ("pipeline", "max_workers"),
+    ("transcription", "max_workers"),
+    ("evaluation", "max_workers"),
+}
+
+
+def compute_fingerprint(config: PipelineConfig) -> str:
+    """Hash of the config, excluding fields that don't affect result semantics.
+
+    Used by benchmark resume to detect a config that changed between runs
+    into the same work_dir, which would otherwise silently mix results
+    computed under two different meanings of "condition"/"record".
+    """
+    data = config.model_dump(mode="json")
+    for section, key in _FINGERPRINT_EXCLUDE:
+        data.get(section, {}).pop(key, None)
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def load_records(path: Path | str) -> list[BenchmarkRecord]:
