@@ -71,6 +71,8 @@ benchmark:
   include_baseline: true                  # prepend a no-override baseline condition
   baseline_name: baseline                 # name for the baseline condition
   max_workers: 1                          # conditions run sequentially (see worker notes)
+  save_audio: true                        # false = delete a condition's audio/stems once it's transcribed+evaluated
+  resume: false                           # true = continue a stopped run, skipping already-recorded work
 
   conditions:
     - name: no_reverb                     # human-readable condition name
@@ -124,8 +126,17 @@ corpus/<name>/benchmark/
   benchmark_results.jsonl   # one JSON record per (condition × transcriber × file)
   summary.json              # aggregate means + degradation-vs-baseline table
   audio/<condition>/        # rendered WAV per condition
+  stems/<condition>/        # separated stems per condition (only if separation.enabled)
   transcriptions/<condition>/<transcriber>/   # MIDI transcriptions per condition
 ```
+
+`benchmark_results.jsonl`, `summary.json`, and `transcriptions/<condition>/` are always
+kept. `audio/<condition>/` and `stems/<condition>/` are only kept when
+`benchmark.save_audio: true` (the default); with `save_audio: false`, each condition's
+audio/stems are deleted right after that condition's transcription and evaluation
+finish, before the next condition starts — this bounds peak disk usage to roughly one
+condition's worth of rendered audio instead of the whole sweep, which matters for large
+corpora or configs with many conditions.
 
 `summary.json` structure:
 
@@ -143,6 +154,32 @@ corpus/<name>/benchmark/
 
 `NaN` values appear when a metric is undefined (e.g. correlation over too few matched
 notes). They are preserved as `null` in JSON and skipped during aggregation.
+
+---
+
+## Resuming a stopped run
+
+Set `benchmark.resume: true` to continue a run that was interrupted (crash, `Ctrl-C`,
+or ran out of disk) instead of starting over. On the next invocation with the same
+`work_dir`, Sonitra reads `benchmark_results.jsonl`, treats every
+`(condition, file, transcriber)` triple already recorded — `succeeded`, `failed`, or
+`render_failed` — as done, and only computes what's missing. A condition whose records
+are all already present is skipped entirely, with no re-render.
+
+This works fine together with `save_audio: false`: a condition that finished before the
+interruption already had its audio cleaned up, and resume skips it without needing that
+audio back. A condition that was only partially finished still has its audio on disk
+(cleanup only runs after a condition fully completes), so the corpus for it is
+re-rendered for the remaining work, same as a normal run.
+
+Resume checks that the config hasn't changed since the run it's continuing — a
+fingerprint is stored next to `benchmark_results.jsonl` and compared on every resume,
+so a config edit that would change what a condition or record means (transcribers,
+conditions/sweeps, synth/effects settings, evaluation parameters) raises an error
+instead of silently mixing results computed under two different configs. Leave
+`resume: false` (the default) to always start clean; with `resume: true`, note that
+`benchmark.max_workers`, `benchmark.save_audio`, and the various `max_workers` knobs
+are excluded from the fingerprint since they don't affect result semantics.
 
 ---
 
