@@ -144,3 +144,52 @@ synth backend (`pipeline.py`); `fluidsynth` and `dawdreamer_*` render serially
 regardless, and `validate_worker_constraint()` force-resets the value to 1 for
 DawDreamer because JUCE is not concurrency-safe. Parallel rendering for the
 FluidSynth CLI backend is a separate opportunity.
+
+## Vintage recording chains: additive noise and wow/flutter
+
+**Status:** Not yet started. Full plan drafted at
+`.local/notes/dev/20260810_exp_old_recording_config/PLAN_PHASE2.md`, pending
+approval and several open decisions before implementation.
+
+`config/benchmark/old_recording/vintage_scenarios.yaml` currently models three
+vintage recording chains (78rpm shellac, early reel-to-reel tape, AM radio
+broadcast) as a **stationary, subtractive/multiplicative** signal path —
+bandwidth-limiting filters, presence/resonance coloration, saturation, and
+dynamics, all built from `pedalboard` plugins. It explicitly does not model
+additive noise (surface noise, tape hiss, mains hum) or wow/flutter (transport
+speed instability), both plausibly larger drivers of AMT transcription failure
+than anything the current config models — see that config's README for the
+full framing.
+
+`pedalboard.Plugin` is a pybind11-bound native class and `pedalboard.Pedalboard()`
+is a homogeneous native container, so neither additive noise nor time-varying
+effects can be added as new `EffectConfig`/`chain_builder` branches; they need
+an entirely separate numpy/scipy-based processing pathway.
+
+Planned design:
+- New `src/sonitra/effects/vintage_effects.py` (config classes: `NoiseFloorConfig`,
+  `CrackleConfig`, `HumConfig`, `WowFlutterConfig`, as a separate discriminated
+  union from `EffectConfig`) and `vintage_chain.py` (`apply_vintage_effects`
+  dispatch over plain numpy arrays).
+- New `VintageEffectsSection` on `PipelineConfig` with `pre_chain`/`post_chain`
+  lists and a `seed` field; addressable by the existing dotted-path benchmark
+  override mechanism with no runner changes needed.
+- Two new insertion points in `pipeline.py`'s shared `_render_file`: wow/flutter
+  (variable-rate resampling) runs before the pedalboard effects chain; hiss/
+  crackle/hum run after it and before post-normalisation. Both lists default
+  to empty, a guaranteed no-op for every existing config.
+- Deterministic per-file seeding (SHA256 of `f"{seed}:{midi_path.stem}"` →
+  `np.random.default_rng`) so reproducibility and `benchmark.resume` stay sound.
+- A new companion scenario file, `vintage_scenarios_full.yaml` (7 conditions:
+  baseline + 3 eras × 2 severities, reusing the existing chains' overrides plus
+  the new noise/wow effects), keeping the current file's 7-condition contract
+  stable.
+- Wow/flutter calibration against DIN 45507 (a weighted-RMS measurement, not a
+  raw sinusoid depth) is its own sub-task, mirroring the filter-cascade
+  calibration already done for the current bandwidth-limiting config.
+
+Several parameters (crackle rate/amplitude, AM radio noise floor and hum
+level, tape wow/flutter rates) have no citation yet and are flagged as open
+research in the plan doc rather than given placeholder values — a possible
+`REFERENCE_PHASE2.md` grounding pass would resolve these before scenario
+numbers are finalized.
