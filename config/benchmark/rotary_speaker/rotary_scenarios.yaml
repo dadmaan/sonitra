@@ -1,0 +1,185 @@
+# Rotary speaker / Leslie: models the two canonical Leslie rotary-speaker
+# states -- "chorale" (slow) and "tremolo" (fast) -- via Chorus, the closest
+# available pedalboard primitive. rate_hz is cited (HammondWiki horn/drum
+# rotation-speed figures, averaged to a single rate since Chorus exposes only
+# one); depth/centre_delay_ms/feedback/mix have NO historical citation and
+# are an engineering judgment call, NOT tuned by ear -- see ./README.md
+# Section 4 before treating them as anything more precise than "a moderate,
+# audible chorus effect."
+#
+# Scope caveat, stated up front: the Leslie is historically an electric
+# organ/electric piano effect (Hammond/Rhodes/Wurlitzer through a Leslie
+# 122/147 cabinet). This corpus is acoustic piano via MIDI + soundfont. This
+# scenario CANNOT claim "historically authentic recording chain" the way
+# old_recording's three eras can -- it is a grounded, citable processing
+# chain applied here as a stylized character ablation, not a claim about how
+# acoustic piano was actually recorded. Confound: pedalboard.Chorus models
+# NONE of a real Leslie's actual physics (no Doppler shift, no correlated
+# amplitude modulation, no horn/drum crossover filter, no cabinet radiation
+# pattern) -- it is simply the nearest available primitive in the current
+# effect registry. See ./README.md for full grounding and confound
+# disclosure before drawing conclusions from results produced by this
+# config.
+#
+# Conditions (named only, no sweeps): 3 total -- baseline + chorale + tremolo.
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/rotary_speaker/rotary_scenarios.yaml --dataset <name>
+pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: null
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    # Single slot -- this is a genuinely one-factor ablation, unlike
+    # old_recording's/telephone_channel's holistic chains. Declared here
+    # disabled; each condition's overrides turns it on with a distinct
+    # rate_hz (cited) plus depth/centre_delay_ms/feedback/mix (judgment
+    # call -- see ./README.md Section 4).
+    - type: Chorus   # index 0
+      rate_hz: 1.0
+      depth: 0.25
+      centre_delay_ms: 7.0
+      feedback: 0.0
+      mix: 0.5
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: peak
+  target_db: -1.0
+  # Unlike old_recording/telephone_channel/venue_acoustics, Chorus has no
+  # level-dependent parameter (no drive/threshold that changes character
+  # with input level) -- rate_hz, depth, centre_delay_ms, feedback, and mix
+  # are all level-independent LFO/delay-line settings, so pre-normalising
+  # buys no determinism benefit here the way it does for Distortion drive or
+  # Compressor threshold. Left false (matching effects_combinations.yaml's
+  # default) rather than true-by-habit. See ./README.md Section 5 for the
+  # full reasoning.
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  max_workers: 6
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      device: cpu   # explicit for portability; see ./README.md
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+  max_workers: 4
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  # true + an explicit `baseline` condition below is a hard crash
+  # (duplicate condition name) — see ./README.md.
+  include_baseline: false
+  baseline_name: baseline
+  save_audio: true
+  resume: false
+  conditions:
+    - name: baseline
+      overrides: {}
+
+    - name: leslie_chorale
+      overrides:
+        # Leslie chorale (slow) rotation: horn ~0.83 Hz, drum ~0.67 Hz,
+        # averaged to a single rate (REFERENCE.md Section 2.5). depth,
+        # centre_delay_ms, feedback, mix are a judgment call, not cited --
+        # see ./README.md Section 4.
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.rate_hz: 0.75
+        pedalboard.effects.0.depth: 0.35
+        pedalboard.effects.0.centre_delay_ms: 8.0
+        pedalboard.effects.0.feedback: 0.1
+        pedalboard.effects.0.mix: 0.45
+
+    - name: leslie_tremolo
+      overrides:
+        # Leslie tremolo (fast) rotation: horn ~6.67 Hz, drum ~5.67 Hz,
+        # averaged to a single rate (REFERENCE.md Section 2.5). depth/mix
+        # nudged modestly above leslie_chorale's (louder, more pronounced
+        # rotary character at the fast setting is physically sensible) but
+        # rate_hz remains the primary, cited differentiator between the two
+        # conditions -- see ./README.md Section 4.
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.rate_hz: 6.0
+        pedalboard.effects.0.depth: 0.45
+        pedalboard.effects.0.centre_delay_ms: 10.0
+        pedalboard.effects.0.feedback: 0.15
+        pedalboard.effects.0.mix: 0.55
+  sweeps: []
+  max_workers: 1
