@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from sonitra.benchmark.conditions import Condition, apply_overrides, expand_conditions
-from sonitra.config import BenchmarkSection, PipelineConfig, SynthBackend
+from sonitra.config import BenchmarkSection, PipelineConfig, SynthBackend, load_config
+from sonitra.effects.builtin_effects import (
+    CompressorConfig,
+    DistortionConfig,
+    HighpassFilterConfig,
+    LowpassFilterConfig,
+    PeakFilterConfig,
+)
+
+_CONFIGS = Path(__file__).parent.parent / "config"
 
 
 def _config(**overrides) -> PipelineConfig:
@@ -135,3 +146,74 @@ def test_apply_overrides_triggers_cross_field_validator_on_vst_without_plugin() 
     from sonitra.config import ConfigError
     with pytest.raises(ConfigError, match="plugin_path"):
         apply_overrides(_config(), {"pipeline.synth_backend": "dawdreamer_vst"})
+
+
+def test_vintage_scenarios_config_expands_and_resolves_all_overrides() -> None:
+    cfg = load_config(_CONFIGS / "benchmark" / "old_recording" / "vintage_scenarios.yaml")
+
+    conditions = expand_conditions(cfg.benchmark)
+    assert [condition.name for condition in conditions] == [
+        "baseline",
+        "shellac_bandlimit_mild",
+        "shellac_bandlimit_pronounced",
+        "tape_bandlimit_mild",
+        "tape_bandlimit_pronounced",
+        "am_bandlimit_mild",
+        "am_bandlimit_pronounced",
+    ]
+
+    for condition in conditions:
+        apply_overrides(cfg, condition.overrides)
+
+    effects = cfg.pedalboard.effects
+    assert isinstance(effects[0], HighpassFilterConfig)
+    assert isinstance(effects[2], LowpassFilterConfig)
+    assert isinstance(effects[4], PeakFilterConfig)
+    assert isinstance(effects[5], PeakFilterConfig)
+    assert isinstance(effects[6], DistortionConfig)
+    assert isinstance(effects[7], CompressorConfig)
+
+
+def test_telephone_scenarios_config_expands_and_resolves_all_overrides() -> None:
+    cfg = load_config(_CONFIGS / "benchmark" / "telephone_channel" / "telephone_scenarios.yaml")
+
+    conditions = expand_conditions(cfg.benchmark)
+    assert [condition.name for condition in conditions] == [
+        "baseline",
+        "voip_wideband",
+        "pstn_narrowband",
+        "intercom_lofi",
+    ]
+
+    for condition in conditions:
+        apply_overrides(cfg, condition.overrides)
+
+
+def test_venue_scenarios_config_expands_and_resolves_all_overrides() -> None:
+    cfg = load_config(_CONFIGS / "benchmark" / "venue_acoustics" / "venue_scenarios.yaml")
+
+    conditions = expand_conditions(cfg.benchmark)
+    assert [condition.name for condition in conditions] == [
+        "baseline",
+        "studio_dry",
+        "recital_hall",
+        "symphony_hall",
+        "cathedral",
+    ]
+
+    for condition in conditions:
+        apply_overrides(cfg, condition.overrides)
+
+
+def test_rotary_scenarios_config_expands_and_resolves_all_overrides() -> None:
+    cfg = load_config(_CONFIGS / "benchmark" / "rotary_speaker" / "rotary_scenarios.yaml")
+
+    conditions = expand_conditions(cfg.benchmark)
+    assert [condition.name for condition in conditions] == [
+        "baseline",
+        "leslie_chorale",
+        "leslie_tremolo",
+    ]
+
+    for condition in conditions:
+        apply_overrides(cfg, condition.overrides)
