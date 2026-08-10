@@ -130,6 +130,20 @@ def test_unknown_effect_type_raises(tmp_path):
         load_config(bad_cfg)
 
 
+def test_unknown_key_in_filter_effect_raises(tmp_path):
+    bad_cfg = tmp_path / "bad_filter_effect.yaml"
+    bad_cfg.write_text(
+        "pedalboard:\n"
+        "  effects:\n"
+        "    - type: LowpassFilter\n"
+        "      cutoff_frequency_hz: 8000.0\n"
+        "      resonance: 0.7\n"
+        "      enabled: true\n"
+    )
+    with pytest.raises(ConfigError):
+        load_config(bad_cfg)
+
+
 def test_disabled_effect_preserved_in_config(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
     cfg.pedalboard.effects[0].enabled = False
@@ -162,6 +176,42 @@ def test_config_serialises_to_dict(config_fixture):
 def test_config_round_trip_yaml(config_fixture, tmp_path):
     cfg = load_config(config_fixture("config_valid.yaml"))
     out = tmp_path / "round_trip.yaml"
+    cfg.save(out)
+    cfg2 = load_config(out)
+    assert cfg == cfg2
+
+
+def test_filter_effects_round_trip_yaml(tmp_path):
+    cfg = PipelineConfig.model_validate(
+        {
+            **_minimal_config_dict(),
+            "pedalboard": {
+                "effects": [
+                    {"type": "HighpassFilter", "cutoff_frequency_hz": 80.0},
+                    {"type": "LowpassFilter", "cutoff_frequency_hz": 8000.0},
+                    {
+                        "type": "HighShelfFilter",
+                        "cutoff_frequency_hz": 5000.0,
+                        "gain_db": -6.0,
+                        "q": 0.7,
+                    },
+                    {
+                        "type": "LowShelfFilter",
+                        "cutoff_frequency_hz": 100.0,
+                        "gain_db": 3.0,
+                        "q": 0.7,
+                    },
+                    {
+                        "type": "PeakFilter",
+                        "cutoff_frequency_hz": 2500.0,
+                        "gain_db": 3.0,
+                        "q": 1.0,
+                    },
+                ]
+            },
+        }
+    )
+    out = tmp_path / "filter_round_trip.yaml"
     cfg.save(out)
     cfg2 = load_config(out)
     assert cfg == cfg2

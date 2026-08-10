@@ -8,7 +8,12 @@ from sonitra.effects.builtin_effects import (
     DelayConfig,
     DistortionConfig,
     GainConfig,
+    HighpassFilterConfig,
+    HighShelfFilterConfig,
     LimiterConfig,
+    LowpassFilterConfig,
+    LowShelfFilterConfig,
+    PeakFilterConfig,
     ReverbConfig,
     VST3PluginConfig,
 )
@@ -62,6 +67,71 @@ def test_build_limiter_from_config():
     cfg = [LimiterConfig(threshold_db=-1.0, release_ms=100.0, enabled=True)]
     board = build_effects_chain(cfg)
     assert isinstance(board[0], pedalboard.Limiter)
+
+
+def test_build_highpass_filter_from_config():
+    cfg = [HighpassFilterConfig(cutoff_frequency_hz=80.0, enabled=True)]
+    board = build_effects_chain(cfg)
+    assert isinstance(board[0], pedalboard.HighpassFilter)
+    assert board[0].cutoff_frequency_hz == pytest.approx(80.0)
+
+
+def test_build_lowpass_filter_from_config():
+    cfg = [LowpassFilterConfig(cutoff_frequency_hz=8000.0, enabled=True)]
+    board = build_effects_chain(cfg)
+    assert isinstance(board[0], pedalboard.LowpassFilter)
+    assert board[0].cutoff_frequency_hz == pytest.approx(8000.0)
+
+
+def test_build_high_shelf_filter_from_config():
+    cfg = [
+        HighShelfFilterConfig(
+            cutoff_frequency_hz=5000.0, gain_db=-6.0, q=0.7, enabled=True
+        )
+    ]
+    board = build_effects_chain(cfg)
+    assert isinstance(board[0], pedalboard.HighShelfFilter)
+    assert board[0].cutoff_frequency_hz == pytest.approx(5000.0)
+    assert board[0].gain_db == pytest.approx(-6.0)
+    assert board[0].q == pytest.approx(0.7)
+
+
+def test_build_low_shelf_filter_from_config():
+    cfg = [
+        LowShelfFilterConfig(
+            cutoff_frequency_hz=100.0, gain_db=3.0, q=0.7, enabled=True
+        )
+    ]
+    board = build_effects_chain(cfg)
+    assert isinstance(board[0], pedalboard.LowShelfFilter)
+    assert board[0].cutoff_frequency_hz == pytest.approx(100.0)
+    assert board[0].gain_db == pytest.approx(3.0)
+    assert board[0].q == pytest.approx(0.7)
+
+
+def test_build_peak_filter_from_config():
+    cfg = [
+        PeakFilterConfig(cutoff_frequency_hz=2500.0, gain_db=3.0, q=1.0, enabled=True)
+    ]
+    board = build_effects_chain(cfg)
+    assert isinstance(board[0], pedalboard.PeakFilter)
+    assert board[0].cutoff_frequency_hz == pytest.approx(2500.0)
+    assert board[0].gain_db == pytest.approx(3.0)
+    assert board[0].q == pytest.approx(1.0)
+
+
+def test_cascaded_lowpass_filters_preserve_order_and_identity():
+    cfg = [
+        LowpassFilterConfig(cutoff_frequency_hz=8000.0, enabled=True),
+        LowpassFilterConfig(cutoff_frequency_hz=8000.0, enabled=True),
+    ]
+    board = build_effects_chain(cfg)
+    assert len(board) == 2
+    assert isinstance(board[0], pedalboard.LowpassFilter)
+    assert isinstance(board[1], pedalboard.LowpassFilter)
+    assert board[0].cutoff_frequency_hz == pytest.approx(8000.0)
+    assert board[1].cutoff_frequency_hz == pytest.approx(8000.0)
+    assert board[0] is not board[1]
 
 
 def test_build_full_chain_correct_order():
@@ -124,6 +194,32 @@ def test_all_effects_disabled_returns_empty_chain():
         (DelayConfig(delay_seconds=0.5, feedback=0.0, mix=0.5, enabled=True), pedalboard.Delay),
         (DistortionConfig(drive_db=25.0, enabled=True), pedalboard.Distortion),
         (GainConfig(gain_db=0.0, enabled=True), pedalboard.Gain),
+        (
+            HighpassFilterConfig(cutoff_frequency_hz=80.0, enabled=True),
+            pedalboard.HighpassFilter,
+        ),
+        (
+            LowpassFilterConfig(cutoff_frequency_hz=8000.0, enabled=True),
+            pedalboard.LowpassFilter,
+        ),
+        (
+            HighShelfFilterConfig(
+                cutoff_frequency_hz=5000.0, gain_db=-6.0, q=0.7, enabled=True
+            ),
+            pedalboard.HighShelfFilter,
+        ),
+        (
+            LowShelfFilterConfig(
+                cutoff_frequency_hz=100.0, gain_db=3.0, q=0.7, enabled=True
+            ),
+            pedalboard.LowShelfFilter,
+        ),
+        (
+            PeakFilterConfig(
+                cutoff_frequency_hz=2500.0, gain_db=3.0, q=1.0, enabled=True
+            ),
+            pedalboard.PeakFilter,
+        ),
     ],
 )
 def test_all_builtin_effect_types_instantiate(effect_cfg, expected_cls):
