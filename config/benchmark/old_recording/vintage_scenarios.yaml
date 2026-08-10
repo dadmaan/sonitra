@@ -1,0 +1,266 @@
+# Vintage recording chains: bandwidth limiting, presence/resonance coloration,
+# saturation, and dynamics for three historically distinct recording chains
+# (78rpm shellac disc, early reel-to-reel tape, AM radio broadcast), each at
+# two severities, against a common baseline.
+#
+# Phase 1 scope only: bandwidth-and-dynamics ablation. Does NOT model surface
+# noise/crackle/hiss/mains hum or wow/flutter (deferred to phase 2), and post-
+# effects peak normalisation cancels any modelling of reduced medium level or
+# dynamic range. See ./README.md for full grounding, measured calibration
+# tables, and interpretation constraints before drawing conclusions from
+# results produced by this config.
+#
+# Conditions (named only, no sweeps): 7 total — baseline + 3 eras x 2 severities.
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/old_recording/vintage_scenarios.yaml --dataset <name>
+pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: null
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    # Bandwidth shaping first (the "medium" the signal passes through), then
+    # presence/resonance, then saturation, then dynamics. All 8 slots are
+    # declared here disabled; each condition's overrides turn on what it
+    # needs. See ./README.md Section 5 for the cascade calibration that
+    # produced every cutoff below.
+    - type: HighpassFilter   # index 0 — highpass cascade, stage 1 of 2
+      cutoff_frequency_hz: 100.0
+      enabled: false
+    - type: HighpassFilter   # index 1 — highpass cascade, stage 2 of 2
+      cutoff_frequency_hz: 100.0
+      enabled: false
+    - type: LowpassFilter    # index 2 — lowpass cascade, stage 1 of 2
+      cutoff_frequency_hz: 8000.0
+      enabled: false
+    - type: LowpassFilter    # index 3 — lowpass cascade, stage 2 of 2
+      cutoff_frequency_hz: 8000.0
+      enabled: false
+    - type: PeakFilter       # index 4 — shellac presence bump, ~2500 Hz
+      cutoff_frequency_hz: 2500.0
+      gain_db: 3.0
+      q: 1.0
+      enabled: false
+    - type: PeakFilter       # index 5 — tape head-bump resonance, 50-100 Hz
+      cutoff_frequency_hz: 80.0
+      gain_db: 2.0
+      q: 1.0
+      enabled: false
+    - type: Distortion       # index 6 — saturation
+      drive_db: 4.0
+      enabled: false
+    - type: Compressor       # index 7 — dynamics / broadcast processing
+      threshold_db: -18.0
+      ratio: 4.0
+      attack_ms: 5.0
+      release_ms: 100.0
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: peak
+  target_db: -1.0
+  # Pre-normalise so Distortion drive and Compressor thresholds are
+  # deterministic instead of per-file-level-dependent. Departure from
+  # effects_combinations.yaml (false there). See ./README.md Section 4
+  # (confound disclosure) for why post-effects normalisation stays on too.
+  pre_effects: true
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  max_workers: 6
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      device: cpu   # explicit for portability; see ./README.md
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+  max_workers: 4
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  # true + an explicit `baseline` condition below is a hard crash
+  # (duplicate condition name) — see ./README.md.
+  include_baseline: false
+  baseline_name: baseline
+  save_audio: true
+  resume: false
+  conditions:
+    - name: baseline
+      overrides: {}
+
+    - name: shellac_bandlimit_mild
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 51.4
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 51.4
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 11009.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 11009.0
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.cutoff_frequency_hz: 2500.0
+        pedalboard.effects.4.gain_db: 3.0
+        pedalboard.effects.4.q: 1.0
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.threshold_db: -24.0
+        pedalboard.effects.7.ratio: 6.0
+
+    - name: shellac_bandlimit_pronounced
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 77.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 77.1
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 7370.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 7370.0
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.cutoff_frequency_hz: 2500.0
+        pedalboard.effects.4.gain_db: 5.0
+        pedalboard.effects.4.q: 1.2
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.6.drive_db: 6.0
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.threshold_db: -30.0
+        pedalboard.effects.7.ratio: 10.0
+
+    - name: tape_bandlimit_mild
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 25.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 25.7
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 14898.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 14898.0
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.5.cutoff_frequency_hz: 100.0
+        pedalboard.effects.5.gain_db: 2.0
+        pedalboard.effects.5.q: 1.0
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.threshold_db: -12.0
+        pedalboard.effects.7.ratio: 2.0
+
+    - name: tape_bandlimit_pronounced
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cutoff_frequency_hz: 32.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cutoff_frequency_hz: 32.1
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 11009.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 11009.0
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.5.cutoff_frequency_hz: 60.0
+        pedalboard.effects.5.gain_db: 3.0
+        pedalboard.effects.5.q: 1.2
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.6.drive_db: 4.0
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.threshold_db: -15.0
+        pedalboard.effects.7.ratio: 3.0
+
+    - name: am_bandlimit_mild
+      overrides:
+        # No highpass at all — AM was a top-end constraint, not a bandpass.
+        # See ./README.md for the historical grounding.
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 7370.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 7370.0
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.threshold_db: -20.0
+        pedalboard.effects.7.ratio: 8.0
+
+    - name: am_bandlimit_pronounced
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.cutoff_frequency_hz: 5298.0
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.3.cutoff_frequency_hz: 5298.0
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.6.drive_db: 3.0
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.threshold_db: -24.0
+        pedalboard.effects.7.ratio: 12.0
+  sweeps: []
+  max_workers: 1
