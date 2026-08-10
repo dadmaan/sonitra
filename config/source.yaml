@@ -181,6 +181,8 @@ benchmark:
     include_baseline: true
     baseline_name: baseline # condition name used as the reference for delta metrics
     max_workers: 1 # parallel conditions; uses ProcessPoolExecutor for JUCE isolation
+    save_audio: true # keep rendered audio/stems on disk after a condition finishes; set false to delete them once transcribed+evaluated, bounding disk usage for large sweeps
+    resume: false # continue a stopped run: skip (condition, file, transcriber) triples already present in results_path instead of recomputing them
     conditions: [] # named config variants; each provides a list of overrides
     sweeps:
         - name: reverb_wet # sweep name used in results output
