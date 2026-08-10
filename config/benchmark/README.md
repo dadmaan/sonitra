@@ -31,6 +31,33 @@ condition).
 
 ---
 
+## Grounded scenario studies vs. parameter sweeps
+
+This directory now holds two different kinds of study:
+
+- **Abstract single-axis sweeps** — `reverb_sweep.yaml`, `compression_sweep.yaml`,
+  `distortion_sweep.yaml`, `effects_combinations.yaml`. Each varies one (or a small
+  combination of) `pedalboard` parameter(s) across an arbitrary, evenly-spaced grid of
+  values. They answer "how does degrading this parameter change transcription quality,"
+  not "what does a real-world condition sound like."
+- **Grounded real-world scenario studies** — `old_recording/`, `telephone_channel/`,
+  `venue_acoustics/`, `rotary_speaker/`. Each lives in its own subdirectory alongside a
+  scenario-specific YAML config and a `README.md` carrying citations, calibration
+  tables (measured, not assumed), and an explicit confound disclosure. These configs
+  model a specific real-world signal path or acoustic space — a vintage recording
+  chain, a voice-channel bandwidth, a reverberant venue, a Leslie rotary speaker — as
+  closely as this pipeline's effect registry allows.
+
+**Read the scenario's own `README.md` before drawing any conclusion from a run of a
+grounded scenario config.** Each one documents what is and isn't modelled, the
+calibration methodology behind its numeric parameters, and confounds (e.g. how
+`normalisation.pre_effects` and post-effects peak normalisation interact with the
+effect chain — verify this against your own run's actual output levels rather than
+assuming the README's stated intent, since `pre_effects` is a mutually exclusive
+pre-XOR-post switch, not an additive one) that apply to every result it produces.
+
+---
+
 ## Quick start
 
 **Smoke test** (fast, 4 conditions, 2 files):
@@ -56,7 +83,11 @@ sonitra benchmark \
 for cfg in config/benchmark/reverb_sweep.yaml \
             config/benchmark/compression_sweep.yaml \
             config/benchmark/distortion_sweep.yaml \
-            config/benchmark/effects_combinations.yaml; do
+            config/benchmark/effects_combinations.yaml \
+            config/benchmark/old_recording/vintage_scenarios.yaml \
+            config/benchmark/telephone_channel/telephone_scenarios.yaml \
+            config/benchmark/venue_acoustics/venue_scenarios.yaml \
+            config/benchmark/rotary_speaker/rotary_scenarios.yaml; do
   sonitra benchmark --config "$cfg" --dataset my_study
 done
 ```
@@ -193,6 +224,27 @@ are excluded from the fingerprint since they don't affect result semantics.
 | `distortion_sweep.yaml` | Signal distortion (drive) | 9 |
 | `effects_combinations.yaml` | Combinations of effects | 7 |
 | `synthesis_backends.yaml` | Synthesis engine (FluidSynth, Faust, Vital) | 3 |
+| `old_recording/vintage_scenarios.yaml` | Vintage recording chains (bandwidth + dynamics) | 7 |
+| `telephone_channel/telephone_scenarios.yaml` | Voice-channel bandwidth + AGC (VoIP wideband, PSTN narrowband, intercom) | 4 |
+| `venue_acoustics/venue_scenarios.yaml` | Room acoustics (RT60-calibrated: studio, recital hall, symphony hall, cathedral) | 5 |
+| `rotary_speaker/rotary_scenarios.yaml` | Leslie rotary speaker character (chorale/tremolo) | 3 |
+
+`old_recording/vintage_scenarios.yaml` is a **phase-1 bandwidth-and-dynamics
+ablation** for three vintage recording chains (78rpm shellac, early tape, AM
+radio), not a full vintage-audio simulation — surface noise, hiss, hum, and
+wow/flutter are deferred to a later phase. See
+`old_recording/README.md` for the full grounding, measured calibration
+tables, and interpretation constraints before drawing conclusions from it.
+
+`telephone_channel/telephone_scenarios.yaml`, `venue_acoustics/venue_scenarios.yaml`,
+and `rotary_speaker/rotary_scenarios.yaml` follow the same grounded-scenario
+methodology as `old_recording` — each has its own `README.md` with citations,
+a measured calibration table (filter cascade -3 dB points, RT60-calibrated
+`Reverb` parameters, or Leslie rotation-rate figures, respectively), and a
+confound disclosure. `rotary_speaker` in particular carries a larger
+"stylized approximation" caveat than the other three — see its README's
+Section 1 before treating a result from it as evidence about real Leslie
+processing.
 
 ---
 
