@@ -1,0 +1,210 @@
+# Venue acoustics: models four real, RT60-cited acoustic spaces a piano might
+# be recorded in -- control room, chamber/recital hall, symphony hall, and a
+# large cathedral -- as a single-factor Reverb ablation, replacing
+# reverb_sweep.yaml's arbitrary wet_level/room_size steps with values
+# calibrated against published RT60 figures via measured Schroeder backward
+# integration (pedalboard.Reverb exposes no room_size/damping -> RT60
+# mapping; see ./README.md Section 5 for the full calibration methodology
+# and lookup table).
+#
+# Modelled: reverberant decay time (Reverb) only -- genuinely one-factor,
+# unlike old_recording's holistic per-era chains. Does NOT model
+# early-reflection pattern, frequency-dependent absorption, room shape/size
+# beyond what room_size crudely encodes, source/receiver distance/
+# directivity, or material coloration. Post-effects peak normalisation
+# cancels any modelling of a venue's actual received level. See ./README.md
+# for full grounding, the calibration table (both the isolation-mix impulse
+# measurement and the real-piano re-verification), and the onset-masking and
+# algorithm-fidelity confounds before drawing conclusions from results
+# produced by this config.
+#
+# Conditions (named only, no sweeps): 5 total -- baseline + 4 RT60-calibrated
+# venues. NOTE: studio_dry's RT60 target (~0.35s) sits below this Reverb
+# algorithm's measured floor (~0.5s at room_size=0.0, damping=1.0, the
+# minimum of every parameter combination in the calibration grid) -- the
+# closest achievable value is used and the deviation is disclosed in
+# ./README.md rather than forcing values outside the algorithm's reach.
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/venue_acoustics/venue_scenarios.yaml --dataset <name>
+pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: null
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    # Single slot -- this is a genuinely one-factor ablation (RT60 only), not
+    # a holistic chain. Declared here disabled; each condition's overrides
+    # turns it on with the calibrated room_size/damping pair. wet_level 0.33 /
+    # dry_level 0.4 / width 1.0 are pedalboard.Reverb's own defaults, used as
+    # a representative "audibly reverberant" production mix -- see
+    # ./README.md Section 6 for why this differs from the wet_level=1.0 /
+    # dry_level=0.0 isolation mix used during calibration, and the
+    # re-verification confirming RT60 is unaffected by the mix choice.
+    - type: Reverb   # index 0
+      room_size: 0.5
+      damping: 0.5
+      wet_level: 0.33
+      dry_level: 0.4
+      width: 1.0
+      freeze_mode: false
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: peak
+  target_db: -1.0
+  # normalisation.pre_effects is a single-stage switch, not additive: true
+  # normalises ONLY before the effects chain, false normalises ONLY after
+  # (src/sonitra/normaliser.py normalise_from_config). Kept false (the
+  # default) so post-effects normalisation stays on -- this also keeps the
+  # wetter conditions' Reverb-added energy from exceeding
+  # quality_gates.clip_threshold. See ./README.md Section 5.3 (confound
+  # disclosure) for the normalisation-level confound this still carries.
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  max_workers: 6
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      device: cpu   # explicit for portability; see ./README.md
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+  max_workers: 4
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  # true + an explicit `baseline` condition below is a hard crash
+  # (duplicate condition name) — see ./README.md.
+  include_baseline: false
+  baseline_name: baseline
+  save_audio: true
+  resume: false
+  conditions:
+    - name: baseline
+      overrides: {}
+
+    - name: studio_dry
+      overrides:
+        # Recording-studio control-room target, 0.2-0.4s (REFERENCE.md
+        # Section 2.2). Closest achievable pair on this Reverb's calibration
+        # grid: measured RT60 0.517s at the algorithm's floor -- see
+        # ./README.md Section 5 for why 0.35s itself is unreachable.
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.room_size: 0.0
+        pedalboard.effects.0.damping: 1.0
+        pedalboard.effects.0.wet_level: 0.33
+        pedalboard.effects.0.dry_level: 0.4
+        pedalboard.effects.0.width: 1.0
+
+    - name: recital_hall
+      overrides:
+        # Chamber/recital hall target, 1.4-1.8s (REFERENCE.md Section 2.3).
+        # Calibrated pair: measured RT60 1.600s (0.02% from target).
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.room_size: 0.6
+        pedalboard.effects.0.damping: 0.0
+        pedalboard.effects.0.wet_level: 0.33
+        pedalboard.effects.0.dry_level: 0.4
+        pedalboard.effects.0.width: 1.0
+
+    - name: symphony_hall
+      overrides:
+        # Symphony hall occupied target, 1.8-2.2s; Beranek "best halls"
+        # cluster 1.8-2.0s (REFERENCE.md Section 2.3). Calibrated pair:
+        # measured RT60 2.007s (0.33% from target).
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.room_size: 0.69
+        pedalboard.effects.0.damping: 0.0
+        pedalboard.effects.0.wet_level: 0.33
+        pedalboard.effects.0.dry_level: 0.4
+        pedalboard.effects.0.width: 1.0
+
+    - name: cathedral
+      overrides:
+        # Large cathedral range 7-11s; St. Paul's Cathedral occupied
+        # measurement anchor, 7.8s at 500 Hz (REFERENCE.md Section 2.4).
+        # Calibrated pair: measured RT60 8.019s (0.24% from target).
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.room_size: 0.972
+        pedalboard.effects.0.damping: 0.0
+        pedalboard.effects.0.wet_level: 0.33
+        pedalboard.effects.0.dry_level: 0.4
+        pedalboard.effects.0.width: 1.0
+  sweeps: []
+  max_workers: 1
