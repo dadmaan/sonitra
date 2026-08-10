@@ -66,6 +66,37 @@ class VST3PluginConfig(_EffectBase):
     plugin_path: Path | str
 
 
+class HighpassFilterConfig(_EffectBase):
+    type: Literal["HighpassFilter"] = "HighpassFilter"
+    cutoff_frequency_hz: float
+
+
+class LowpassFilterConfig(_EffectBase):
+    type: Literal["LowpassFilter"] = "LowpassFilter"
+    cutoff_frequency_hz: float
+
+
+class HighShelfFilterConfig(_EffectBase):
+    type: Literal["HighShelfFilter"] = "HighShelfFilter"
+    cutoff_frequency_hz: float
+    gain_db: float
+    q: float
+
+
+class LowShelfFilterConfig(_EffectBase):
+    type: Literal["LowShelfFilter"] = "LowShelfFilter"
+    cutoff_frequency_hz: float
+    gain_db: float
+    q: float
+
+
+class PeakFilterConfig(_EffectBase):
+    type: Literal["PeakFilter"] = "PeakFilter"
+    cutoff_frequency_hz: float
+    gain_db: float
+    q: float
+
+
 EffectConfig = Annotated[
     Union[
         CompressorConfig,
@@ -76,6 +107,11 @@ EffectConfig = Annotated[
         DistortionConfig,
         GainConfig,
         VST3PluginConfig,
+        HighpassFilterConfig,
+        LowpassFilterConfig,
+        HighShelfFilterConfig,
+        LowShelfFilterConfig,
+        PeakFilterConfig,
     ],
     Field(discriminator="type"),
 ]

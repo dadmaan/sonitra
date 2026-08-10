@@ -52,7 +52,7 @@ Key sections and their purpose:
 
 ## Built-in audio effects
 
-Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin. Each is a named entry under `pedalboard.effects` with an `enabled` flag. VST3 plugins are loaded at their factory default settings; parameters cannot be set from YAML.
+Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter. Each is a named entry under `pedalboard.effects` with an `enabled` flag. VST3 plugins are loaded at their factory default settings; parameters cannot be set from YAML.
 
 ---
 [← Back to README](../README.md)

@@ -14,7 +14,12 @@ from sonitra.effects.builtin_effects import (
     DistortionConfig,
     EffectConfig,
     GainConfig,
+    HighpassFilterConfig,
+    HighShelfFilterConfig,
     LimiterConfig,
+    LowpassFilterConfig,
+    LowShelfFilterConfig,
+    PeakFilterConfig,
     ReverbConfig,
     VST3PluginConfig,
 )
@@ -87,5 +92,31 @@ def _build_effect(effect_cfg: EffectConfig):
         plugin = pedalboard.load_plugin(str(effect_cfg.plugin_path))
         if not getattr(plugin, "is_effect", False):
             raise ValueError("VST3 plugin is not an effect")
+        return plugin
+    if isinstance(effect_cfg, HighpassFilterConfig):
+        plugin = pedalboard.HighpassFilter()
+        plugin.cutoff_frequency_hz = effect_cfg.cutoff_frequency_hz
+        return plugin
+    if isinstance(effect_cfg, LowpassFilterConfig):
+        plugin = pedalboard.LowpassFilter()
+        plugin.cutoff_frequency_hz = effect_cfg.cutoff_frequency_hz
+        return plugin
+    if isinstance(effect_cfg, HighShelfFilterConfig):
+        plugin = pedalboard.HighShelfFilter()
+        plugin.cutoff_frequency_hz = effect_cfg.cutoff_frequency_hz
+        plugin.gain_db = effect_cfg.gain_db
+        plugin.q = effect_cfg.q
+        return plugin
+    if isinstance(effect_cfg, LowShelfFilterConfig):
+        plugin = pedalboard.LowShelfFilter()
+        plugin.cutoff_frequency_hz = effect_cfg.cutoff_frequency_hz
+        plugin.gain_db = effect_cfg.gain_db
+        plugin.q = effect_cfg.q
+        return plugin
+    if isinstance(effect_cfg, PeakFilterConfig):
+        plugin = pedalboard.PeakFilter()
+        plugin.cutoff_frequency_hz = effect_cfg.cutoff_frequency_hz
+        plugin.gain_db = effect_cfg.gain_db
+        plugin.q = effect_cfg.q
         return plugin
     raise ValueError(f"Unsupported effect type: {type(effect_cfg)}")
