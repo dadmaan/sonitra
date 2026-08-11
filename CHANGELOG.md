@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conditions). Config-and-documentation only, no `src/sonitra/` changes.
 - `docker/Dockerfile` runtime stage: `tmux` installed for interactive
   `docker exec` terminal sessions into running containers
+- `BasicPitchTranscriberConfig` gains `melodia_trick` (default `true`, HMM/
+  melodia post-processing smoothing) and `multiple_pitch_bends` (default
+  `false`) knobs, forwarded to `basic_pitch.inference.predict()`. Note:
+  `multiple_pitch_bends: true` changes note eventing only — the `bends`
+  tuples are still dropped and `midi_writer.py` writes no pitch-wheel
+  messages, so glissando curves are not represented in the output MIDI
+  (documented limitation).
+- New `save_raw_outputs` flag (default `false`) on the `basic_pitch`
+  transcriber: when enabled, the model's raw onset/contour/note probability
+  maps (currently discarded by `transcribe()`) are persisted as a wide
+  441-column piano-roll CSV (`<stem>.model_outputs.csv`, one row per model
+  frame, `time_sec` derived from `basic_pitch.note_creation.
+  model_frames_to_time`) next to each transcribed MIDI, via the new
+  `write_transcription_outputs`/`write_raw_outputs` helpers in
+  `midi_writer.py`
 
 ### Changed
 
