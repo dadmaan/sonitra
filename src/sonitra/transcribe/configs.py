@@ -25,6 +25,7 @@ class BasicPitchTranscriberConfig(_TranscriberBase):
     device: str = "cpu"
     melodia_trick: bool = True            # HMM/melodia post-processing smoothing
     multiple_pitch_bends: bool = False    # allow overlapping same-pitch notes w/ glissando
+    save_raw_outputs: bool = False        # Feature 2 gate: persist raw model outputs as CSV sidecar
 
 
 class ExternalCommandTranscriberConfig(_TranscriberBase):

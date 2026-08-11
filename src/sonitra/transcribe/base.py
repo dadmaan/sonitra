@@ -18,3 +18,4 @@ class TranscriptionResult:
     source_audio: Path | None = None
     midi_path: Path | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    raw_outputs: dict[str, Any] | None = None

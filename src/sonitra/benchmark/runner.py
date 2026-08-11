@@ -29,7 +29,7 @@ from sonitra.evaluation.protocol import (
 )
 from sonitra.evaluation.types import NoteEvent, notes_from_dicts
 from sonitra.midi_reader import parse_midi
-from sonitra.midi_writer import write_midi
+from sonitra.midi_writer import write_transcription_outputs
 from sonitra.pipeline import run_pipeline
 from sonitra.separation.protocol import make_separator
 from sonitra.storage import read_audio
@@ -369,7 +369,7 @@ def _evaluate_one(
             / transcriber.name
             / rel.with_suffix(".mid")
         )
-        write_midi(result.notes, transcription_path)
+        write_transcription_outputs(result, transcription_path)
 
         metrics = evaluate_notes(reference, estimate, symbolic_metrics)
         if audio_metrics:

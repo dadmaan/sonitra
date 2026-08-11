@@ -30,6 +30,7 @@ class BasicPitchTranscriber:
         device: str = "cpu",
         melodia_trick: bool = True,
         multiple_pitch_bends: bool = False,
+        save_raw_outputs: bool = False,
         name: str = "basic_pitch",
     ) -> None:
         self.onset_threshold = float(onset_threshold)
@@ -40,6 +41,7 @@ class BasicPitchTranscriber:
         self.device = device
         self.melodia_trick = melodia_trick
         self.multiple_pitch_bends = multiple_pitch_bends
+        self.save_raw_outputs = save_raw_outputs
         self.name = name
 
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
@@ -54,7 +56,7 @@ class BasicPitchTranscriber:
 
         audio_path = Path(audio_path)
         with tf.device(self.device):
-            _, _, note_events = predict(
+            model_output, _, note_events = predict(
                 str(audio_path),
                 model_or_model_path=ICASSP_2022_MODEL_PATH,
                 onset_threshold=self.onset_threshold,
@@ -79,6 +81,7 @@ class BasicPitchTranscriber:
             notes=notes,
             transcriber=self.name,
             source_audio=audio_path,
+            raw_outputs=model_output if self.save_raw_outputs else None,
         )
 
 
@@ -93,5 +96,6 @@ def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
         device=cfg.device,
         melodia_trick=cfg.melodia_trick,
         multiple_pitch_bends=cfg.multiple_pitch_bends,
+        save_raw_outputs=cfg.save_raw_outputs,
         name=cfg.name or "basic_pitch",
     )
