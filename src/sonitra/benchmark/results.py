@@ -27,6 +27,23 @@ class BenchmarkRecord:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class WorkerEvent:
+    """One fine-grained benchmark progress event streamed from a worker.
+
+    ``status == "start"`` marks a worker beginning one (file, transcriber)
+    cell; ``status == "done"`` marks a record produced for that cell, with
+    ``ok`` reporting whether the evaluation succeeded.
+    """
+
+    worker_id: int  # os.getpid() of the worker process (or parent pid in serial mode)
+    condition: str
+    transcriber: str
+    midi_path: str
+    status: str  # "start" (worker began file+transcriber) | "done" (record produced)
+    ok: bool  # meaningful only when status == "done"
+
+
 class ResultsWriter:
     """Appends benchmark records to a JSONL file."""
 
