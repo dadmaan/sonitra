@@ -12,6 +12,11 @@ class BasicPitchTranscriber:
 
     The `basic-pitch` dependency is installed by default with
     `pip install sonitra`; it is loaded lazily when `transcribe()` is called.
+
+    Note: `multiple_pitch_bends=True` changes note eventing only — the
+    `bends` tuple is still dropped and `midi_writer.py` writes no pitch-wheel
+    messages, so glissando curves are not represented in the output MIDI
+    (documented limitation).
     """
 
     def __init__(
@@ -23,6 +28,8 @@ class BasicPitchTranscriber:
         minimum_frequency_hz: float | None = None,
         maximum_frequency_hz: float | None = None,
         device: str = "cpu",
+        melodia_trick: bool = True,
+        multiple_pitch_bends: bool = False,
         name: str = "basic_pitch",
     ) -> None:
         self.onset_threshold = float(onset_threshold)
@@ -31,6 +38,8 @@ class BasicPitchTranscriber:
         self.minimum_frequency_hz = minimum_frequency_hz
         self.maximum_frequency_hz = maximum_frequency_hz
         self.device = device
+        self.melodia_trick = melodia_trick
+        self.multiple_pitch_bends = multiple_pitch_bends
         self.name = name
 
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
@@ -53,6 +62,8 @@ class BasicPitchTranscriber:
                 minimum_note_length=self.minimum_note_length_ms,
                 minimum_frequency=self.minimum_frequency_hz,
                 maximum_frequency=self.maximum_frequency_hz,
+                melodia_trick=self.melodia_trick,
+                multiple_pitch_bends=self.multiple_pitch_bends,
             )
         notes = [
             {
@@ -80,5 +91,7 @@ def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
         minimum_frequency_hz=cfg.minimum_frequency_hz,
         maximum_frequency_hz=cfg.maximum_frequency_hz,
         device=cfg.device,
+        melodia_trick=cfg.melodia_trick,
+        multiple_pitch_bends=cfg.multiple_pitch_bends,
         name=cfg.name or "basic_pitch",
     )
