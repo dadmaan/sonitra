@@ -388,11 +388,14 @@ def evaluate(
         section = full_cfg.evaluation
         eval_paths = resolve_corpus_paths(full_cfg, config_name=config.stem)
         midi_dir: Path | None = eval_paths.midi
-        first_transcriber = (
-            full_cfg.transcription.transcribers[0].name
-            if full_cfg.transcription.transcribers
-            else "basic_pitch"
-        )
+        # Transcribers may omit the optional `name`; fall back to the backend
+        # type exactly as the transcribe command's output dirs are named.
+        first_transcriber = "basic_pitch"
+        if full_cfg.transcription.transcribers:
+            first_transcriber = (
+                full_cfg.transcription.transcribers[0].name
+                or full_cfg.transcription.transcribers[0].type
+            )
         transcription_dir: Path | None = eval_paths.transcription
         config_stem: str | None = config.stem
         eval_cfg = full_cfg

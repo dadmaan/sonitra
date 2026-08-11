@@ -295,3 +295,70 @@ def test_evaluate_limit_samples_only_files_with_estimates(tmp_path: Path) -> Non
     assert len(lines) == 2
 
 
+def test_evaluate_dataset_with_config_unnamed_transcriber(tmp_path: Path) -> None:
+    """evaluate --config + --dataset works when the transcriber omits `name`.
+
+    Regression: the dataset+config branch read `transcribers[0].name` directly,
+    which is None when the config entry has no `name` field, crashing with
+    `PosixPath / None`. It must fall back to the backend `type` (basic_pitch),
+    matching how the transcribe command names its output directories.
+    """
+    import shutil
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    fixtures = Path(__file__).parent / "fixtures"
+    dataset = "maestro-v3"
+    config_stem = "eval_cfg"
+    corpus_root = tmp_path / "corpus"
+    midi_dir = corpus_root / dataset / "midi"
+    est_dir = corpus_root / dataset / "transcription" / config_stem / "basic_pitch"
+    midi_dir.mkdir(parents=True)
+    est_dir.mkdir(parents=True)
+    shutil.copy(fixtures / "test_c4.mid", midi_dir / "piece_0.mid")
+    shutil.copy(fixtures / "test_c4.mid", est_dir / "piece_0.mid")
+
+    config_path = tmp_path / f"{config_stem}.yaml"
+    config_path.write_text(
+        f"""\
+pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  bpm: 120
+  sample_rate: 22050
+  bit_depth: 16
+  channels: 1
+  duration_padding_sec: 0.5
+  overwrite: true
+  resume: false
+  max_workers: 1
+  log_level: INFO
+io:
+  corpus_root: {corpus_root}
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{{stem}}"
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+transcription:
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+"""
+    )
+
+    out_jsonl = tmp_path / "results.jsonl"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "evaluate",
+            "--config", str(config_path),
+            "--dataset", dataset,
+            "--output", str(out_jsonl),
+        ],
+    )
+    assert result.exit_code == 0, f"evaluate failed: {result.output}"
+    lines = [line for line in out_jsonl.read_text().splitlines() if line.strip()]
+    assert len(lines) == 1
