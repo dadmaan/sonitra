@@ -128,7 +128,7 @@ def transcribe(
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from sonitra.config import load_config, resolve_corpus_paths
-    from sonitra.midi_writer import write_midi
+    from sonitra.midi_writer import write_transcription_outputs
     from sonitra.transcribe.protocol import make_transcriber
 
     cfg = load_config(config)
@@ -174,7 +174,7 @@ def transcribe(
         midi_path = actual_output / backend_name / rel.with_suffix(".mid")
         try:
             result = backend_transcribe(audio_path)
-            write_midi(result.notes, midi_path)
+            write_transcription_outputs(result, midi_path)
             return f"{backend_name}: {audio_path.name} -> {midi_path}", None
         except Exception as exc:  # noqa: BLE001 - CLI reports and continues
             return f"{backend_name}: {audio_path.name} FAILED ({exc})", str(exc)
