@@ -174,6 +174,9 @@ transcription:
           minimum_frequency_hz: null # null = no lower frequency cutoff
           maximum_frequency_hz: null # null = no upper frequency cutoff
           device: cpu # TF device for inference: "cpu", "GPU:0", "GPU:1", …
+          melodia_trick: true # HMM/melodia post-processing smoothing (code default)
+          multiple_pitch_bends: false # allow overlapping same-pitch notes w/ glissando (code default)
+          save_raw_outputs: false # persist raw model outputs as CSV sidecar next to each MIDI (code default)
         # Pre-exported MIDI from any external tool:
         # - type: precomputed
         #   name: klangio             # used as the output subdirectory name

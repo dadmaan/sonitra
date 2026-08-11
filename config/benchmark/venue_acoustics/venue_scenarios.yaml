@@ -126,6 +126,9 @@ transcription:
       minimum_note_length_ms: 127.7
       minimum_frequency_hz: null
       maximum_frequency_hz: null
+      melodia_trick: true
+      multiple_pitch_bends: false
+      save_raw_outputs: false
 
 evaluation:
   note_metrics:
