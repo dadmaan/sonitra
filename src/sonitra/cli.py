@@ -205,6 +205,12 @@ def transcribe(
             "outputs to corpus/{subdir}/{dataset}/{config}/"
         ),
     ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-n", help="Maximum audio files to transcribe (random subset)."
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="RNG seed for --limit sampling."
+    ),
 ) -> None:
     """Transcribe audio files to MIDI with the configured transcribers."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -250,6 +256,7 @@ def transcribe(
     if not audio_paths:
         console.print(f"[red]No audio files found in[/red] [dim]{actual_audio}[/dim]")
         raise typer.Exit(code=1)
+    audio_paths = _apply_subset(audio_paths, limit, seed)
 
     failures = 0
     failure_details: list[tuple[str, str, str]] = []
@@ -353,6 +360,12 @@ def evaluate(
             "outputs to corpus/{subdir}/{dataset}/{config}/"
         ),
     ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-n", help="Maximum reference files to evaluate (random subset)."
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="RNG seed for --limit sampling."
+    ),
 ) -> None:
     """Score estimated MIDI against reference MIDI, paired by file stem."""
     import json
@@ -431,11 +444,9 @@ def evaluate(
         console.print(f"[red]No MIDI files found in[/red] [dim]{actual_reference}[/dim]")
         raise typer.Exit(code=1)
 
-    # Pairs by stem; assumes globally unique filenames across the reference corpus.
-    # See .local/notes/TODO.md for the known limitation with nested datasets.
-    def _eval_one(ref_path: Path) -> dict | None:
+    def _find_estimate(ref_path: Path) -> Path | None:
         rel = ref_path.relative_to(actual_reference)
-        est_path = next(
+        return next(
             (
                 candidate
                 for ext in (".mid", ".midi")
@@ -443,8 +454,21 @@ def evaluate(
             ),
             None,
         )
+
+    if limit is not None:
+        reference_paths = [p for p in reference_paths if _find_estimate(p) is not None]
+        if not reference_paths:
+            console.print("[red]No reference files have matching estimates[/red]")
+            raise typer.Exit(code=1)
+    reference_paths = _apply_subset(reference_paths, limit, seed)
+
+    # Pairs by stem; assumes globally unique filenames across the reference corpus.
+    # See .local/notes/TODO.md for the known limitation with nested datasets.
+    def _eval_one(ref_path: Path) -> dict | None:
+        est_path = _find_estimate(ref_path)
         if est_path is None:
             return None
+        rel = ref_path.relative_to(actual_reference)
         values = evaluate_notes(
             notes_from_dicts(parse_midi(ref_path)),
             notes_from_dicts(parse_midi(est_path)),
