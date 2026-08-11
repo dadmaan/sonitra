@@ -45,6 +45,11 @@ class BasicPitchTranscriber:
         self.name = name
 
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
+        import logging as _logging
+
+        for _name in ("tensorflow", "absl", "basic_pitch"):
+            _logging.getLogger(_name).setLevel(_logging.ERROR)
+
         try:
             import tensorflow as tf
             from basic_pitch import ICASSP_2022_MODEL_PATH

@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 import threading
-from typing import Iterable, List, Dict, Any
+from typing import Any, Callable, Dict, Iterable, List
 import time
 
 import numpy as np
@@ -167,6 +167,7 @@ def run_pipeline(
     overwrite: bool = True,
     config: PipelineConfig | None = None,
     corpus_root: Path | None = None,
+    on_file_done: Callable[[Dict[str, Any]], None] | None = None,
 ) -> PipelineResult:
     start = time.perf_counter()
     out_dir = Path(out_dir)
@@ -204,6 +205,8 @@ def run_pipeline(
                 skipped += 1
             else:
                 failed += 1
+            if on_file_done is not None:
+                on_file_done(entry)
 
         if cfg.pipeline.synth_backend == SynthBackend.PEDALBOARD_INSTRUMENT and n_workers > 1:
             with ThreadPoolExecutor(
