@@ -27,7 +27,8 @@ MIDI → audio synthesis → stem separation → transcription → evaluation vs
 
 `scripts/download_datasets.py` currently supports MAESTRO V3.0.0 (piano, MIDI-only)
 and BSED (orchestral — Beethoven symphony excerpts, MIDI + real recordings, see
-below). Planned expansion covers more instruments, multi-instrument datasets
+below). It also offers an interactive dataset picker (rich table) and parallel
+downloads via `--jobs N`. Planned expansion covers more instruments, multi-instrument datasets
 (e.g. Slakh2100), and automated download support for them.
 
 ## Additional transcription backends

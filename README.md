@@ -119,6 +119,8 @@ Enable GPU inference by setting `device: GPU:0` in the `transcription.transcribe
 
 ```bash
 python scripts/download_datasets.py maestro-v3      # ~1,276 piano MIDI files, ~57 MB
+python scripts/download_datasets.py                 # interactive picker (rich table)
+python scripts/download_datasets.py --all --jobs 4  # download everything, 4 at a time
 ```
 
 Files land under `corpus/{dataset}/midi/`. See **[docs/datasets.md](docs/datasets.md)** for the full list of supported datasets and script options.
