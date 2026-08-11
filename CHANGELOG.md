@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model_frames_to_time`) next to each transcribed MIDI, via the new
   `write_transcription_outputs`/`write_raw_outputs` helpers in
   `midi_writer.py`
+- `scripts/download_datasets.py`: interactive dataset picker backed by a rich
+  table (number, key, name, size, target path, and present/missing status;
+  prompt accepts comma-separated numbers, `all`, or `q`) when run without
+  arguments on a real terminal; `--jobs N` for downloading up to N selected
+  datasets concurrently (default 1 = serial); `--list` now renders a rich table
+  when available. Falls back gracefully to the previous stdlib-only behaviour
+  (plain-text `--list`, original error message) when `rich` is unavailable or
+  stdin is not a TTY
 
 ### Changed
 
