@@ -23,6 +23,8 @@ class BasicPitchTranscriberConfig(_TranscriberBase):
     minimum_frequency_hz: float | None = None
     maximum_frequency_hz: float | None = None
     device: str = "cpu"
+    melodia_trick: bool = True            # HMM/melodia post-processing smoothing
+    multiple_pitch_bends: bool = False    # allow overlapping same-pitch notes w/ glissando
 
 
 class ExternalCommandTranscriberConfig(_TranscriberBase):
