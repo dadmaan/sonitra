@@ -8,6 +8,7 @@ import pytest
 from sonitra.cli import init
 from sonitra.config import SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
+from sonitra.transcribe.base import TranscriptionResult
 
 
 def test_init_writes_working_basic_pitch_config(tmp_path: Path) -> None:
@@ -144,6 +145,20 @@ benchmark:
   conditions: []
   sweeps: []
 """
+
+
+class _StubTranscriber:
+    """Minimal transcriber stub returning a fixed raw_outputs payload."""
+
+    name = "stub"
+
+    def __init__(self, raw_outputs):
+        self._raw = raw_outputs
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(
+            notes=[], transcriber=self.name, raw_outputs=self._raw
+        )
 
 
 def test_transcribe_creates_midi_by_backend_name(tmp_path: Path) -> None:
@@ -385,3 +400,96 @@ def test_init_config_no_section_level_enabled_in_yaml(tmp_path) -> None:
     pedalboard_block = re.search(r"pedalboard:\n(  .*(?:\n|$))*", raw)
     if pedalboard_block:
         assert "enabled:" not in pedalboard_block.group()
+
+
+# ---------------------------------------------------------------------------
+# transcribe command — raw-outputs sidecar wiring (stubbed transcriber)
+# ---------------------------------------------------------------------------
+
+def test_transcribe_writes_raw_outputs_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    import numpy as np
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+
+    wav_path = tmp_path / "test_c4.wav"
+    wav_path.write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+
+    raw_outputs = {
+        "onset": np.zeros((2, 88)),
+        "contour": np.zeros((2, 264)),
+        "note": np.zeros((2, 88)),
+    }
+    monkeypatch.setattr(
+        protocol, "make_transcriber", lambda cfg: _StubTranscriber(raw_outputs)
+    )
+
+    runner = CliRunner()
+    out_dir = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(out_dir),
+            "--config", str(config_path),
+        ],
+    )
+    assert result.exit_code == 0, f"transcribe failed: {result.output}"
+    assert (out_dir / "stub" / "test_c4.mid").exists()
+    assert (out_dir / "stub" / "test_c4.model_outputs.csv").exists()
+
+
+def test_transcribe_sidecar_failure_does_not_fail_transcription(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    import numpy as np
+
+    import sonitra.midi_writer
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+
+    def _boom(*args, **kwargs) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        sonitra.midi_writer, "write_raw_outputs", _boom, raising=False
+    )
+
+    wav_path = tmp_path / "test_c4.wav"
+    wav_path.write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+
+    raw_outputs = {
+        "onset": np.zeros((2, 88)),
+        "contour": np.zeros((2, 264)),
+        "note": np.zeros((2, 88)),
+    }
+    monkeypatch.setattr(
+        protocol, "make_transcriber", lambda cfg: _StubTranscriber(raw_outputs)
+    )
+
+    runner = CliRunner()
+    out_dir = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(out_dir),
+            "--config", str(config_path),
+        ],
+    )
+    assert result.exit_code == 0, f"transcribe failed: {result.output}"
+    assert (out_dir / "stub" / "test_c4.mid").exists()

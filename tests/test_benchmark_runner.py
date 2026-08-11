@@ -9,8 +9,10 @@ import pytest
 from sonitra.benchmark import runner as runner_module
 from sonitra.benchmark.runner import run_benchmark
 from sonitra.config import PipelineConfig
+from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
+from sonitra.transcribe.base import TranscriptionResult
 
 
 @pytest.fixture
@@ -103,6 +105,95 @@ def test_benchmark_records_render_failures(
     by_midi = {record.midi_path: record for record in result.records}
     assert by_midi[str(missing)].status == "render_failed"
     assert by_midi[str(midi_fixture("test_c4.mid"))].status == "succeeded"
+
+
+# ── Raw-outputs sidecar wiring (stubbed transcriber) ─────────────────
+
+class _StubTranscriber:
+    """Minimal transcriber stub returning reference notes + fixed raw outputs."""
+
+    name = "oracle"
+
+    def __init__(self, notes, raw_outputs):
+        self._notes = notes
+        self._raw = raw_outputs
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(
+            notes=self._notes, transcriber=self.name, raw_outputs=self._raw
+        )
+
+
+def test_benchmark_writes_raw_outputs_sidecar(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+
+    raw_outputs = {
+        "onset": np.zeros((2, 88)),
+        "contour": np.zeros((2, 264)),
+        "note": np.zeros((2, 88)),
+    }
+    monkeypatch.setattr(
+        runner_module,
+        "make_transcriber",
+        lambda cfg: _StubTranscriber(
+            parse_midi(midi_fixture("test_c4.mid")), raw_outputs
+        ),
+    )
+
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    assert result.records[0].status == "succeeded"
+    assert (tmp_path / "transcriptions" / "baseline" / "oracle" / "test_c4.mid").exists()
+    assert (
+        tmp_path / "transcriptions" / "baseline" / "oracle" / "test_c4.model_outputs.csv"
+    ).exists()
+
+
+def test_benchmark_sidecar_failure_does_not_fail_evaluation(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+
+    import sonitra.midi_writer
+
+    def _boom(*args, **kwargs) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        sonitra.midi_writer, "write_raw_outputs", _boom, raising=False
+    )
+
+    raw_outputs = {
+        "onset": np.zeros((2, 88)),
+        "contour": np.zeros((2, 264)),
+        "note": np.zeros((2, 88)),
+    }
+    monkeypatch.setattr(
+        runner_module,
+        "make_transcriber",
+        lambda cfg: _StubTranscriber(
+            parse_midi(midi_fixture("test_c4.mid")), raw_outputs
+        ),
+    )
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "succeeded"
+    assert record.metrics["note.onset_f1"] == pytest.approx(1.0)
+
+    lines = result.results_path.read_text().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["status"] == "succeeded"
 
 
 def test_benchmark_requires_transcribers(
