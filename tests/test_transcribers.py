@@ -232,3 +232,103 @@ def test_basic_pitch_note_fields_are_valid_types(tmp_path: Path) -> None:
         assert 1 <= n["velocity"] <= 127, f"velocity {n['velocity']} out of [1, 127]"
         assert isinstance(n["start_sec"], float), f"start_sec must be float, got {type(n['start_sec'])}"
         assert n["duration_sec"] >= 0.0, f"duration_sec {n['duration_sec']} is negative"
+
+
+# ── Basic Pitch configurable knobs + raw model outputs ───────────────
+
+def test_basic_pitch_builder_forwards_new_knobs() -> None:
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+
+    transcriber = make_transcriber(
+        BasicPitchTranscriberConfig(
+            melodia_trick=False,
+            multiple_pitch_bends=True,
+            save_raw_outputs=True,
+        )
+    )
+    assert transcriber.melodia_trick is False
+    assert transcriber.multiple_pitch_bends is True
+    assert transcriber.save_raw_outputs is True
+
+
+@pytest.mark.slow
+def test_basic_pitch_passes_knobs_to_predict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("basic_pitch")
+    import basic_pitch.inference as inference_module
+    import numpy as np
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    captured: dict = {}
+    fake_model_output = {
+        "onset": np.zeros((3, 88), np.float32),
+        "contour": np.zeros((3, 264), np.float32),
+        "note": np.zeros((3, 88), np.float32),
+    }
+
+    def fake_predict(*args, **kwargs):
+        captured.update(kwargs)
+        return fake_model_output, None, []
+
+    monkeypatch.setattr(inference_module, "predict", fake_predict)
+
+    transcriber = BasicPitchTranscriber(melodia_trick=False, multiple_pitch_bends=True)
+    transcriber.transcribe(tmp_path / "dummy.wav")
+
+    assert captured["melodia_trick"] is False
+    assert captured["multiple_pitch_bends"] is True
+
+
+@pytest.mark.slow
+def test_basic_pitch_raw_outputs_captured_when_enabled(tmp_path: Path) -> None:
+    pytest.importorskip("basic_pitch")
+    import numpy as np
+    from scipy.io import wavfile
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    duration = 2.0
+    t = np.linspace(0.0, duration, int(sample_rate * duration), endpoint=False)
+    signal = 0.5 * np.sin(2.0 * np.pi * 440.0 * t)
+    audio_path = tmp_path / "a440_raw.wav"
+    wavfile.write(audio_path, sample_rate, signal.astype(np.float32))
+
+    transcriber = BasicPitchTranscriber(save_raw_outputs=True)
+    result = transcriber.transcribe(audio_path)
+
+    assert result.raw_outputs is not None
+    assert set(result.raw_outputs) == {"onset", "contour", "note"}
+    onset = result.raw_outputs["onset"]
+    contour = result.raw_outputs["contour"]
+    note = result.raw_outputs["note"]
+    n = onset.shape[0]
+    assert n > 0
+    assert onset.shape == (n, 88)
+    assert note.shape == (n, 88)
+    assert contour.shape == (n, 264)
+    for array in (onset, contour, note):
+        assert np.all(array >= 0.0) and np.all(array <= 1.0)
+
+
+@pytest.mark.slow
+def test_basic_pitch_raw_outputs_none_when_disabled(tmp_path: Path) -> None:
+    pytest.importorskip("basic_pitch")
+    import numpy as np
+    from scipy.io import wavfile
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    duration = 2.0
+    t = np.linspace(0.0, duration, int(sample_rate * duration), endpoint=False)
+    signal = 0.5 * np.sin(2.0 * np.pi * 440.0 * t)
+    audio_path = tmp_path / "a440_no_raw.wav"
+    wavfile.write(audio_path, sample_rate, signal.astype(np.float32))
+
+    transcriber = BasicPitchTranscriber()
+    result = transcriber.transcribe(audio_path)
+
+    assert result.raw_outputs is None

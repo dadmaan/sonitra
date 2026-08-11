@@ -223,3 +223,68 @@ def test_default_config_renders_fixtures(corpus_dir: Path, tmp_path: Path) -> No
     cfg = load_config(default_config_path())
     result = run_pipeline(sorted(corpus_dir.glob("*.mid")), tmp_path, config=cfg)
     assert result.succeeded >= 2
+
+
+# ── Basic Pitch config knobs ─────────────────────────────────────────
+
+def test_basic_pitch_config_new_knob_defaults() -> None:
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+
+    cfg = BasicPitchTranscriberConfig()
+    assert cfg.melodia_trick is True
+    assert cfg.multiple_pitch_bends is False
+    assert cfg.save_raw_outputs is False
+
+
+def test_basic_pitch_config_accepts_new_knobs() -> None:
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+
+    cfg = BasicPitchTranscriberConfig(
+        melodia_trick=False,
+        multiple_pitch_bends=True,
+        save_raw_outputs=True,
+    )
+    assert cfg.melodia_trick is False
+    assert cfg.multiple_pitch_bends is True
+    assert cfg.save_raw_outputs is True
+
+
+def test_basic_pitch_config_still_forbids_unknown_keys() -> None:
+    # ConfigError comes from PipelineConfig.model_validate re-raising pydantic's
+    # ValidationError when the basic_pitch transcriber block carries an unknown key.
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+
+    bad = {
+        **_minimal_config_dict(),
+        "transcription": {
+            "transcribers": [
+                {"type": "basic_pitch", "bogus_key": 1},
+            ]
+        },
+    }
+    with pytest.raises(ConfigError):
+        PipelineConfig.model_validate(bad)
+
+
+def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
+    config_dir = Path(__file__).parent.parent / "config"
+    runnable = sorted(p for p in config_dir.rglob("*.yaml") if p.name != "source.yaml")
+    assert len(runnable) == 28
+
+    for path in runnable:
+        cfg = load_config(path)
+        basic_pitch = next(
+            t for t in cfg.transcription.transcribers if t.type == "basic_pitch"
+        )
+        assert basic_pitch.melodia_trick is True, path
+        assert basic_pitch.multiple_pitch_bends is False, path
+        relative = path.relative_to(config_dir)
+        if relative.parts[0] == "examples":
+            assert basic_pitch.save_raw_outputs is True, path
+        else:
+            assert basic_pitch.save_raw_outputs is False, path
+
+    # The annotated reference documents all three knobs at the text level.
+    source_text = (config_dir / "source.yaml").read_text()
+    for key in ("melodia_trick", "multiple_pitch_bends", "save_raw_outputs"):
+        assert key in source_text
