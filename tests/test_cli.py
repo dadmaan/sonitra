@@ -186,6 +186,39 @@ def test_transcribe_creates_midi_by_backend_name(tmp_path: Path) -> None:
     assert (out_dir / "precomputed" / "test_c4.mid").exists()
 
 
+def test_transcribe_limit_constrains_output(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    fixtures = Path(__file__).parent / "fixtures"
+    for i in range(3):
+        (tmp_path / f"piece_{i}.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+        (tmp_path / f"piece_{i}.mid").write_bytes(
+            (fixtures / "test_c4.mid").read_bytes()
+        )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+
+    runner = CliRunner()
+    out_dir = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(out_dir),
+            "--config", str(config_path),
+            "--limit", "1",
+            "--seed", "0",
+        ],
+    )
+    assert result.exit_code == 0, f"transcribe failed: {result.output}"
+    transcribed = list((out_dir / "precomputed").rglob("*.mid"))
+    assert len(transcribed) == 1
+
+
 def test_transcribe_empty_audio_dir_exits_nonzero(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 

@@ -224,3 +224,74 @@ def test_render_limit_constrains_output(tmp_path: Path) -> None:
     assert result.exit_code == 0, f"render failed:\n{result.output}"
     rendered = list(out_dir.rglob("*.wav"))
     assert len(rendered) == 1
+
+
+def test_evaluate_limit_constrains_output(tmp_path: Path) -> None:
+    import shutil
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    fixtures = Path(__file__).parent / "fixtures"
+    ref_dir = tmp_path / "ref"
+    est_dir = tmp_path / "est"
+    ref_dir.mkdir()
+    est_dir.mkdir()
+    for i in range(3):
+        shutil.copy(fixtures / "test_c4.mid", ref_dir / f"piece_{i}.mid")
+        shutil.copy(fixtures / "test_c4.mid", est_dir / f"piece_{i}.mid")
+
+    out_jsonl = tmp_path / "results.jsonl"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "evaluate",
+            "--reference", str(ref_dir),
+            "--estimate", str(est_dir),
+            "--output", str(out_jsonl),
+            "--limit", "1",
+            "--seed", "0",
+        ],
+    )
+    assert result.exit_code == 0, f"evaluate failed: {result.output}"
+    lines = [line for line in out_jsonl.read_text().splitlines() if line.strip()]
+    assert len(lines) == 1
+
+
+def test_evaluate_limit_samples_only_files_with_estimates(tmp_path: Path) -> None:
+    import shutil
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    fixtures = Path(__file__).parent / "fixtures"
+    ref_dir = tmp_path / "ref"
+    est_dir = tmp_path / "est"
+    ref_dir.mkdir()
+    est_dir.mkdir()
+    # 3 references, but only 2 have matching estimates.
+    for i in range(3):
+        shutil.copy(fixtures / "test_c4.mid", ref_dir / f"piece_{i}.mid")
+    for i in range(2):
+        shutil.copy(fixtures / "test_c4.mid", est_dir / f"piece_{i}.mid")
+
+    # limit 5 exceeds the 2 matchable files -> all 2 evaluated (not 3).
+    out_jsonl = tmp_path / "results.jsonl"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "evaluate",
+            "--reference", str(ref_dir),
+            "--estimate", str(est_dir),
+            "--output", str(out_jsonl),
+            "--limit", "5",
+            "--seed", "0",
+        ],
+    )
+    assert result.exit_code == 0, f"evaluate failed: {result.output}"
+    lines = [line for line in out_jsonl.read_text().splitlines() if line.strip()]
+    assert len(lines) == 2
+
+
