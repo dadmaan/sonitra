@@ -130,6 +130,18 @@ class ObservabilitySection(BaseModel):
     manifest_path: Path | str = "renders.jsonl"
     write_failed_list: bool = False
     emit_sse_events: bool = False
+    log_level: str | None = None
+    progress: bool = True
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.upper()
+        if normalized not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError(f"Unsupported log_level: {value}")
+        return normalized
 
 
 class SeparationSection(BaseModel):

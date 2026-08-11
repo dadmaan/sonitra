@@ -150,6 +150,8 @@ observability:
     manifest_path: ./renders.jsonl
     write_failed_list: false # append failed filenames to renders.failed.txt
     emit_sse_events: false # push status events to connected API clients
+    log_level: null # optional root log level override; DEBUG | INFO | WARNING | ERROR | CRITICAL; overrides pipeline.log_level when set
+    progress: true # master switch for live progress bars in the CLI
 
 # Stem separation — planned feature, not yet implemented.
 # See ROADMAP.md for the intended design.
