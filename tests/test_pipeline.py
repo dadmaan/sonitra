@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from sonitra.config import load_config
 from sonitra.pipeline import run_pipeline
 
 
@@ -50,3 +51,22 @@ def test_pipeline_result_is_serialisable(tmp_path, midi_fixture, session_engine)
     import json
 
     json.dumps(result.to_dict())
+
+
+def test_pipeline_config_path_reports_each_file(
+    tmp_path, midi_fixture, config_fixture
+):
+    cfg = load_config(config_fixture("config_valid.yaml"))
+    cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
+    midis = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+
+    entries: list[dict] = []
+    result = run_pipeline(midis, tmp_path, config=cfg, on_file_done=entries.append)
+
+    assert result.succeeded == len(midis)
+    assert result.failed == 0
+    # one callback per input MIDI file, carrying the same per-file log entry
+    assert len(entries) == len(midis)
+    assert entries == result.log
+    assert {entry["midi"] for entry in entries} == {str(m) for m in midis}
+    assert {entry["status"] for entry in entries} == {"succeeded"}
