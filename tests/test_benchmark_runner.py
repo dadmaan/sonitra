@@ -84,6 +84,72 @@ def test_full_benchmark_run(
     assert payload["degradation"][0]["delta_note.onset_f1"] == pytest.approx(0.0)
 
 
+class _RecordingProgress:
+    """Minimal BenchmarkProgress fake recording every callback."""
+
+    def __init__(self) -> None:
+        self.started: list[tuple[str, dict, int, list[str]]] = []
+        self.worker_events: list = []
+        self.conditions_done: list[str] = []
+
+    def on_condition_started(
+        self, condition_name: str, overrides: dict, total_files: int, transcriber_names: list[str]
+    ) -> None:
+        self.started.append(
+            (condition_name, dict(overrides), total_files, list(transcriber_names))
+        )
+
+    def on_worker_event(self, event) -> None:
+        self.worker_events.append(event)
+
+    def on_condition_done(self, condition_name: str) -> None:
+        self.conditions_done.append(condition_name)
+
+
+def test_benchmark_reports_progress(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+    progress = _RecordingProgress()
+
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, progress=progress)
+
+    # 2 conditions (baseline + padding=1.0) x 1 transcriber x 2 files
+    assert len(result.records) == 4
+
+    # one on_condition_started per condition, with the right metadata
+    assert {name for name, _, _, _ in progress.started} == {"baseline", "padding=1.0"}
+    overrides_by_name = {name: overrides for name, overrides, _, _ in progress.started}
+    assert overrides_by_name["baseline"] == {}
+    assert overrides_by_name["padding=1.0"] == {"pipeline.duration_padding_sec": 1.0}
+    for _, _, total_files, transcriber_names in progress.started:
+        assert total_files == len(midi_paths)
+        assert transcriber_names == ["oracle"]
+
+    # one "start" + one "done" event per (condition, file, transcriber) record,
+    # with matching fields and ok reflecting success
+    record_keys = {(r.condition, r.midi_path, r.transcriber) for r in result.records}
+    start_keys = {
+        (e.condition, e.midi_path, e.transcriber)
+        for e in progress.worker_events
+        if e.status == "start"
+    }
+    done_keys = {
+        (e.condition, e.midi_path, e.transcriber)
+        for e in progress.worker_events
+        if e.status == "done"
+    }
+    assert len(progress.worker_events) == 2 * len(result.records)
+    assert start_keys == record_keys
+    assert done_keys == record_keys
+    assert all(e.ok for e in progress.worker_events if e.status == "done")
+
+    # one on_condition_done per condition, in the same order they started
+    assert len(progress.conditions_done) == 2
+    assert progress.conditions_done == [name for name, _, _, _ in progress.started]
+    assert {name for name in progress.conditions_done} == {"baseline", "padding=1.0"}
+
+
 def test_benchmark_with_dtw_resynthesis(
     benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
 ) -> None:
@@ -457,3 +523,39 @@ def test_render_failed_write_guard_in_parallel_path(
     by_midi = {record.midi_path: record for record in result.records}
     assert by_midi[str(missing)].status == "render_failed"
     assert by_midi[str(midi_fixture("test_c4.mid"))].status == "succeeded"
+
+
+def test_benchmark_reports_progress_in_parallel_path(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+    progress = _RecordingProgress()
+
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, progress=progress)
+
+    assert len(result.records) == 4
+    assert {name for name, _, _, _ in progress.started} == {"baseline", "padding=1.0"}
+    assert len(progress.conditions_done) == 2
+    assert {name for name in progress.conditions_done} == {"baseline", "padding=1.0"}
+
+    # events flow through the real queue + drainer thread; order is
+    # nondeterministic, so compare by counts/sets, not order
+    record_keys = {(r.condition, r.midi_path, r.transcriber) for r in result.records}
+    start_keys = {
+        (e.condition, e.midi_path, e.transcriber)
+        for e in progress.worker_events
+        if e.status == "start"
+    }
+    done_keys = {
+        (e.condition, e.midi_path, e.transcriber)
+        for e in progress.worker_events
+        if e.status == "done"
+    }
+    assert len(progress.worker_events) == 2 * len(result.records)
+    assert start_keys == record_keys
+    assert done_keys == record_keys
+    assert all(e.ok for e in progress.worker_events if e.status == "done")
+
+    # worker subprocesses wrote per-worker log files (may be empty, must exist)
+    assert list((tmp_path / "logs").glob("worker-*.log"))

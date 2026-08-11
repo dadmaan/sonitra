@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 import json
 import logging
+import multiprocessing
+import os
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from threading import Thread
+from typing import TYPE_CHECKING, Any, Iterable, Sequence
 
 import numpy as np
 
@@ -36,7 +40,66 @@ from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
 from sonitra.transcribe.protocol import TranscriberProtocol, make_transcriber
 
+if TYPE_CHECKING:
+    from sonitra.terminal import BenchmarkProgress
+
 logger = logging.getLogger(__name__)
+
+
+# Shared queue through which worker subprocesses stream per-record events to
+# the parent. Set by the ProcessPoolExecutor initializer; None in the parent
+# (and in serial mode, where no subprocesses exist).
+_WORKER_EVENTS: multiprocessing.Queue | None = None
+
+
+def _drain_events(event_queue: multiprocessing.Queue, progress: BenchmarkProgress) -> None:
+    """Daemon thread body: forward worker events from the queue to the display."""
+    while True:
+        event = event_queue.get()
+        if event is None:
+            return
+        progress.on_worker_event(event)
+
+
+def _worker_event_init(event_queue: multiprocessing.Queue | None, log_dir: Path) -> None:
+    """ProcessPoolExecutor worker initializer: contain output, neutralise logging.
+
+    Redirects worker fd 1/2 to a per-worker log file under *log_dir* so neither
+    TF C++ stderr output nor Python-level print/logging can corrupt the shared
+    terminal (the rich Live display), while still surviving for debugging.
+    """
+    global _WORKER_EVENTS
+    _WORKER_EVENTS = event_queue
+    # Suppress TF/absl C++ logs (belt-and-braces; env is inherited from parent too)
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    # Tee fd 1 and fd 2 to a per-worker log file (survives for debugging)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"worker-{os.getpid()}.log"
+    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+    os.dup2(fd, 2)
+    os.dup2(fd, 1)
+    # Neutralize Python-level output so rich/FileProxy/print never touch the display
+    sys.stdout = sys.__stdout__   # wrapper over fd 1 -> now the log file
+    sys.stderr = sys.__stderr__   # wrapper over fd 2 -> now the log file
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    root.addHandler(logging.NullHandler())
+
+
+def _emit_worker_event(progress: BenchmarkProgress | None, event: WorkerEvent) -> None:
+    """Route a worker event to the shared queue (parallel) or the display directly.
+
+    In parallel mode ``_WORKER_EVENTS`` is set by the worker initializer, so
+    events stream to the parent's drainer thread. In serial mode there are no
+    subprocesses and ``_WORKER_EVENTS`` is None, so events go straight to the
+    display.
+    """
+    if _WORKER_EVENTS is not None:
+        _WORKER_EVENTS.put(event)
+    elif progress is not None:
+        progress.on_worker_event(event)
 
 
 @dataclass
@@ -64,6 +127,8 @@ def run_benchmark(
     work_dir: Path | str,
     config: PipelineConfig,
     corpus_root: Path | None = None,
+    *,
+    progress: BenchmarkProgress | None = None,
 ) -> BenchmarkResult:
     """Run the full benchmark: render -> (separate) -> transcribe -> evaluate.
 
@@ -146,29 +211,63 @@ def run_benchmark(
             references[path] = None
 
     if n_workers > 1:
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            futures = {
-                executor.submit(
-                    _condition_worker,
-                    condition,
-                    apply_overrides(config, condition.overrides),
-                    midi_paths,
-                    references,
-                    transcriber_configs,
-                    work_dir,
-                    corpus_root,
-                    completed_by_condition.get(condition.name, set()),
-                ): condition
-                for condition in conditions
-            }
+        event_queue: multiprocessing.Queue | None = None
+        drainer: Thread | None = None
+        if progress is not None:
+            event_queue = multiprocessing.Queue()
+            drainer = Thread(
+                target=_drain_events, args=(event_queue, progress), daemon=True
+            )
+            drainer.start()
+        log_dir = work_dir / "logs"
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_worker_event_init,
+            initargs=(event_queue, log_dir),
+        ) as executor:
+            futures: dict[Future, Condition] = {}
+            for condition in conditions:
+                if progress is not None:
+                    progress.on_condition_started(
+                        condition.name,
+                        condition.overrides,
+                        len(midi_paths),
+                        transcriber_names,
+                    )
+                futures[
+                    executor.submit(
+                        _condition_worker,
+                        condition,
+                        apply_overrides(config, condition.overrides),
+                        midi_paths,
+                        references,
+                        transcriber_configs,
+                        work_dir,
+                        corpus_root,
+                        completed_by_condition.get(condition.name, set()),
+                    )
+                ] = condition
             for future in as_completed(futures):
+                condition = futures[future]
                 condition_records = future.result()
                 for record in condition_records:
                     writer.write(record)
                     records.append(record)
+                if progress is not None:
+                    progress.on_condition_done(condition.name)
+        if event_queue is not None and drainer is not None:
+            event_queue.put(None)  # sentinel: drainer thread may exit
+            drainer.join()
     else:
         for condition in conditions:
             logger.info("Benchmark condition '%s' (%d overrides)", condition.name, len(condition.overrides))
+            if progress is not None:
+                progress.on_condition_started(
+                    condition.name,
+                    condition.overrides,
+                    len(midi_paths),
+                    transcriber_names,
+                )
             condition_config = apply_overrides(config, condition.overrides)
             records.extend(
                 _run_condition(
@@ -183,8 +282,11 @@ def run_benchmark(
                     writer,
                     corpus_root=corpus_root,
                     completed=completed_by_condition.get(condition.name, set()),
+                    progress=progress,
                 )
             )
+            if progress is not None:
+                progress.on_condition_done(condition.name)
 
     summary = summarise(records)
     degradation_rows = degradation(summary, baseline=config.benchmark.baseline_name)
@@ -249,7 +351,12 @@ def _run_condition(
     writer: ResultsWriter | None = None,
     corpus_root: Path | None = None,
     completed: set[tuple[str, str]] = frozenset(),
+    progress: BenchmarkProgress | None = None,
 ) -> list[BenchmarkRecord]:
+    # Imported lazily: WorkerEvent is added to sonitra.benchmark.results by the
+    # display lane; this keeps the module importable regardless of edit order.
+    from sonitra.benchmark.results import WorkerEvent
+
     audio_dir = work_dir / "audio" / condition.slug
     render_result = run_pipeline(midi_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
     render_log = {entry["midi"]: entry for entry in render_result.log}
@@ -289,6 +396,17 @@ def _run_condition(
                 if writer is not None:
                     writer.write(record)
                 records.append(record)
+                _emit_worker_event(
+                    progress,
+                    WorkerEvent(
+                        worker_id=os.getpid(),
+                        condition=record.condition,
+                        transcriber=record.transcriber,
+                        midi_path=record.midi_path,
+                        status="done",
+                        ok=False,
+                    ),
+                )
             continue
 
         transcribe_input = audio_path
@@ -305,21 +423,42 @@ def _run_condition(
             transcribe_input = selected
 
         for transcriber in pending_transcribers:
-            records.append(
-                _evaluate_one(
-                    condition,
-                    condition_config,
-                    midi_path,
-                    audio_path,
-                    transcribe_input,
-                    references[midi_path],
-                    transcriber,
-                    symbolic_metrics,
-                    audio_metrics,
-                    work_dir,
-                    writer,
-                    corpus_root=corpus_root,
-                )
+            _emit_worker_event(
+                progress,
+                WorkerEvent(
+                    worker_id=os.getpid(),
+                    condition=condition.name,
+                    transcriber=transcriber.name,
+                    midi_path=str(midi_path),
+                    status="start",
+                    ok=True,
+                ),
+            )
+            record = _evaluate_one(
+                condition,
+                condition_config,
+                midi_path,
+                audio_path,
+                transcribe_input,
+                references[midi_path],
+                transcriber,
+                symbolic_metrics,
+                audio_metrics,
+                work_dir,
+                writer,
+                corpus_root=corpus_root,
+            )
+            records.append(record)
+            _emit_worker_event(
+                progress,
+                WorkerEvent(
+                    worker_id=os.getpid(),
+                    condition=record.condition,
+                    transcriber=record.transcriber,
+                    midi_path=record.midi_path,
+                    status="done",
+                    ok=record.status == "succeeded",
+                ),
             )
     _cleanup_condition_audio(condition_config, work_dir, condition, separator is not None)
     return records
