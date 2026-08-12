@@ -362,6 +362,18 @@ def _run_condition(
     from sonitra.benchmark.results import WorkerEvent
 
     audio_dir = work_dir / "audio" / condition.slug
+    _emit_worker_event(
+        progress,
+        WorkerEvent(
+            worker_id=os.getpid(),
+            condition=condition.name,
+            transcriber="",
+            midi_path="",
+            status="stage",
+            stage="render",
+            ok=True,
+        ),
+    )
     render_result = run_pipeline(midi_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
     render_log = {entry["midi"]: entry for entry in render_result.log}
     separator = (
@@ -415,6 +427,18 @@ def _run_condition(
 
         transcribe_input = audio_path
         if separator is not None:
+            _emit_worker_event(
+                progress,
+                WorkerEvent(
+                    worker_id=os.getpid(),
+                    condition=condition.name,
+                    transcriber="",
+                    midi_path=str(midi_path),
+                    status="stage",
+                    stage="separate",
+                    ok=True,
+                ),
+            )
             stems = separator.separate(
                 audio_path, work_dir / "stems" / condition.slug
             )
@@ -435,6 +459,7 @@ def _run_condition(
                     transcriber=transcriber.name,
                     midi_path=str(midi_path),
                     status="start",
+                    stage="transcribe",
                     ok=True,
                 ),
             )
