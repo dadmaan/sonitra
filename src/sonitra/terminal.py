@@ -6,9 +6,10 @@ from contextlib import ExitStack
 from types import TracebackType
 from typing import Any, Protocol
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -96,6 +97,31 @@ class FilesPerSecondColumn(ProgressColumn):
         )
 
 
+class _BlankableColumn(ProgressColumn):
+    """Wrap a ``ProgressColumn``, blanking it for one row ``kind``.
+
+    ``Progress`` applies a single column list to every task it renders. To give
+    header and detail rows different fields while still sharing one Progress,
+    each row-kind-specific column blanks itself (``Text("")``) for the other
+    kind. The wrapped column's sizing ``Column`` is preserved via
+    ``get_table_column`` delegation so column widths still align across rows.
+    """
+
+    def __init__(self, wrapped: ProgressColumn, *, blank_for_kind: str) -> None:
+        self._wrapped = wrapped
+        self.blank_for_kind = blank_for_kind
+        super().__init__()  # intentionally no table_column
+
+    def render(self, task: Task) -> RenderableType:
+        if task.fields.get("kind") == self.blank_for_kind:
+            return Text("")
+        # Calling the wrapped column (not .render) keeps its __call__ path.
+        return self._wrapped(task)
+
+    def get_table_column(self) -> Any:
+        return self._wrapped.get_table_column().copy()
+
+
 class BenchmarkProgress(Protocol):
     """Callbacks for live benchmark progress displays.
 
@@ -134,6 +160,13 @@ class NullBenchmarkProgress:
 
     def on_condition_done(self, condition_name: str) -> None:
         pass
+
+
+_STYLE_PID = "dim"
+_STYLE_CONDITION = "cyan"
+_STYLE_TRANSCRIBER = "magenta"
+_STYLE_STAGE = "bold yellow"
+_STYLE_DEVICE = "green"
 
 
 class RichBenchmarkProgress:
@@ -176,12 +209,15 @@ class RichBenchmarkProgress:
             transient=True,
         )
         self._workers_progress = Progress(
-            SpinnerColumn(),
+            _BlankableColumn(SpinnerColumn(), blank_for_kind="detail"),
             TextColumn("{task.description}"),
-            TextColumn("{task.fields[file]}", style="dim"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
+            _BlankableColumn(
+                TextColumn("{task.fields[file]}", style="dim"),
+                blank_for_kind="header",
+            ),
+            _BlankableColumn(BarColumn(), blank_for_kind="header"),
+            _BlankableColumn(MofNCompleteColumn(), blank_for_kind="header"),
+            _BlankableColumn(TimeElapsedColumn(), blank_for_kind="header"),
             console=console,
             refresh_per_second=2,
             transient=True,
@@ -195,9 +231,10 @@ class RichBenchmarkProgress:
         )
         self._exit_stack: ExitStack | None = None
         self._outer_task_id: TaskID | None = None
-        self._worker_rows: list[TaskID] = []
+        self._worker_rows: list[tuple[TaskID, TaskID]] = []
         self._row_index = 0
         self._worker_task_ids: dict[int, TaskID] = {}
+        self._worker_detail_task_ids: dict[int, TaskID] = {}
         self._total_files = 0
         self._started = False
 
@@ -211,13 +248,26 @@ class RichBenchmarkProgress:
             # each Live refresh (the documented multi-Progress pattern).
             self._exit_stack = ExitStack()
             self._exit_stack.enter_context(self._live)
-            # Pre-create the per-worker rows so the display has a stable height
-            # before any events arrive.
+            # Pre-create the per-worker header/detail row pairs so the display
+            # has a stable height before any events arrive.
             for i in range(self.n_workers):
-                task_id = self._workers_progress.add_task(
-                    f"worker {i}: idle", total=1, completed=0, visible=True, file=""
+                header_id = self._workers_progress.add_task(
+                    f"worker {i}: idle",
+                    total=1,
+                    completed=0,
+                    visible=True,
+                    file="",
+                    kind="header",
                 )
-                self._worker_rows.append(task_id)
+                detail_id = self._workers_progress.add_task(
+                    "↳",
+                    total=1,
+                    completed=0,
+                    visible=True,
+                    file="",
+                    kind="detail",
+                )
+                self._worker_rows.append((header_id, detail_id))
             self._started = True
         return self
 
@@ -254,43 +304,69 @@ class RichBenchmarkProgress:
         self._update_header()
 
     def _describe_worker(self, event: WorkerEvent) -> str:
-        """Build a row description: pid, condition, transcriber, stage, device."""
-        description = f"pid {event.worker_id} · {event.condition}"
+        """Build a row description: pid, condition, transcriber, stage, device.
+
+        Values are escaped before wrapping in style tags because
+        condition/transcriber come from user-authored benchmark YAML and may
+        contain ``[``/``]`` characters that would otherwise raise
+        ``MarkupError`` (or mis-render) when ``TextColumn`` parses the
+        description as markup; pid/stage/device are escaped too for uniformity.
+        """
+        description = (
+            f"pid [{_STYLE_PID}]{escape(str(event.worker_id))}[/{_STYLE_PID}]"
+            f" · [{_STYLE_CONDITION}]{escape(event.condition)}[/{_STYLE_CONDITION}]"
+        )
         if event.transcriber:
-            description += f" × {event.transcriber}"
+            description += (
+                f" × [{_STYLE_TRANSCRIBER}]{escape(event.transcriber)}"
+                f"[/{_STYLE_TRANSCRIBER}]"
+            )
         if event.stage:
-            description += f" · {event.stage}"
+            description += (
+                f" · [{_STYLE_STAGE}]{escape(event.stage)}[/{_STYLE_STAGE}]"
+            )
         if event.transcriber in self.devices:
-            description += f" · {self.devices[event.transcriber]}"
+            description += (
+                f" · [{_STYLE_DEVICE}]{escape(self.devices[event.transcriber])}"
+                f"[/{_STYLE_DEVICE}]"
+            )
         return description
 
     def on_worker_event(self, event: WorkerEvent) -> None:
         """Update the display for one event streamed from a worker."""
         if not self._started:
             self.__enter__()
-        task_id = self._assign_row(event.worker_id)
+        header_id, detail_id = self._assign_row(event.worker_id)
         if event.status == "start":
             self._workers_progress.update(
-                task_id,
+                header_id,
                 description=self._describe_worker(event),
+            )
+            self._workers_progress.update(
+                detail_id,
                 total=self._total_files,
                 completed=0,
-                file=event.midi_path,
+                file=escape(event.midi_path),
             )
         elif event.status == "stage":
             # Update description, and file/total where the stage actually
             # knows them, but never completed - that's the only invariant
             # this branch must protect (see the pre-existing completed=0-
             # on-every-"start" bug, deferred and untouched by this branch).
-            fields: dict[str, Any] = {"description": self._describe_worker(event)}
+            self._workers_progress.update(
+                header_id,
+                description=self._describe_worker(event),
+            )
+            fields: dict[str, Any] = {}
             if event.stage == "render":
                 fields["file"] = ""  # clear any stale filename
                 fields["total"] = self._total_files  # row shows M/N during render too
             elif event.stage == "separate":
-                fields["file"] = event.midi_path  # real, known filename
-            self._workers_progress.update(task_id, **fields)
+                fields["file"] = escape(event.midi_path)  # real, known filename
+            if fields:
+                self._workers_progress.update(detail_id, **fields)
         elif event.status == "done":
-            self._workers_progress.advance(task_id)
+            self._workers_progress.advance(detail_id)
             if self._outer_task_id is not None:
                 self._outer_progress.advance(self._outer_task_id)
             if not event.ok:
@@ -303,27 +379,29 @@ class RichBenchmarkProgress:
         """No-op: per-worker rows complete via :meth:`on_worker_event` advances."""
         pass
 
-    def _assign_row(self, worker_id: int) -> TaskID:
-        """Return the row TaskID for a worker pid, assigning it lazily.
+    def _assign_row(self, worker_id: int) -> tuple[TaskID, TaskID]:
+        """Return the (header, detail) row TaskIDs for a worker pid, assigning
+        them lazily on first use.
 
-        The first event from a pid takes the next unused pre-created row; once
-        a pid owns a row it keeps it for the whole run.
+        The first event from a pid takes the next unused pre-created row pair;
+        once a pid owns a pair it keeps it for the whole run.
         """
-        task_id = self._worker_task_ids.get(worker_id)
-        if task_id is not None:
-            return task_id
+        header_id = self._worker_task_ids.get(worker_id)
+        if header_id is not None:
+            return (header_id, self._worker_detail_task_ids[worker_id])
         if self._row_index < len(self._worker_rows):
-            task_id = self._worker_rows[self._row_index]
+            header_id, detail_id = self._worker_rows[self._row_index]
             self._row_index += 1
         else:
             # All pre-created rows are already assigned to other pids; fall back
-            # to the first row so we never crash (shouldn't happen with a
+            # to the first row pair so we never crash (shouldn't happen with a
             # correctly-sized pool).
-            task_id = self._worker_rows[0]
-        self._worker_task_ids[worker_id] = task_id
+            header_id, detail_id = self._worker_rows[0]
+        self._worker_task_ids[worker_id] = header_id
+        self._worker_detail_task_ids[worker_id] = detail_id
         self._pids.add(worker_id)
         self._update_header()
-        return task_id
+        return (header_id, detail_id)
 
     def _update_header(self) -> None:
         """Rebuild the header in place so the Live group sees the change."""
