@@ -4,6 +4,7 @@ import os
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 from sonitra.benchmark.results import WorkerEvent
 from sonitra.config import (
@@ -308,9 +309,10 @@ def test_null_benchmark_progress_worker_event_is_noop() -> None:
 def test_rich_benchmark_progress_enters_exits_with_two_workers() -> None:
     progress = RichBenchmarkProgress(Console(force_terminal=True), n_workers=2)
     with progress:
-        # Rows are pre-created before any events arrive.
+        # Rows are pre-created before any events arrive: one (header, detail)
+        # pair per worker slot.
         assert len(progress._worker_rows) == 2
-        assert len(progress._workers_progress.tasks) == 2
+        assert len(progress._workers_progress._tasks) == 4
         # The idle rows render without raising (file field present).
         progress._live.refresh()
     assert len(progress._worker_rows) == 2
@@ -489,17 +491,23 @@ def test_rich_benchmark_progress_row_pid_and_device_chip() -> None:
                 status="start",
             )
         )
-        tasks = progress._workers_progress.tasks
+        tasks = progress._workers_progress._tasks
         assert (
-            tasks[progress._worker_task_ids[1001]].description
+            Text.from_markup(
+                tasks[progress._worker_task_ids[1001]].description
+            ).plain
             == "pid 1001 · baseline × basic_pitch · transcribe · cpu"
         )
         assert (
-            tasks[progress._worker_task_ids[1002]].description
+            Text.from_markup(
+                tasks[progress._worker_task_ids[1002]].description
+            ).plain
             == "pid 1002 · baseline × second · transcribe · GPU:0"
         )
         assert (
-            tasks[progress._worker_task_ids[1003]].description
+            Text.from_markup(
+                tasks[progress._worker_task_ids[1003]].description
+            ).plain
             == "pid 1003 · baseline × oracle · transcribe"
         )
     # Multi-device chips join sorted (case-insensitive) with a comma.

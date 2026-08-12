@@ -93,6 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WorkerEvent` gains a `stage` field and a new `status == "stage"` value
   for these non-cell-boundary transitions, carried by the existing
   worker-event queue with no new plumbing.
+- `RichBenchmarkProgress` worker rows now split into two adjacent Progress rows
+  per pool worker: a coloured header row (pid, condition, transcriber, stage,
+  device — each field individually styled) with no bar, and an indented detail
+  row underneath (file, progress bar, M-of-N, elapsed), fixing illegible
+  line-wrapping on narrow terminals where the previous single combined row would
+  overflow. Condition/transcriber names and file paths are escaped before going
+  through Rich markup so `[`/`]` characters in user-authored benchmark YAML or
+  filesystem paths can't raise `MarkupError` or mis-render.
 - `render`, `transcribe`, `evaluate`, `benchmark`, `init`, and `serve` CLI
   output beautified with `rich`: per-file progress bars, failure tables, and
   benchmark summary/degradation tables; new global `--verbose`/`--quiet`
