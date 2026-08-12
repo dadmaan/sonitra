@@ -22,6 +22,7 @@ from sonitra.benchmark.results import (
     compute_fingerprint,
     degradation,
     load_records,
+    order_by_condition,
     summarise,
 )
 from sonitra.config import PipelineConfig
@@ -150,6 +151,7 @@ def run_benchmark(
     transcriber_names = [t.name for t in transcribers]
 
     conditions = expand_conditions(config.benchmark)
+    condition_order = [condition.name for condition in conditions]
     symbolic_metrics = make_symbolic_metrics(config.evaluation)
     audio_metrics = make_audio_metrics(config.evaluation)
     n_workers = config.benchmark.max_workers
@@ -288,8 +290,10 @@ def run_benchmark(
             if progress is not None:
                 progress.on_condition_done(condition.name)
 
-    summary = summarise(records)
-    degradation_rows = degradation(summary, baseline=config.benchmark.baseline_name)
+    summary = order_by_condition(summarise(records), condition_order)
+    degradation_rows = order_by_condition(
+        degradation(summary, baseline=config.benchmark.baseline_name), condition_order
+    )
     summary_path = work_dir / "summary.json"
     summary_path.write_text(
         json.dumps({"summary": summary, "degradation": degradation_rows}, indent=2)

@@ -10,6 +10,7 @@ from sonitra.benchmark.results import (
     ResultsWriter,
     degradation,
     load_records,
+    order_by_condition,
     summarise,
 )
 
@@ -78,3 +79,44 @@ def test_degradation_vs_baseline() -> None:
     assert deltas[("reverb=0.5", "bp")]["delta_note.onset_f1"] == pytest.approx(-0.3)
     # mt3 has no baseline row -> excluded
     assert ("reverb=0.5", "mt3") not in deltas
+
+
+def test_order_by_condition_restores_declared_order() -> None:
+    # Simulates parallel-mode completion order scrambling the declared order.
+    summary = summarise(
+        [
+            _record("wet_level=0.6", "bp", 0.5),
+            _record("baseline", "bp", 0.9),
+            _record("no_reverb", "bp", 0.8),
+        ]
+    )
+    ordered = order_by_condition(
+        summary, ["baseline", "no_reverb", "wet_level=0.6"]
+    )
+    assert [row["condition"] for row in ordered] == [
+        "baseline",
+        "no_reverb",
+        "wet_level=0.6",
+    ]
+
+
+def test_order_by_condition_breaks_ties_by_transcriber() -> None:
+    summary = summarise(
+        [
+            _record("baseline", "mt3", 0.5),
+            _record("baseline", "bp", 0.9),
+        ]
+    )
+    ordered = order_by_condition(summary, ["baseline"])
+    assert [row["transcriber"] for row in ordered] == ["bp", "mt3"]
+
+
+def test_order_by_condition_unknown_condition_sorts_last() -> None:
+    summary = summarise(
+        [
+            _record("mystery", "bp", 0.5),
+            _record("baseline", "bp", 0.9),
+        ]
+    )
+    ordered = order_by_condition(summary, ["baseline"])
+    assert [row["condition"] for row in ordered] == ["baseline", "mystery"]

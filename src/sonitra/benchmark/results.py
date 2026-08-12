@@ -116,6 +116,26 @@ def summarise(records: Iterable[BenchmarkRecord]) -> list[dict[str, Any]]:
     return summary
 
 
+def order_by_condition(
+    rows: Sequence[dict[str, Any]], condition_order: Sequence[str]
+) -> list[dict[str, Any]]:
+    """Sort summary/degradation rows by declared condition order, then transcriber.
+
+    Benchmark conditions may complete in a nondeterministic order (parallel
+    mode dispatches conditions across a process pool and gathers results via
+    ``as_completed``), which otherwise leaks into the row order of the
+    aggregate tables. This restores the order conditions were declared in the
+    config so repeated runs of the same config produce identically-ordered
+    output. Conditions not present in *condition_order* sort after all known
+    ones.
+    """
+    index = {name: i for i, name in enumerate(condition_order)}
+    return sorted(
+        rows,
+        key=lambda row: (index.get(row["condition"], len(index)), row["transcriber"]),
+    )
+
+
 def degradation(
     summary: Sequence[dict[str, Any]], *, baseline: str = "baseline"
 ) -> list[dict[str, Any]]:

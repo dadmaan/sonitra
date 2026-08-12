@@ -83,6 +83,10 @@ def test_full_benchmark_run(
     assert len(payload["degradation"]) == 1
     assert payload["degradation"][0]["delta_note.onset_f1"] == pytest.approx(0.0)
 
+    # summary/degradation rows are in declared condition order (baseline, padding=1.0)
+    assert [row["condition"] for row in result.summary] == ["baseline", "padding=1.0"]
+    assert [row["condition"] for row in result.degradation] == ["padding=1.0"]
+
 
 class _RecordingProgress:
     """Minimal BenchmarkProgress fake recording every callback."""
@@ -139,10 +143,10 @@ def test_benchmark_reports_progress(
         for e in progress.worker_events
         if e.status == "done"
     }
-    assert len(progress.worker_events) == 2 * len(result.records)
     assert start_keys == record_keys
     assert done_keys == record_keys
     assert all(e.ok for e in progress.worker_events if e.status == "done")
+    assert len(progress.worker_events) == 2 * len(result.records)
 
     # one on_condition_done per condition, in the same order they started
     assert len(progress.conditions_done) == 2
@@ -552,10 +556,15 @@ def test_benchmark_reports_progress_in_parallel_path(
         for e in progress.worker_events
         if e.status == "done"
     }
-    assert len(progress.worker_events) == 2 * len(result.records)
     assert start_keys == record_keys
     assert done_keys == record_keys
     assert all(e.ok for e in progress.worker_events if e.status == "done")
+    assert len(progress.worker_events) == 2 * len(result.records)
 
     # worker subprocesses wrote per-worker log files (may be empty, must exist)
     assert list((tmp_path / "logs").glob("worker-*.log"))
+
+    # summary/degradation rows are in declared condition order regardless of
+    # which subprocess happened to finish first
+    assert [row["condition"] for row in result.summary] == ["baseline", "padding=1.0"]
+    assert [row["condition"] for row in result.degradation] == ["padding=1.0"]
