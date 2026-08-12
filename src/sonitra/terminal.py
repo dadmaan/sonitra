@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import ExitStack
 from types import TracebackType
 from typing import Any, Protocol
@@ -37,10 +38,15 @@ def get_console(*, quiet: bool = False, no_color: bool = False) -> Console:
     the existing console unchanged — create a local ``Console`` if you need a
     one-off differently-configured console. TTY/colour detection is left to
     rich's defaults.
+
+    ``file`` is pinned to ``sys.stdout`` at construction time rather than left
+    to rich's default dynamic lookup, so the console keeps writing to the real
+    terminal even if ``sys.stdout`` is later reassigned (e.g. by a serial-mode
+    output guard redirecting a noisy backend's prints away from the display).
     """
     global _console
     if _console is None:
-        _console = Console(quiet=quiet, no_color=no_color)
+        _console = Console(quiet=quiet, no_color=no_color, file=sys.stdout)
     return _console
 
 

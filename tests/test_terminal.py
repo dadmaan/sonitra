@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import os
+from contextlib import redirect_stdout
 
 import pytest
 
@@ -12,6 +14,20 @@ from sonitra.terminal import NullBenchmarkProgress, RichBenchmarkProgress, get_c
 @pytest.fixture(autouse=True)
 def _reset_console_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(terminal_module, "_console", None)
+
+
+def test_get_console_pins_stdout_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The console must keep writing to the real terminal even if something
+    else (e.g. a serial-mode output guard) temporarily reassigns sys.stdout."""
+    pinned_stdout = io.StringIO()
+    monkeypatch.setattr("sys.stdout", pinned_stdout)
+
+    console = get_console()
+    assert console.file is pinned_stdout
+
+    other_target = io.StringIO()
+    with redirect_stdout(other_target):
+        assert console.file is pinned_stdout
 
 
 def test_rich_benchmark_progress_live_is_transient() -> None:
