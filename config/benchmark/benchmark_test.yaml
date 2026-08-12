@@ -17,7 +17,7 @@ pipeline:
   # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
   # regardless (see pipeline.py), and dawdreamer is forced to 1 by
   # validate_worker_constraint() because JUCE is not concurrency-safe.
-  max_workers: 1
+  max_workers: 8
   log_level: INFO
 
 io:
@@ -90,7 +90,7 @@ transcription:
   # Thread pool over audio files, sharing one TensorFlow process (and so one
   # GPU context) — safe to raise. Honoured by `sonitra transcribe`;
   # `sonitra benchmark` parallelises via benchmark.max_workers instead.
-  max_workers: 6
+  max_workers: 1
   transcribers:
     - type: basic_pitch
       enabled: true
@@ -127,7 +127,7 @@ evaluation:
     max_frames: 4000
   # Thread pool over per-file metric computation (NumPy/SciPy, CPU-bound).
   # Honoured by `sonitra evaluate`.
-  max_workers: 4
+  max_workers: 1
 
 benchmark:
   results_path: benchmark_results.jsonl
@@ -148,4 +148,4 @@ benchmark:
   # memory on init (~22 GB of 24 GB in the first process), so a second worker
   # is left with nothing. Raising this requires enabling GPU memory growth
   # first, or setting transcription device back to "cpu".
-  max_workers: 2
+  max_workers: 4
