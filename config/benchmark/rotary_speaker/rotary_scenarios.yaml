@@ -35,7 +35,7 @@ pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
-  max_workers: 1
+  max_workers: 8
   log_level: INFO
 
 io:
@@ -115,7 +115,7 @@ transcription:
   transcribers:
     - type: basic_pitch
       enabled: true
-      device: cpu   # explicit for portability; see ./README.md
+      device: GPU:0   # explicit for portability; see ./README.md
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -149,10 +149,10 @@ benchmark:
   results_path: benchmark_results.jsonl
   # true + an explicit `baseline` condition below is a hard crash
   # (duplicate condition name) — see ./README.md.
-  include_baseline: false
+  include_baseline: true
   baseline_name: baseline
-  save_audio: true
-  resume: false
+  save_audio: false
+  resume: true
   conditions:
     - name: baseline
       overrides: {}
@@ -185,4 +185,4 @@ benchmark:
         pedalboard.effects.0.feedback: 0.15
         pedalboard.effects.0.mix: 0.55
   sweeps: []
-  max_workers: 1
+  max_workers: 2
