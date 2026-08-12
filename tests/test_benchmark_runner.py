@@ -146,12 +146,63 @@ def test_benchmark_reports_progress(
     assert start_keys == record_keys
     assert done_keys == record_keys
     assert all(e.ok for e in progress.worker_events if e.status == "done")
-    assert len(progress.worker_events) == 2 * len(result.records)
+    # every "start" event now carries stage="transcribe"
+    assert all(
+        e.stage == "transcribe" for e in progress.worker_events if e.status == "start"
+    )
+
+    # exactly one stage(render) event per condition actually processed, with
+    # no transcriber/midi_path context yet (render runs once for the whole
+    # condition, before any per-file work)
+    render_events = [
+        e for e in progress.worker_events if e.status == "stage" and e.stage == "render"
+    ]
+    assert len(render_events) == len(progress.started)
+    assert all(e.transcriber == "" and e.midi_path == "" for e in render_events)
+
+    # per-outcome event-count formula (not a flat multiplier): one
+    # stage(render) per condition, plus one start+done pair per (condition,
+    # file, transcriber) that isn't render_failed, plus a single done for any
+    # that is. No separation is enabled in this fixture, so no
+    # stage(separate) events.
+    expected_transcribe_events = sum(
+        1 if record.status == "render_failed" else 2 for record in result.records
+    )
+    assert len(progress.worker_events) == len(render_events) + expected_transcribe_events
 
     # one on_condition_done per condition, in the same order they started
     assert len(progress.conditions_done) == 2
     assert progress.conditions_done == [name for name, _, _, _ in progress.started]
     assert {name for name in progress.conditions_done} == {"baseline", "padding=1.0"}
+
+
+def test_benchmark_reports_stage_events_in_serial_order(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    """Serial mode, one condition, no separation: the exact per-condition
+    event sequence must be stage(render) -> start(f1) -> done(f1) ->
+    start(f2) -> done(f2), in that order."""
+    benchmark_config.benchmark.sweeps = []
+    file1 = midi_fixture("test_c4.mid")
+    file2 = midi_fixture("test_polyphonic.mid")
+    progress = _RecordingProgress()
+
+    result = run_benchmark([file1, file2], tmp_path, benchmark_config, progress=progress)
+
+    assert len(result.records) == 2
+    events = progress.worker_events
+    assert [(e.status, e.stage) for e in events] == [
+        ("stage", "render"),
+        ("start", "transcribe"),
+        ("done", ""),
+        ("start", "transcribe"),
+        ("done", ""),
+    ]
+    assert events[0].condition == "baseline"
+    assert events[0].transcriber == ""
+    assert events[0].midi_path == ""
+    assert [e.midi_path for e in events[1:3]] == [str(file1), str(file1)]
+    assert [e.midi_path for e in events[3:5]] == [str(file2), str(file2)]
 
 
 def test_benchmark_with_dtw_resynthesis(
@@ -334,6 +385,36 @@ def test_save_audio_false_removes_stems_dir(
     assert not (tmp_path / "audio" / "baseline").exists()
     assert not (tmp_path / "stems" / "baseline").exists()
     assert result.records[0].status == "succeeded"
+
+
+def test_benchmark_reports_separate_stage_event(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    """Separation enabled: exactly one stage(separate) event per file (shared
+    across that file's transcribers, since separator.separate() itself runs
+    once per file), with the real midi_path and no transcriber context yet."""
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.separation.enabled = True
+    benchmark_config.separation.backend = "fake_stems"
+    file1 = midi_fixture("test_c4.mid")
+    progress = _RecordingProgress()
+
+    result = run_benchmark([file1], tmp_path, benchmark_config, progress=progress)
+
+    assert len(result.records) == 1
+    separate_events = [
+        e for e in progress.worker_events if e.status == "stage" and e.stage == "separate"
+    ]
+    assert len(separate_events) == 1
+    assert separate_events[0].midi_path == str(file1)
+    assert separate_events[0].transcriber == ""
+
+    assert [(e.status, e.stage) for e in progress.worker_events] == [
+        ("stage", "render"),
+        ("stage", "separate"),
+        ("start", "transcribe"),
+        ("done", ""),
+    ]
 
 
 def test_save_audio_false_cleans_up_after_partial_failure(
@@ -559,7 +640,25 @@ def test_benchmark_reports_progress_in_parallel_path(
     assert start_keys == record_keys
     assert done_keys == record_keys
     assert all(e.ok for e in progress.worker_events if e.status == "done")
-    assert len(progress.worker_events) == 2 * len(result.records)
+    assert all(
+        e.stage == "transcribe" for e in progress.worker_events if e.status == "start"
+    )
+
+    # exactly one stage(render) event per condition, order-agnostic across
+    # conditions (different conditions' events can interleave across
+    # processes, so this stays count/set-based, not order-based)
+    render_events = [
+        e for e in progress.worker_events if e.status == "stage" and e.stage == "render"
+    ]
+    assert len(render_events) == len(progress.started)
+    assert all(e.transcriber == "" and e.midi_path == "" for e in render_events)
+
+    # per-outcome event-count formula (§ A6): render events + start/done
+    # pairs (or a lone done for render_failed records); no separation here.
+    expected_transcribe_events = sum(
+        1 if record.status == "render_failed" else 2 for record in result.records
+    )
+    assert len(progress.worker_events) == len(render_events) + expected_transcribe_events
 
     # worker subprocesses wrote per-worker log files (may be empty, must exist)
     assert list((tmp_path / "logs").glob("worker-*.log"))

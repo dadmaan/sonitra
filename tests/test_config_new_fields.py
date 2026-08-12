@@ -287,6 +287,8 @@ def _worker_event(**overrides) -> WorkerEvent:
         "ok": True,
     }
     fields.update(overrides)
+    if fields["status"] == "start":
+        fields.setdefault("stage", "transcribe")
     return WorkerEvent(**fields)
 
 

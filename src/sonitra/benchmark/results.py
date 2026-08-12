@@ -31,17 +31,21 @@ class BenchmarkRecord:
 class WorkerEvent:
     """One fine-grained benchmark progress event streamed from a worker.
 
-    ``status == "start"`` marks a worker beginning one (file, transcriber)
-    cell; ``status == "done"`` marks a record produced for that cell, with
-    ``ok`` reporting whether the evaluation succeeded.
+    Lifecycle per condition: ``stage(render)`` -> ``[stage(separate)]`` ->
+    ``start(transcribe)`` -> ``done``. ``status == "stage"`` marks a
+    non-cell-boundary transition (render fires once per condition, separate
+    fires once per file); ``status == "start"`` marks a worker beginning one
+    (file, transcriber) cell; ``status == "done"`` marks a record produced for
+    that cell, with ``ok`` reporting whether the evaluation succeeded.
     """
 
     worker_id: int  # os.getpid() of the worker process (or parent pid in serial mode)
     condition: str
     transcriber: str
     midi_path: str
-    status: str  # "start" (worker began file+transcriber) | "done" (record produced)
+    status: str  # "stage" (mid-lifecycle marker) | "start" | "done"
     ok: bool  # meaningful only when status == "done"
+    stage: str = ""  # "render" | "separate" | "transcribe" | ""
 
 
 class ResultsWriter:

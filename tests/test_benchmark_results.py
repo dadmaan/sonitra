@@ -8,6 +8,7 @@ import pytest
 from sonitra.benchmark.results import (
     BenchmarkRecord,
     ResultsWriter,
+    WorkerEvent,
     degradation,
     load_records,
     order_by_condition,
@@ -109,6 +110,20 @@ def test_order_by_condition_breaks_ties_by_transcriber() -> None:
     )
     ordered = order_by_condition(summary, ["baseline"])
     assert [row["transcriber"] for row in ordered] == ["bp", "mt3"]
+
+
+def test_worker_event_stage_field_defaults_to_empty_string() -> None:
+    """``stage`` is display-only and optional: every existing construction
+    site (and any not yet updated to pass it) must keep working."""
+    event = WorkerEvent(
+        worker_id=123,
+        condition="baseline",
+        transcriber="oracle",
+        midi_path="a.mid",
+        status="done",
+        ok=True,
+    )
+    assert event.stage == ""
 
 
 def test_order_by_condition_unknown_condition_sorts_last() -> None:
