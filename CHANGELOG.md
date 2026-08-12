@@ -12,17 +12,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Five new `pedalboard`-backed filter effect types available under
   `pedalboard.effects`: `HighpassFilter`, `LowpassFilter`, `HighShelfFilter`,
   `LowShelfFilter`, `PeakFilter`.
-- Three new grounded benchmark scenario studies under `config/benchmark/`,
-  following `old_recording/`'s real-world-grounding methodology (citations,
-  measured calibration tables, confound disclosure): `telephone_channel/`
-  (voice-channel bandwidth + AGC — ITU-T G.722 wideband VoIP, ITU-T G.711
-  narrowband PSTN, land-mobile-radio intercom; 4 conditions),
-  `venue_acoustics/` (RT60-calibrated `Reverb` ablation — studio, recital
-  hall, symphony hall, cathedral; 5 conditions), and `rotary_speaker/`
-  (Leslie rotary-speaker chorale/tremolo character via `Chorus`; 3
-  conditions). Config-and-documentation only, no `src/sonitra/` changes.
+- Four new grounded benchmark scenario studies under `config/benchmark/`,
+  with real-world-grounding methodology (citations, measured calibration
+  tables, confound disclosure): `old_recording/` (vintage 78rpm shellac,
+  early reel-to-reel tape, and AM radio broadcast chains — phase-1
+  bandwidth-and-dynamics ablations at two severities against a common
+  baseline; additive noise and wow/flutter deferred to phase 2; post-effects
+  peak normalisation disclosed as a confound),
+  `telephone_channel/` (voice-channel bandwidth + AGC — ITU-T G.722 wideband
+  VoIP, ITU-T G.711 narrowband PSTN, land-mobile-radio intercom; 4
+  conditions), `venue_acoustics/` (RT60-calibrated `Reverb` ablation —
+  studio, recital hall, symphony hall, cathedral; 5 conditions), and
+  `rotary_speaker/` (Leslie rotary-speaker chorale/tremolo character via
+  `Chorus`; 3 conditions). Config-and-documentation only, no `src/sonitra/`
+  changes.
 - `docker/Dockerfile` runtime stage: `tmux` installed for interactive
   `docker exec` terminal sessions into running containers
+- `docker/Dockerfile`: `HOST_UID`/`HOST_GID` build args (default `1000`)
+  baked into the non-root `sonitra` user and passed through from `.env` via
+  `docker-compose.yml`, so bind-mounted repo directories keep host ownership
+  on native Linux; the entrypoint now only `chown`s a directory when its
+  top-level ownership doesn't already match `sonitra`. `/app/.venv/bin`
+  added to `PATH` so `sonitra`/`uvicorn` work directly in `docker exec`
+  sessions
 - `BasicPitchTranscriberConfig` gains `melodia_trick` (default `true`, HMM/
   melodia post-processing smoothing) and `multiple_pitch_bends` (default
   `false`) knobs, forwarded to `basic_pitch.inference.predict()`. Note:
@@ -46,6 +58,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when available. Falls back gracefully to the previous stdlib-only behaviour
   (plain-text `--list`, original error message) when `rich` is unavailable or
   stdin is not a TTY
+- `scripts/download_datasets.py`: added the Beethoven Symphony Excerpt Dataset
+  (BSED) v1.0; the single `zip_strip_prefix` extraction generalised into an
+  `extract_map` of `(zip_prefix, target_subdir)` pairs so a dataset can route
+  different zip subfolders to different corpus subdirs — BSED splits into
+  `midi/` and `recordings/` (the latter deliberately distinct from `audio/`,
+  reserved for the pipeline's own rendered output)
+- `benchmark.save_audio` (default `true`) and `benchmark.resume` (default
+  `false`) config knobs: `save_audio: false` deletes a condition's rendered
+  audio (and separated stems) right after that condition's transcription and
+  evaluation finish, bounding peak disk usage to roughly one condition
+  instead of the whole sweep (results, summaries, and transcriptions are
+  always kept). `resume: true` continues a stopped run by treating every
+  `(condition, file, transcriber)` triple already recorded — succeeded,
+  failed, or `render_failed` — as done and only computing what is missing; a
+  config fingerprint is stored next to `benchmark_results.jsonl` and compared
+  on resume, so a config edit that would change what a condition or record
+  means raises an error instead of silently mixing results
+- `observability.log_level` (validated root-logger override, takes precedence
+  over `pipeline.log_level`) and `observability.progress` (default `true`;
+  master switch for live CLI progress bars) config fields
+- New `sonitra.terminal` module: rich console singleton, idempotent rich
+  logging setup, effective-log-level resolution, per-file speed column, and a
+  `BenchmarkProgress` protocol with `Null`/`Rich` implementations;
+  `RichBenchmarkProgress` renders a header (device chips, worker pids,
+  failures), a sweep bar, and one row per pool worker under a single `Live`
+- Benchmark run now streams `WorkerEvent` records for each `(file,
+  transcriber)` cell through a multiprocessing queue so live progress works
+  in parallel mode; worker fd 1/2 are redirected to per-worker log files
+  (`<work_dir>/logs/`) so TF C++ output cannot corrupt the shared terminal
+- `RichBenchmarkProgress` worker rows now show the current pipeline stage
+  (`render`, optional `separate`, `transcribe`) alongside
+  `condition × transcriber`, in both serial and parallel mode;
+  `WorkerEvent` gains a `stage` field and a new `status == "stage"` value
+  for these non-cell-boundary transitions, carried by the existing
+  worker-event queue with no new plumbing.
+- `render`, `transcribe`, `evaluate`, `benchmark`, `init`, and `serve` CLI
+  output beautified with `rich`: per-file progress bars, failure tables, and
+  benchmark summary/degradation tables; new global `--verbose`/`--quiet`
+  flags; `pipeline.on_file_done` wired into the render progress bar; TF/
+  absl/basic-pitch logging silenced so backends cannot corrupt the display.
+  Adds `rich` to the core dependencies
+- `--limit`/`--seed` CLI flags on `sonitra transcribe` and `sonitra
+  evaluate`, mirroring the existing `render`/`benchmark` flags; `evaluate`
+  samples only reference files with matching estimates so `--limit N` means
+  at most N evaluated pairs, staying coherent after a limited
+  render/transcribe run
 
 ### Changed
 
@@ -80,6 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `sonitra/terminal.py`: `on_worker_event`'s fallback branch called
+  `logger.warning(...)` with no `logger` ever defined in the module —
+  latent `NameError` on any unrecognized `WorkerEvent.status`. Added the
+  missing module-level `logger = logging.getLogger(__name__)`.
 - `docker/Dockerfile` GPU image (`sonitra-gpu` service, `runtime-gpu` target):
   rebuilt on an `nvidia/cuda:12.2.2-devel-ubuntu22.04` base with CUDA/cuDNN
   installed system-wide via apt, replacing the pip `nvidia-*-cu12` wheel
@@ -111,6 +173,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/app/output`, `/app/config`) to the `sonitra` user, then step down via `gosu`
   for security; this fixes permission errors on Docker Desktop for Windows and
   macOS where host directories are mounted as root inside the container
+- `sonitra evaluate --config --dataset`: estimate output directory now
+  resolved by the transcriber's backend type when its optional `name` field
+  is unset, instead of crashing with `PosixPath / None` (mirrors how
+  `transcribe` names its output directories)
+- `sonitra benchmark` with `benchmark.max_workers: 1` (serial mode): backends
+  that print directly to stdout (e.g. `basic-pitch`'s bare `print()` in
+  `predict()`) were writing straight to the terminal and corrupting the Rich
+  `Live` progress display's cursor tracking, so the display never visibly
+  updated during the run and only rendered once, stale, at exit. Serial-mode
+  condition processing now redirects stdout/stderr to `<work_dir>/logs/
+  serial.log` while a display is active, mirroring the fd-redirection pool
+  workers already got; `sonitra.terminal.get_console()` now pins its `file`
+  to `sys.stdout` at construction time so the display itself keeps writing to
+  the real terminal regardless of this redirection
+- `RichBenchmarkProgress`'s outer `Live` now sets `transient=True`, so the
+  header/progress rows are cleared on exit instead of being left behind as a
+  permanent, truncated last frame (visible as stray `pid N · condition ·
+  file…` lines after a parallel-mode benchmark run finished)
+- `sonitra benchmark` summary/degradation tables now list conditions in the
+  order they're declared in `benchmark.conditions`/`benchmark.sweeps`,
+  regardless of which condition happened to finish first in parallel mode
+  (`benchmark.max_workers > 1` gathers results via `as_completed`, which is
+  nondeterministic); a new `order_by_condition()` helper in `benchmark/
+  results.py` restores declared order after aggregation
 
 ## [0.2.0] - 2026-07-01
 
