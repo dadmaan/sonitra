@@ -54,5 +54,32 @@ Key sections and their purpose:
 
 Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter. Each is a named entry under `pedalboard.effects` with an `enabled` flag. VST3 plugins are loaded at their factory default settings; parameters cannot be set from YAML.
 
+## Parallelism (max_workers)
+
+Four sections define a `max_workers` parameter. Only two of them affect `sonitra benchmark`:
+
+| Key | Used by `sonitra benchmark`? | What it parallelises |
+|---|---|---|
+| `benchmark.max_workers` | Yes | Conditions (process-level, one condition per subprocess) |
+| `pipeline.max_workers` | Yes | Per-file rendering inside each condition |
+| `transcription.max_workers` | No | Audio files per transcriber in standalone `sonitra transcribe` |
+| `evaluation.max_workers` | No | Reference/estimate pairs in standalone `sonitra evaluate` |
+
+### benchmark.max_workers
+
+Parallel benchmark conditions. When > 1, conditions run in a `ProcessPoolExecutor`. The full render → transcribe → evaluate chain for each condition runs in its own subprocess, which also provides JUCE isolation. Worker output is redirected to `work_dir/logs/worker-<pid>.log`. When 1 (default), conditions run serially in the parent process. Each subprocess loads its own transcriber/model instances, so raising this value increases memory usage proportionally (e.g. one TensorFlow copy per worker for Basic Pitch).
+
+### pipeline.max_workers
+
+Parallel per-file rendering inside each condition. Only effective when `synth_backend: pedalboard_instrument`; all other backends render serially. For `dawdreamer_faust` / `dawdreamer_vst` it is forced to 1 because DawDreamer/JUCE is not thread-safe. Effective render concurrency is `benchmark.max_workers × pipeline.max_workers` (for `pedalboard_instrument`). Conditions and sweeps can override it per-condition via dotted-path config overrides.
+
+### transcription.max_workers and evaluation.max_workers
+
+These are read only by the standalone `sonitra transcribe` and `sonitra evaluate` commands respectively. Inside `sonitra benchmark`, transcription and evaluation run serially per file within each condition worker. These two knobs have no effect on a benchmark run.
+
+### Resume
+
+All four `max_workers` keys are excluded from the benchmark config fingerprint, so changing them between runs does not invalidate `benchmark.resume`.
+
 ---
 [← Back to README](../README.md)
