@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from contextlib import ExitStack
 from types import TracebackType
-from typing import Protocol
+from typing import Any, Protocol
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -26,6 +26,7 @@ from sonitra.benchmark.results import BenchmarkRecord, WorkerEvent
 from sonitra.config import PipelineConfig
 
 _console: Console | None = None
+logger = logging.getLogger(__name__)
 
 
 def get_console(*, quiet: bool = False, no_color: bool = False) -> Console:
@@ -135,7 +136,8 @@ class RichBenchmarkProgress:
     Shows a header line (run-level aggregate, device chips, worker pids and any
     failures), an outer task counting every file across all conditions/
     transcribers, and one row per pool worker showing the active
-    ``condition × transcriber``, the current file, and per-file progress.
+    ``condition × transcriber``, the current pipeline stage (``render`` /
+    ``separate`` / ``transcribe``), the current file, and per-file progress.
     Updates may arrive from any thread — rich's Progress/Live objects are
     RLock-protected. The display is started lazily on the first condition (or
     eagerly via the context manager) and is safe to use both ways.
@@ -183,6 +185,7 @@ class RichBenchmarkProgress:
             console=console,
             refresh_per_second=2,
             vertical_overflow="ellipsis",
+            transient=True,
         )
         self._exit_stack: ExitStack | None = None
         self._outer_task_id: TaskID | None = None
@@ -244,24 +247,42 @@ class RichBenchmarkProgress:
         )
         self._update_header()
 
+    def _describe_worker(self, event: WorkerEvent) -> str:
+        """Build a row description: pid, condition, transcriber, stage, device."""
+        description = f"pid {event.worker_id} · {event.condition}"
+        if event.transcriber:
+            description += f" × {event.transcriber}"
+        if event.stage:
+            description += f" · {event.stage}"
+        if event.transcriber in self.devices:
+            description += f" · {self.devices[event.transcriber]}"
+        return description
+
     def on_worker_event(self, event: WorkerEvent) -> None:
         """Update the display for one event streamed from a worker."""
         if not self._started:
             self.__enter__()
         task_id = self._assign_row(event.worker_id)
         if event.status == "start":
-            description = (
-                f"pid {event.worker_id} · {event.condition} × {event.transcriber}"
-            )
-            if event.transcriber in self.devices:
-                description += f" · {self.devices[event.transcriber]}"
             self._workers_progress.update(
                 task_id,
-                description=description,
+                description=self._describe_worker(event),
                 total=self._total_files,
                 completed=0,
                 file=event.midi_path,
             )
+        elif event.status == "stage":
+            # Update description, and file/total where the stage actually
+            # knows them, but never completed - that's the only invariant
+            # this branch must protect (see the pre-existing completed=0-
+            # on-every-"start" bug, deferred and untouched by this branch).
+            fields: dict[str, Any] = {"description": self._describe_worker(event)}
+            if event.stage == "render":
+                fields["file"] = ""  # clear any stale filename
+                fields["total"] = self._total_files  # row shows M/N during render too
+            elif event.stage == "separate":
+                fields["file"] = event.midi_path  # real, known filename
+            self._workers_progress.update(task_id, **fields)
         elif event.status == "done":
             self._workers_progress.advance(task_id)
             if self._outer_task_id is not None:

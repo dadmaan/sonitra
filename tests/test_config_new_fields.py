@@ -492,15 +492,15 @@ def test_rich_benchmark_progress_row_pid_and_device_chip() -> None:
         tasks = progress._workers_progress.tasks
         assert (
             tasks[progress._worker_task_ids[1001]].description
-            == "pid 1001 · baseline × basic_pitch · cpu"
+            == "pid 1001 · baseline × basic_pitch · transcribe · cpu"
         )
         assert (
             tasks[progress._worker_task_ids[1002]].description
-            == "pid 1002 · baseline × second · GPU:0"
+            == "pid 1002 · baseline × second · transcribe · GPU:0"
         )
         assert (
             tasks[progress._worker_task_ids[1003]].description
-            == "pid 1003 · baseline × oracle"
+            == "pid 1003 · baseline × oracle · transcribe"
         )
     # Multi-device chips join sorted (case-insensitive) with a comma.
     assert "· devices: cpu, GPU:0" in progress.header.plain
