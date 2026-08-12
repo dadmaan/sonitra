@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 import json
 import logging
 import multiprocessing
@@ -11,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, Sequence
 
 import numpy as np
 
@@ -87,6 +88,28 @@ def _worker_event_init(event_queue: multiprocessing.Queue | None, log_dir: Path)
     for handler in list(root.handlers):
         root.removeHandler(handler)
     root.addHandler(logging.NullHandler())
+
+
+@contextmanager
+def _contain_serial_output(log_path: Path) -> Iterator[None]:
+    """Redirect stdout/stderr to *log_path* for the duration of the block.
+
+    Serial mode (``benchmark.max_workers == 1``) runs in the same process as
+    an active Rich Live display. Third-party backends that print directly
+    (e.g. basic-pitch's bare ``print()`` in ``predict()``) write straight to
+    the real terminal and corrupt the display's cursor tracking. Pool workers
+    avoid this via fd-level redirection in a separate process (see
+    ``_worker_event_init``); that trick isn't available here since redirecting
+    fd 1/2 in-process would also blind the display's own output. Instead this
+    only reassigns the ``sys.stdout``/``sys.stderr`` *names* that ``print()``
+    looks up — the display's console keeps writing to the real terminal
+    because :func:`sonitra.terminal.get_console` pins its file to the ``sys.
+    stdout`` object present at console-construction time, before any
+    redirection happens.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as log_file, redirect_stdout(log_file), redirect_stderr(log_file):
+        yield
 
 
 def _emit_worker_event(progress: BenchmarkProgress | None, event: WorkerEvent) -> None:
@@ -271,8 +294,13 @@ def run_benchmark(
                     transcriber_names,
                 )
             condition_config = apply_overrides(config, condition.overrides)
-            records.extend(
-                _run_condition(
+            output_guard = (
+                _contain_serial_output(work_dir / "logs" / "serial.log")
+                if progress is not None
+                else nullcontext()
+            )
+            with output_guard:
+                condition_records = _run_condition(
                     condition,
                     condition_config,
                     midi_paths,
@@ -286,7 +314,7 @@ def run_benchmark(
                     completed=completed_by_condition.get(condition.name, set()),
                     progress=progress,
                 )
-            )
+            records.extend(condition_records)
             if progress is not None:
                 progress.on_condition_done(condition.name)
 

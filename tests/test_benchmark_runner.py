@@ -276,6 +276,71 @@ def test_benchmark_writes_raw_outputs_sidecar(
     ).exists()
 
 
+class _NoisyTranscriber:
+    """Transcriber stub that prints directly to stdout, like basic-pitch's
+    bare ``print()`` call in ``predict()`` — used to verify serial-mode
+    benchmark runs contain that output instead of corrupting an active Rich
+    Live display."""
+
+    name = "oracle"
+
+    def __init__(self, notes) -> None:
+        self._notes = notes
+
+    def transcribe(self, audio_path):
+        print("NOISY-TRANSCRIBER-OUTPUT-MARKER")
+        return TranscriptionResult(notes=self._notes, transcriber=self.name)
+
+
+def test_serial_mode_contains_backend_stdout_when_progress_active(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    monkeypatch.setattr(
+        runner_module,
+        "make_transcriber",
+        lambda cfg: _NoisyTranscriber(parse_midi(midi_fixture("test_c4.mid"))),
+    )
+
+    result = run_benchmark(
+        midi_paths, tmp_path, benchmark_config, progress=_RecordingProgress()
+    )
+
+    assert result.records[0].status == "succeeded"
+    captured = capsys.readouterr()
+    assert "NOISY-TRANSCRIBER-OUTPUT-MARKER" not in captured.out
+    log_path = tmp_path / "logs" / "serial.log"
+    assert log_path.exists()
+    assert "NOISY-TRANSCRIBER-OUTPUT-MARKER" in log_path.read_text()
+
+
+def test_serial_mode_does_not_suppress_stdout_without_progress(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    monkeypatch.setattr(
+        runner_module,
+        "make_transcriber",
+        lambda cfg: _NoisyTranscriber(parse_midi(midi_fixture("test_c4.mid"))),
+    )
+
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, progress=None)
+
+    assert result.records[0].status == "succeeded"
+    captured = capsys.readouterr()
+    assert "NOISY-TRANSCRIBER-OUTPUT-MARKER" in captured.out
+
+
 def test_benchmark_sidecar_failure_does_not_fail_evaluation(
     benchmark_config: PipelineConfig,
     midi_fixture,
