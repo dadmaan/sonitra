@@ -149,7 +149,7 @@ benchmark:
   results_path: benchmark_results.jsonl
   # true + an explicit `baseline` condition below is a hard crash
   # (duplicate condition name) — see ./README.md.
-  include_baseline: true
+  include_baseline: false
   baseline_name: baseline
   save_audio: false
   resume: true
