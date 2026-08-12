@@ -266,4 +266,4 @@ benchmark:
         pedalboard.effects.7.threshold_db: -24.0
         pedalboard.effects.7.ratio: 12.0
   sweeps: []
-  max_workers: 4
+  max_workers: 3
