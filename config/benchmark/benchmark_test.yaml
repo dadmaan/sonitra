@@ -148,4 +148,4 @@ benchmark:
   # memory on init (~22 GB of 24 GB in the first process), so a second worker
   # is left with nothing. Raising this requires enabling GPU memory growth
   # first, or setting transcription device back to "cpu".
-  max_workers: 2
+  max_workers: 1
