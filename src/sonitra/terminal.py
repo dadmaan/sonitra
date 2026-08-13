@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 from contextlib import ExitStack
+from pathlib import PurePath
 from types import TracebackType
 from typing import Any, Protocol
 
@@ -86,6 +87,26 @@ def set_log_level(level: str) -> None:
     logging.getLogger().setLevel(level.upper())
 
 
+def _format_file_field(midi_path: str, *, max_len: int = 40) -> str:
+    """Shorten a worker's current file for the detail row's ``file`` column.
+
+    Keeps only the immediate parent directory plus the basename (dataset
+    roots and nested composer/year directories are boilerplate that doesn't
+    help identify the file), then middle-truncates past *max_len* so both the
+    start and a distinguishing suffix (e.g. maestro-v3's ``--4.midi`` index)
+    stay visible instead of one end being cut off.
+    """
+    if not midi_path:
+        return ""
+    path = PurePath(midi_path)
+    display = f"{path.parent.name}/{path.name}" if path.parent.name else path.name
+    if len(display) <= max_len:
+        return display
+    head_len = (max_len - 1) * 2 // 3
+    tail_len = max_len - 1 - head_len
+    return f"{display[:head_len]}…{display[-tail_len:]}"
+
+
 class FilesPerSecondColumn(ProgressColumn):
     """Render a task's progress speed as ``N.N files/s``."""
 
@@ -95,6 +116,27 @@ class FilesPerSecondColumn(ProgressColumn):
             "?" if speed is None else f"{speed:.1f} files/s",
             style="progress.data.speed",
         )
+
+
+class _DescriptionColumn(ProgressColumn):
+    """Render the header row's full description, or the detail row's arrow
+    + filename, as a single column shared by both row kinds.
+
+    Splitting these into two columns (one for "{task.description}", one for
+    the file field) left the short detail-row text ("->", or "-> filename")
+    padded out to the width of the much longer header description before the
+    filename even started -- rich's ``Table`` sizes each column to its widest
+    cell across *all* rows, including blanked ones. Folding both into one
+    column means any such padding lands after the detail row's text (before
+    the bar column), not as a gap between the arrow and the filename.
+    """
+
+    def render(self, task: Task) -> RenderableType:
+        if task.fields.get("kind") == "detail":
+            file_field = task.fields.get("file", "")
+            markup = f"↳ [dim]{file_field}[/dim]" if file_field else "↳"
+            return Text.from_markup(markup)
+        return Text.from_markup(task.description)
 
 
 class _BlankableColumn(ProgressColumn):
@@ -198,7 +240,7 @@ class RichBenchmarkProgress:
         self._outer_progress = Progress(
             SpinnerColumn(),
             TextColumn("{task.description}"),
-            BarColumn(),
+            BarColumn(bar_width=20),
             MofNCompleteColumn(),
             TimeElapsedColumn(),
             FilesPerSecondColumn(),
@@ -210,12 +252,8 @@ class RichBenchmarkProgress:
         )
         self._workers_progress = Progress(
             _BlankableColumn(SpinnerColumn(), blank_for_kind="detail"),
-            TextColumn("{task.description}"),
-            _BlankableColumn(
-                TextColumn("{task.fields[file]}", style="dim"),
-                blank_for_kind="header",
-            ),
-            _BlankableColumn(BarColumn(), blank_for_kind="header"),
+            _DescriptionColumn(),
+            _BlankableColumn(BarColumn(bar_width=10), blank_for_kind="header"),
             _BlankableColumn(MofNCompleteColumn(), blank_for_kind="header"),
             _BlankableColumn(TimeElapsedColumn(), blank_for_kind="header"),
             console=console,
@@ -345,14 +383,14 @@ class RichBenchmarkProgress:
             self._workers_progress.update(
                 detail_id,
                 total=self._total_files,
-                completed=0,
-                file=escape(event.midi_path),
+                file=escape(_format_file_field(event.midi_path)),
             )
         elif event.status == "stage":
             # Update description, and file/total where the stage actually
-            # knows them, but never completed - that's the only invariant
-            # this branch must protect (see the pre-existing completed=0-
-            # on-every-"start" bug, deferred and untouched by this branch).
+            # knows them. "render" fires exactly once per condition, before
+            # any per-file events, so it doubles as this row's
+            # condition-boundary marker and is the only place completed is
+            # reset - "separate" (mid-condition) must never touch it.
             self._workers_progress.update(
                 header_id,
                 description=self._describe_worker(event),
@@ -361,8 +399,11 @@ class RichBenchmarkProgress:
             if event.stage == "render":
                 fields["file"] = ""  # clear any stale filename
                 fields["total"] = self._total_files  # row shows M/N during render too
+                fields["completed"] = 0  # new condition for this worker/row
             elif event.stage == "separate":
-                fields["file"] = escape(event.midi_path)  # real, known filename
+                fields["file"] = escape(
+                    _format_file_field(event.midi_path)
+                )  # real, known filename
             if fields:
                 self._workers_progress.update(detail_id, **fields)
         elif event.status == "done":
