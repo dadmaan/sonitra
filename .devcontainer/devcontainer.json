@@ -54,6 +54,6 @@
     8000,
     8888
   ],
-  "postCreateCommand": "git config --global --add safe.directory /workspace && python -c \"from sonitra.cli import app; print('sonitra OK')\"",
-  "postStartCommand": "if [ \"$JUPYTER_ENABLED\" != \"false\" ]; then nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --notebook-dir=/workspace > /tmp/jupyter.log 2>&1 & fi; python --version"
+  "postCreateCommand": ["python", "-m", "sonitra.cli"],
+  "postStartCommand": ["python", "--version"]
 }

@@ -33,3 +33,6 @@
 *.dylib binary
 *.dll binary
 *.exe binary
+*.sh text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
