@@ -1,6 +1,6 @@
 [project]
 name = "sonitra"
-version = "0.2.0"
+version = "0.3.0"
 description = "Automatic music transcription (AMT) benchmark."
 authors = [
     {name = "Shayan Dadman", email = "dadman.shayan@gmail.com"}
