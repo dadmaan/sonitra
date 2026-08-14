@@ -1,0 +1,568 @@
+# Factorial degradation study (draft, 2026-08-13).
+# Full factorial: instrument (timbre) x reverb x chorus x distortion.
+#   3 x 3 x 2 x 3 = 54 cells; the all-off piano cell is the baseline, so
+#   53 named conditions + baseline = 54 runs.
+# Base state: fluidsynth, all three effects disabled (clean piano).
+# Conditions enable/configure effects and swap the soundfont per instrument.
+#
+# NOTE: e_piano / organ soundfont paths are placeholders - supply the files
+# before running (see appendix). baseline = clean piano, no effects.
+# Normalisation is RMS (equal loudness across conditions), not peak - peak
+# normalisation would confound the distortion/reverb factors with gain.
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/factorial_degradation.yaml --dataset <name>
+render_pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  input_type: midi
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: null
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    - type: Reverb            # index 0
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.0
+      dry_level: 1.0
+      width: 1.0
+      freeze_mode: false
+      enabled: false
+    - type: Chorus            # index 1
+      rate_hz: 1.0
+      depth: 0.25
+      centre_delay_ms: 7.0
+      feedback: 0.0
+      mix: 0.5
+      enabled: false
+    - type: Distortion        # index 2
+      drive_db: 25.0
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: rms
+  target_db: -18.0
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  max_workers: 1
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      device: GPU:0
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+      melodia_trick: true
+      multiple_pitch_bends: false
+      save_raw_outputs: false
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+  max_workers: 4
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  include_baseline: true
+  baseline_name: baseline
+  save_audio: true
+  resume: true
+  conditions:
+    - name: inst=piano_reverb=off_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=piano_reverb=off_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=piano_reverb=off_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=piano_reverb=off_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=piano_reverb=off_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=piano_reverb=0.3_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=piano_reverb=0.3_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=piano_reverb=0.3_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=piano_reverb=0.3_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=piano_reverb=0.3_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=piano_reverb=0.3_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=piano_reverb=0.9_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=piano_reverb=0.9_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=piano_reverb=0.9_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=piano_reverb=0.9_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=piano_reverb=0.9_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=piano_reverb=0.9_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=e_piano_reverb=off_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=e_piano_reverb=off_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=e_piano_reverb=off_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=e_piano_reverb=off_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=e_piano_reverb=off_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=e_piano_reverb=off_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=e_piano_reverb=0.3_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=e_piano_reverb=0.3_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=e_piano_reverb=0.3_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=e_piano_reverb=0.3_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=e_piano_reverb=0.3_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=e_piano_reverb=0.3_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=e_piano_reverb=0.9_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=e_piano_reverb=0.9_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=e_piano_reverb=0.9_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=e_piano_reverb=0.9_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=e_piano_reverb=0.9_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=e_piano_reverb=0.9_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/electric_piano.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=organ_reverb=off_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=organ_reverb=off_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=organ_reverb=off_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=organ_reverb=off_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=organ_reverb=off_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=organ_reverb=off_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: false
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=organ_reverb=0.3_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=organ_reverb=0.3_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=organ_reverb=0.3_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=organ_reverb=0.3_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=organ_reverb=0.3_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=organ_reverb=0.3_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.3
+        pedalboard.effects.0.dry_level: 0.7
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=organ_reverb=0.9_chorus=off_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+    - name: inst=organ_reverb=0.9_chorus=off_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=organ_reverb=0.9_chorus=off_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+    - name: inst=organ_reverb=0.9_chorus=on_dist=off
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: false
+    - name: inst=organ_reverb=0.9_chorus=on_dist=15
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
+    - name: inst=organ_reverb=0.9_chorus=on_dist=35
+      overrides:
+        fluidsynth.soundfont_path: ./soundfonts/organ.sf2
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.wet_level: 0.9
+        pedalboard.effects.0.dry_level: 0.1
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+  sweeps: []
+  max_workers: 2
