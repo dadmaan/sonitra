@@ -22,7 +22,7 @@ def benchmark_config(corpus_dir: Path) -> PipelineConfig:
     # so symbolic metrics must come out perfect.
     return PipelineConfig.model_validate(
         {
-            "pipeline": {
+            "render_pipeline": {
                 "synth_backend": "fluidsynth",
                 "effects_chain": "pedalboard",
                 "bpm": 120,
@@ -49,7 +49,7 @@ def benchmark_config(corpus_dir: Path) -> PipelineConfig:
             },
             "benchmark": {
                 "sweeps": [
-                    {"parameter": "pipeline.duration_padding_sec", "values": [1.0], "name": "padding"}
+                    {"parameter": "render_pipeline.duration_padding_sec", "values": [1.0], "name": "padding"}
                 ]
             },
         }
@@ -125,7 +125,7 @@ def test_benchmark_reports_progress(
     assert {name for name, _, _, _ in progress.started} == {"baseline", "padding=1.0"}
     overrides_by_name = {name: overrides for name, overrides, _, _ in progress.started}
     assert overrides_by_name["baseline"] == {}
-    assert overrides_by_name["padding=1.0"] == {"pipeline.duration_padding_sec": 1.0}
+    assert overrides_by_name["padding=1.0"] == {"render_pipeline.duration_padding_sec": 1.0}
     for _, _, total_files, transcriber_names in progress.started:
         assert total_files == len(midi_paths)
         assert transcriber_names == ["oracle"]

@@ -1,7 +1,8 @@
 # Pedalboard: Distortion + Gain combination.
-pipeline:
+render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
+  input_type: midi
   bpm: 120
   sample_rate: 44100
   bit_depth: 24

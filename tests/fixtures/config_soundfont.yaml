@@ -1,4 +1,4 @@
-pipeline:
+render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
   bpm: 120

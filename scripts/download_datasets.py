@@ -10,11 +10,11 @@ behavior.
 
 Usage:
     python scripts/download_datasets.py --list
-    python scripts/download_datasets.py maestro-v3
+    python scripts/download_datasets.py maestro-v3-midi
     python scripts/download_datasets.py bsed
     python scripts/download_datasets.py --all
     python scripts/download_datasets.py --all --jobs 4
-    python scripts/download_datasets.py maestro-v3 --output-dir /data/corpus
+    python scripts/download_datasets.py maestro-v3-midi --output-dir /data/corpus
     python scripts/download_datasets.py            # interactive picker (TTY only)
 
 Interactive mode: run with no dataset name and no --all on a terminal with
@@ -28,13 +28,14 @@ import argparse
 import queue
 import shutil
 import sys
+import tarfile
 import tempfile
 import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 from urllib.request import urlretrieve
 
 try:
@@ -63,24 +64,95 @@ REPO: Path = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 # Dataset registry
 # ---------------------------------------------------------------------------
-# To add a new dataset: copy one entry below and fill in the fields.
-# `extract_map` is a list of (zip_source_prefix, target_subdir) pairs: any zip
-# member whose path starts with a given prefix is extracted (with that prefix
-# stripped) under corpus_subdir/target_subdir/. Members matching no prefix are
-# skipped. Most datasets need a single ("<top-level-dir>/", "midi") pair;
-# multi-modal datasets (e.g. MIDI + audio) can route different zip subfolders
-# to different target subdirs.
+# To add a new dataset: copy one entry below and fill in the fields. Each
+# dataset is one or more `sources` fetched into the same `corpus_subdir`:
+#
+#   {"url": ..., "kind": "zip" | "targz", "extract_map": [...], "size_mb": N}
+#   {"url": ..., "kind": "file", "target_subdir": "metadata", "filename": "x.csv", "size_mb": N}
+#
+# `extract_map` is a list of (prefix, patterns, target_subdir) rules: an
+# archive member is extracted (with `prefix` stripped) under
+# corpus_subdir/target_subdir/ when its path starts with `prefix` AND matches
+# `patterns` — either `None` (match anything under the prefix) or a frozenset
+# of lowercase extensions (`.wav`) and/or exact basenames (`README`) checked
+# against the member's own filename. Rules are evaluated in order, first
+# match wins; members matching no rule are skipped (this is how e.g.
+# `maestro-v3-wav` downloads the same combined archive as `maestro-v3-full`
+# but discards every `.midi` member instead of extracting it).
+#
+# Use `prefix=""` for archives whose exact internal top-level folder name
+# hasn't been independently verified — extension/basename patterns alone are
+# enough to route members correctly regardless of the archive's internal
+# layout. Use a real verified prefix (as in `bsed`) when the archive also
+# contains sibling content that must NOT be extracted (e.g. BSED's
+# unfetched MusicXML/annotation folders).
+METADATA_PATTERNS: FrozenSet[str] = frozenset(
+    {".csv", ".json", ".txt", "readme", "license"}
+)
+
 DATASETS: Dict[str, Dict] = {
-    "maestro-v3": {
+    "maestro-v3-midi": {
         "name": "MAESTRO V3.0.0 (MIDI only)",
         "description": (
-            "1,276 piano MIDI files paired with professional recordings. "
-            "Standard AMT benchmark (Hawthorne et al., ICLR 2019)."
+            "1,276 piano MIDI files + metadata, no audio. Standard AMT benchmark "
+            "(Hawthorne et al., ICLR 2019). CC BY-NC-SA 4.0 (noncommercial)."
         ),
-        "url": "https://storage.googleapis.com/magentadata/datasets/maestro/v3.0.0/maestro-v3.0.0-midi.zip",
         "corpus_subdir": "maestro-v3",
-        "extract_map": [("maestro-v3.0.0/", "midi")],
-        "size_mb": 57,  # ~57 MB: the MIDI-only zip, unpacked
+        "sources": [
+            {
+                "url": "https://storage.googleapis.com/magentadata/datasets/maestro/v3.0.0/maestro-v3.0.0-midi.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("maestro-v3.0.0/", frozenset({".mid", ".midi"}), "midi"),
+                    ("maestro-v3.0.0/", METADATA_PATTERNS, "metadata"),
+                ],
+                "size_mb": 57,
+            },
+        ],
+    },
+    "maestro-v3-wav": {
+        "name": "MAESTRO V3.0.0 (recordings only)",
+        "description": (
+            "Professional piano recordings paired with MAESTRO's MIDI (fetched "
+            "separately via maestro-v3-midi) + metadata, no MIDI. MAESTRO ships no "
+            "official audio-only archive, so this downloads the same ~120 GB "
+            "full zip as maestro-v3-full and discards the MIDI members. "
+            "CC BY-NC-SA 4.0 (noncommercial)."
+        ),
+        "corpus_subdir": "maestro-v3",
+        "sources": [
+            {
+                "url": "https://storage.googleapis.com/magentadata/datasets/maestro/v3.0.0/maestro-v3.0.0.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("maestro-v3.0.0/", frozenset({".wav"}), "recordings"),
+                    ("maestro-v3.0.0/", METADATA_PATTERNS, "metadata"),
+                ],
+                "size_mb": 122_880,  # ~120 GB
+            },
+        ],
+    },
+    "maestro-v3-full": {
+        "name": "MAESTRO V3.0.0 (MIDI + recordings)",
+        "description": (
+            "1,276 piano MIDI files paired with professional recordings + metadata. "
+            "Standard AMT benchmark (Hawthorne et al., ICLR 2019); ~120 GB — most "
+            "workflows only need maestro-v3-midi (~57 MB). "
+            "CC BY-NC-SA 4.0 (noncommercial)."
+        ),
+        "corpus_subdir": "maestro-v3",
+        "sources": [
+            {
+                "url": "https://storage.googleapis.com/magentadata/datasets/maestro/v3.0.0/maestro-v3.0.0.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("maestro-v3.0.0/", frozenset({".mid", ".midi"}), "midi"),
+                    ("maestro-v3.0.0/", frozenset({".wav"}), "recordings"),
+                    ("maestro-v3.0.0/", METADATA_PATTERNS, "metadata"),
+                ],
+                "size_mb": 122_880,  # ~120 GB
+            },
+        ],
     },
     "bsed": {
         "name": "Beethoven Symphony Excerpt Dataset (BSED) v1.0",
@@ -91,15 +163,143 @@ DATASETS: Dict[str, Dict] = {
             "are also on Zenodo but not fetched by this script — see ROADMAP.md. "
             "CC BY-NC-SA 4.0 (noncommercial). Berendes et al., TISMIR 2026."
         ),
-        "url": "https://zenodo.org/records/20344500/files/BSED.zip",
         "corpus_subdir": "bsed",
-        "extract_map": [
-            ("BSED_1.0/01_ScoreData/MIDI/", "midi"),
-            ("BSED_1.0/02_Audio/wav_44100_440Hz/", "recordings"),
+        "sources": [
+            {
+                "url": "https://zenodo.org/records/20344500/files/BSED.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("BSED_1.0/01_ScoreData/MIDI/", None, "midi"),
+                    ("BSED_1.0/02_Audio/wav_44100_440Hz/", None, "recordings"),
+                ],
+                "size_mb": 380,
+            },
         ],
-        "size_mb": 380,  # ~380 MB: MIDI + 4 real concert recordings + 1 synthetic rendition per excerpt
+    },
+    "musicnet": {
+        "name": "MusicNet",
+        "description": (
+            "330 classical recordings (wav) with reference MIDI + per-note label "
+            "CSVs + track metadata. Multi-instrument chamber/orchestral AMT "
+            "benchmark (Thickstun et al., ICLR 2017). CC BY 4.0."
+        ),
+        "corpus_subdir": "musicnet",
+        "sources": [
+            {
+                "url": "https://zenodo.org/records/5120004/files/musicnet_midis.tar.gz",
+                "kind": "targz",
+                "extract_map": [("", frozenset({".mid", ".midi"}), "midi")],
+                "size_mb": 3,
+            },
+            {
+                "url": "https://zenodo.org/records/5120004/files/musicnet.tar.gz",
+                "kind": "targz",
+                "extract_map": [
+                    ("", frozenset({".wav"}), "recordings"),
+                    ("", frozenset({".csv"}), "metadata"),
+                ],
+                "size_mb": 11_264,  # ~11.1 GB
+            },
+            {
+                "url": "https://zenodo.org/records/5120004/files/musicnet_metadata.csv",
+                "kind": "file",
+                "target_subdir": "metadata",
+                "filename": "musicnet_metadata.csv",
+                "size_mb": 1,
+            },
+        ],
+    },
+    "e-gmd-midi": {
+        "name": "Expanded Groove MIDI Dataset (MIDI only)",
+        "description": (
+            "45,537 drum performances (MIDI) + metadata, no audio. Drum-transcription "
+            "AMT benchmark (Callender et al., ISMIR 2020); note this repo's "
+            "transcription/evaluation backends target pitched instruments, not "
+            "drum-hit classification — download-only for now. CC BY 4.0."
+        ),
+        "corpus_subdir": "e-gmd",
+        "sources": [
+            {
+                "url": "https://storage.googleapis.com/magentadata/datasets/e-gmd/v1.0.0/e-gmd-v1.0.0-midi.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".mid", ".midi"}), "midi"),
+                    ("", METADATA_PATTERNS, "metadata"),
+                ],
+                "size_mb": 103,
+            },
+        ],
+    },
+    "e-gmd-full": {
+        "name": "Expanded Groove MIDI Dataset (MIDI + recordings)",
+        "description": (
+            "45,537 drum performances (MIDI + audio) + metadata. Drum-transcription "
+            "AMT benchmark (Callender et al., ISMIR 2020); ~90 GB — note this repo's "
+            "transcription/evaluation backends target pitched instruments, not "
+            "drum-hit classification — download-only for now. CC BY 4.0."
+        ),
+        "corpus_subdir": "e-gmd",
+        "sources": [
+            {
+                "url": "https://storage.googleapis.com/magentadata/datasets/e-gmd/v1.0.0/e-gmd-v1.0.0.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".mid", ".midi"}), "midi"),
+                    ("", frozenset({".wav"}), "recordings"),
+                    ("", METADATA_PATTERNS, "metadata"),
+                ],
+                "size_mb": 92_160,  # ~90 GB
+            },
+        ],
     },
 }
+
+
+def _dataset_size_mb(spec: Dict) -> int:
+    """Total download size hint for a dataset: sum of its sources' size_mb."""
+    return sum(int(source.get("size_mb", 0)) for source in spec["sources"])
+
+
+def _all_target_subdirs(spec: Dict) -> List[str]:
+    """Every distinct target_subdir a dataset's sources can write into."""
+    subdirs: set = set()
+    for source in spec["sources"]:
+        if source["kind"] == "file":
+            subdirs.add(source["target_subdir"])
+        else:
+            subdirs.update(target for _, _, target in source["extract_map"])
+    return sorted(subdirs)
+
+
+def _matches_patterns(filename: str, patterns: Optional[FrozenSet[str]]) -> bool:
+    """True if `filename` (a member's own basename) satisfies an extract_map rule.
+
+    `patterns=None` matches anything. Otherwise each pattern is either a
+    lowercase extension (``.wav``) or a lowercase exact basename (``readme``,
+    for extensionless files like README/LICENSE).
+    """
+    if patterns is None:
+        return True
+    name = Path(filename).name
+    suffix = Path(filename).suffix.lower()
+    return (suffix != "" and suffix in patterns) or name.lower() in patterns
+
+
+def _route_member(
+    relative_or_full_name: str, extract_map: List[Tuple[str, Optional[FrozenSet[str]], str]]
+) -> Optional[Tuple[str, str]]:
+    """Find the first extract_map rule matching an archive member.
+
+    Returns ``(prefix, target_subdir)`` for the first matching rule, or
+    ``None`` when no rule matches (the member should be skipped).
+    """
+    for prefix, patterns, target_subdir in extract_map:
+        if not relative_or_full_name.startswith(prefix):
+            continue
+        if not _matches_patterns(relative_or_full_name, patterns):
+            continue
+        return prefix, target_subdir
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -108,10 +308,9 @@ DATASETS: Dict[str, Dict] = {
 
 
 def _target_dirs(output_dir: Path, spec: Dict) -> List[Path]:
-    """Return one path per distinct target subdir named in spec's extract_map."""
+    """Return one path per distinct target subdir any of spec's sources write into."""
     dataset_dir = output_dir / spec["corpus_subdir"]
-    subdirs = sorted({target_subdir for _, target_subdir in spec["extract_map"]})
-    return [dataset_dir / subdir for subdir in subdirs]
+    return [dataset_dir / subdir for subdir in _all_target_subdirs(spec)]
 
 
 def _is_already_present(output_dir: Path, spec: Dict) -> bool:
@@ -153,46 +352,91 @@ def _make_reporthook(name: str):
     return reporthook
 
 
-def _extract_zip(tmp_path: str, spec: Dict, output_dir: Path) -> int:
-    """Extract a downloaded zip according to spec's extract_map. Returns file count."""
-    dataset_dir: Path = output_dir / spec["corpus_subdir"]
-    extract_map: List[Tuple[str, str]] = spec["extract_map"]
+def _extract_archive(
+    tmp_path: str, kind: str, extract_map: List[Tuple[str, Optional[FrozenSet[str]], str]], dataset_dir: Path
+) -> int:
+    """Extract a downloaded zip/tar.gz according to a source's extract_map.
 
+    Routes each regular-file member through `_route_member`; members matching
+    no rule are skipped. Returns the number of files extracted.
+    """
     files_extracted: int = 0
-    with zipfile.ZipFile(tmp_path, "r") as zf:
-        for member in zf.infolist():
-            if member.is_dir():
-                continue
-            for src_prefix, target_subdir in extract_map:
-                if not member.filename.startswith(src_prefix):
+
+    if kind == "zip":
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            for member in zf.infolist():
+                if member.is_dir():
                     continue
-                relative: str = member.filename[len(src_prefix) :]
+                match = _route_member(member.filename, extract_map)
+                if match is None:
+                    continue
+                prefix, target_subdir = match
+                relative: str = member.filename[len(prefix) :]
                 if not relative:
-                    break
+                    continue
                 dest: Path = dataset_dir / target_subdir / relative
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member) as src, dest.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
                 files_extracted += 1
-                break
+    elif kind == "targz":
+        with tarfile.open(tmp_path, "r:gz") as tf:
+            for member in tf.getmembers():
+                if not member.isfile():
+                    continue
+                match = _route_member(member.name, extract_map)
+                if match is None:
+                    continue
+                prefix, target_subdir = match
+                relative = member.name[len(prefix) :]
+                if not relative:
+                    continue
+                dest = dataset_dir / target_subdir / relative
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                src = tf.extractfile(member)
+                if src is None:  # pragma: no cover - not a regular extractable file
+                    continue
+                with src, dest.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                files_extracted += 1
+    else:  # pragma: no cover - defensive, all registry entries use zip/targz here
+        raise ValueError(f"unknown archive kind: {kind}")
+
     return files_extracted
 
 
 def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
-    """Download and extract one dataset (plain stdlib path). Returns file count."""
-    name: str = spec["name"]
+    """Download and extract every source of one dataset (plain stdlib path).
 
-    tmp_path: str = ""
-    tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp_path = tmp_fd.name
-    tmp_fd.close()
+    Returns the total file count across all of the dataset's sources.
+    """
+    dataset_dir: Path = output_dir / spec["corpus_subdir"]
+    files_extracted: int = 0
 
-    try:
-        urlretrieve(spec["url"], tmp_path, reporthook=_make_reporthook(name))
-        print()  # newline after the progress line
-        return _extract_zip(tmp_path, spec, output_dir)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    for source in spec["sources"]:
+        display_name = f"{spec['name']} ({Path(source['url']).name})"
+
+        if source["kind"] == "file":
+            dest = dataset_dir / source["target_subdir"] / source["filename"]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            urlretrieve(source["url"], dest, reporthook=_make_reporthook(display_name))
+            print()
+            files_extracted += 1
+            continue
+
+        tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=f".{source['kind']}")
+        tmp_path: str = tmp_fd.name
+        tmp_fd.close()
+        try:
+            urlretrieve(source["url"], tmp_path, reporthook=_make_reporthook(display_name))
+            print()  # newline after the progress line
+            files_extracted += _extract_archive(
+                tmp_path, source["kind"], source["extract_map"], dataset_dir
+            )
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    return files_extracted
 
 
 def _parse_selection(response: str, keys: List[str]) -> List[str]:
@@ -252,7 +496,7 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
             str(index),
             key,
             spec["name"],
-            f"{spec['size_mb']} MB",
+            f"{_dataset_size_mb(spec):,} MB",
             str(target),
             f"[green]present[/green]" if badge == "present" else "[yellow]missing[/yellow]",
         )
@@ -433,7 +677,7 @@ def _download_one(
     try:
         if display is not None:
             display.start_task(
-                task_id, name, int(spec.get("size_mb", 0)) * 1_048_576
+                task_id, name, _dataset_size_mb(spec) * 1_048_576
             )
             n_files: int = _download_and_extract_rich(spec, output_dir, display, task_id)
         else:
@@ -450,21 +694,44 @@ def _download_one(
 def _download_and_extract_rich(
     spec: Dict, output_dir: Path, display: "_DownloadDisplay", task_id: int
 ) -> int:
-    """Rich path: download into the display's slot row, then extract."""
+    """Rich path: download every source into the display's slot row, then extract.
+
+    Progress across a dataset's sources is cumulative: each source's declared
+    ``size_mb`` hint contributes to a running byte offset so the slot's bar
+    advances smoothly across multiple downloads instead of resetting per file.
+    """
     name: str = spec["name"]
-    tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp_path: str = tmp_fd.name
-    tmp_fd.close()
+    dataset_dir: Path = output_dir / spec["corpus_subdir"]
+    total_bytes: int = _dataset_size_mb(spec) * 1_048_576
+    bytes_before: int = 0
+    files_extracted: int = 0
 
-    def reporthook(block_num: int, block_size: int, total_size: int) -> None:
-        display.on_progress(task_id, block_num * block_size, total_size)
+    for source in spec["sources"]:
 
-    try:
-        urlretrieve(spec["url"], tmp_path, reporthook=reporthook)
-        display.on_extracting(task_id, name)
-        return _extract_zip(tmp_path, spec, output_dir)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        def reporthook(block_num: int, block_size: int, total_size: int) -> None:
+            display.on_progress(task_id, bytes_before + block_num * block_size, total_bytes)
+
+        if source["kind"] == "file":
+            dest = dataset_dir / source["target_subdir"] / source["filename"]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            urlretrieve(source["url"], dest, reporthook=reporthook)
+            files_extracted += 1
+        else:
+            tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=f".{source['kind']}")
+            tmp_path: str = tmp_fd.name
+            tmp_fd.close()
+            try:
+                urlretrieve(source["url"], tmp_path, reporthook=reporthook)
+                display.on_extracting(task_id, name)
+                files_extracted += _extract_archive(
+                    tmp_path, source["kind"], source["extract_map"], dataset_dir
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+        bytes_before += int(source.get("size_mb", 0)) * 1_048_576
+
+    return files_extracted
 
 
 def _slot_worker(
@@ -580,7 +847,7 @@ def _parse_args() -> argparse.Namespace:
             [
                 "Examples:",
                 "  python scripts/download_datasets.py --list",
-                "  python scripts/download_datasets.py maestro-v3",
+                "  python scripts/download_datasets.py maestro-v3-midi",
                 "  python scripts/download_datasets.py bsed",
                 "  python scripts/download_datasets.py --all",
                 "  python scripts/download_datasets.py --all --jobs 4",
@@ -671,7 +938,7 @@ def main() -> int:
                 _RichConsole(),
                 slots=min(args.jobs, len(selected)),
                 total_datasets=len(selected),
-                total_mb=sum(DATASETS[k]["size_mb"] for k in selected),
+                total_mb=sum(_dataset_size_mb(DATASETS[k]) for k in selected),
             )
             any_failure = _run_rich(selected, output_dir, args.jobs, display)
         else:

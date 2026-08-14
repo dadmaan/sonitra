@@ -1,7 +1,8 @@
 # DawDreamer rendering with Vital VST3 instrument + Delayed Flight preset + Pedalboard effects.
-pipeline:
+render_pipeline:
   synth_backend: dawdreamer_vst
   effects_chain: pedalboard
+  input_type: midi
   bpm: 120
   sample_rate: 44100
   bit_depth: 24

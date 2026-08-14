@@ -12,13 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Five new `pedalboard`-backed filter effect types available under
   `pedalboard.effects`: `HighpassFilter`, `LowpassFilter`, `HighShelfFilter`,
   `LowShelfFilter`, `PeakFilter`.
-- Four new grounded benchmark scenario studies under `config/benchmark/`,
-  with real-world-grounding methodology (citations, measured calibration
-  tables, confound disclosure): `old_recording/` (vintage 78rpm shellac,
+- Four new benchmark scenario studies under `config/benchmark/`: `old_recording/` (vintage 78rpm shellac,
   early reel-to-reel tape, and AM radio broadcast chains — phase-1
   bandwidth-and-dynamics ablations at two severities against a common
-  baseline; additive noise and wow/flutter deferred to phase 2; post-effects
-  peak normalisation disclosed as a confound),
+  baseline),
   `telephone_channel/` (voice-channel bandwidth + AGC — ITU-T G.722 wideband
   VoIP, ITU-T G.711 narrowband PSTN, land-mobile-radio intercom; 4
   conditions), `venue_acoustics/` (RT60-calibrated `Reverb` ablation —

@@ -1,4 +1,4 @@
-pipeline:
+render_pipeline:
   synth_backend: pedalboard_instrument
   effects_chain: pedalboard
   bpm: 120

@@ -19,7 +19,7 @@ _CONFIGS = Path(__file__).parent.parent / "config"
 
 def _config(**overrides) -> PipelineConfig:
     return PipelineConfig.model_validate({
-        "pipeline": {
+        "render_pipeline": {
             "synth_backend": "pedalboard_instrument",
             "effects_chain": "pedalboard",
             "sample_rate": 44100,
@@ -31,7 +31,7 @@ def _config(**overrides) -> PipelineConfig:
             "max_workers": 1,
             "log_level": "INFO",
             "bpm": 120,
-            **overrides.pop("pipeline", {}),
+            **overrides.pop("render_pipeline", {}),
         },
         "io": {
             "corpus_root": ".",
@@ -87,7 +87,7 @@ def test_expand_includes_baseline_conditions_and_sweeps() -> None:
 
 def test_expand_without_baseline() -> None:
     section = BenchmarkSection.model_validate(
-        {"include_baseline": False, "sweeps": [{"parameter": "pipeline.sample_rate", "values": [22050]}]}
+        {"include_baseline": False, "sweeps": [{"parameter": "render_pipeline.sample_rate", "values": [22050]}]}
     )
     conditions = expand_conditions(section)
     assert [condition.name for condition in conditions] == ["sample_rate=22050"]
@@ -102,10 +102,10 @@ def test_expand_rejects_duplicate_names() -> None:
 
 
 def test_apply_overrides_scalar() -> None:
-    updated = apply_overrides(_config(), {"pipeline.sample_rate": 22050})
-    assert updated.pipeline.sample_rate == 22050
+    updated = apply_overrides(_config(), {"render_pipeline.sample_rate": 22050})
+    assert updated.render_pipeline.sample_rate == 22050
     # original untouched
-    assert _config().pipeline.sample_rate == 44100
+    assert _config().render_pipeline.sample_rate == 44100
 
 
 def test_apply_overrides_list_index() -> None:
@@ -115,13 +115,13 @@ def test_apply_overrides_list_index() -> None:
 
 
 def test_apply_overrides_enum_field() -> None:
-    updated = apply_overrides(_config(), {"pipeline.synth_backend": "dawdreamer_faust"})
-    assert updated.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+    updated = apply_overrides(_config(), {"render_pipeline.synth_backend": "dawdreamer_faust"})
+    assert updated.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
 
 
 def test_apply_overrides_unknown_key_raises() -> None:
     with pytest.raises(KeyError, match="unknown key"):
-        apply_overrides(_config(), {"pipeline.nonexistent": 1})
+        apply_overrides(_config(), {"render_pipeline.nonexistent": 1})
 
 
 def test_apply_overrides_bad_index_raises() -> None:
@@ -145,7 +145,7 @@ def test_condition_slug_is_filesystem_safe() -> None:
 def test_apply_overrides_triggers_cross_field_validator_on_vst_without_plugin() -> None:
     from sonitra.config import ConfigError
     with pytest.raises(ConfigError, match="plugin_path"):
-        apply_overrides(_config(), {"pipeline.synth_backend": "dawdreamer_vst"})
+        apply_overrides(_config(), {"render_pipeline.synth_backend": "dawdreamer_vst"})
 
 
 def test_vintage_scenarios_config_expands_and_resolves_all_overrides() -> None:

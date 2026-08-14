@@ -15,10 +15,10 @@ plugin/
         Vital.vst3
 ```
 
-3. Set `dawdreamer.plugin_path` and `pipeline.synth_backend` in your config:
+3. Set `dawdreamer.plugin_path` and `render_pipeline.synth_backend` in your config:
 
 ```yaml
-pipeline:
+render_pipeline:
   synth_backend: dawdreamer_vst   # required when using a VST3 instrument plugin
 
 dawdreamer:
@@ -54,7 +54,7 @@ sudo apt install fluid-soundfont-gm
 brew install fluid-synth
 ```
 
-Then set `pipeline.synth_backend: fluidsynth` and `fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2` (or the path on your system) in your config.
+Then set `render_pipeline.synth_backend: fluidsynth` and `fluidsynth.soundfont_path: /usr/share/sounds/sf2/default-GM.sf2` (or the path on your system) in your config.
 
 ## Core dependencies installed automatically
 

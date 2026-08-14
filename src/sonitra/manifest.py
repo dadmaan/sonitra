@@ -18,6 +18,7 @@ class ManifestEntry:
     peak: float
     elapsed_seconds: float
     quality_flags: dict | None = None
+    source_path: str | None = None
 
 
 class ManifestWriter:

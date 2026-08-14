@@ -26,7 +26,7 @@ def test_basic_pitch_roundtrip_c4_soundfont(tmp_path: Path) -> None:
         pytest.skip("soundfont not found")
 
     cfg = load_config(_CONFIGS / "dawdreamer_soundfont.yaml")
-    cfg.pipeline.overwrite = True
+    cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
     result = run_pipeline([_FIXTURES / "test_c4.mid"], out_dir=tmp_path / "audio", config=cfg)
@@ -60,7 +60,7 @@ def test_basic_pitch_roundtrip_polyphonic_soundfont(tmp_path: Path) -> None:
         pytest.skip("soundfont not found")
 
     cfg = load_config(_CONFIGS / "dawdreamer_soundfont.yaml")
-    cfg.pipeline.overwrite = True
+    cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
     result = run_pipeline([_FIXTURES / "test_polyphonic.mid"], out_dir=tmp_path / "audio", config=cfg)
@@ -108,7 +108,7 @@ def test_roundtrip_soundfont_config(config_name: str, tmp_path: Path) -> None:
             pytest.skip("soundfont not found")
 
     cfg = load_config(_CONFIGS / config_name)
-    cfg.pipeline.overwrite = True
+    cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
     result = run_pipeline(
@@ -152,7 +152,7 @@ def test_roundtrip_vital_config(config_name: str, tmp_path: Path) -> None:
         pytest.skip("Vital VST3 not found")
 
     cfg = load_config(_CONFIGS / config_name)
-    cfg.pipeline.overwrite = True
+    cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
     result = run_pipeline(

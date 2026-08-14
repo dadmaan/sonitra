@@ -22,6 +22,12 @@ class BenchmarkRecord:
     metrics: dict[str, float] = field(default_factory=dict)
     overrides: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    source_path: str | None = None
+    """The recording that produced this record, in audio mode. ``midi_path``
+    always names the reference MIDI (evaluation key) in both modes; in MIDI
+    mode ``source_path`` stays ``None`` (``source_path == midi_path`` would
+    be redundant there). Optional/defaulted so ``load_records``'s
+    ``BenchmarkRecord(**json.loads(line))`` still loads pre-upgrade JSONL."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -64,7 +70,7 @@ _FINGERPRINT_EXCLUDE = {
     ("benchmark", "resume"),
     ("benchmark", "max_workers"),
     ("benchmark", "save_audio"),
-    ("pipeline", "max_workers"),
+    ("render_pipeline", "max_workers"),
     ("transcription", "max_workers"),
     ("evaluation", "max_workers"),
 }

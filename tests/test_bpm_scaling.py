@@ -13,7 +13,7 @@ from sonitra.effects.chain_builder import compute_chain_hash
 from sonitra.midi_reader import parse_midi
 from sonitra.pipeline import (
     _compute_duration,
-    _init_thread_synth_chain,
+    _init_thread_source_chain,
     _render_file,
     _scale_note_timings,
 )
@@ -72,22 +72,22 @@ def test_render_file_bpm_scaling_integration(
     midi_fixture: Any, config_fixture: Any, tmp_path: Any
 ) -> None:
     cfg = load_config(config_fixture("config_no_effects.yaml"))
-    cfg.pipeline.bpm = 60
-    cfg.pipeline.overwrite = True
+    cfg.render_pipeline.bpm = 60
+    cfg.render_pipeline.overwrite = True
 
     _meta = parse_midi(midi_fixture("test_c4.mid"), return_meta=True)
     raw_notes: List[Dict[str, Any]] = _meta["notes"]
     native_bpm: float = _meta["bpm"]
 
     mock_synth = MagicMock()
-    n_samples = int(cfg.pipeline.sample_rate * 1.0)
+    n_samples = int(cfg.render_pipeline.sample_rate * 1.0)
     mock_synth.render.return_value = np.ones((2, n_samples), dtype=np.float32) * 0.1
 
-    with patch("sonitra.pipeline.make_synth", return_value=mock_synth), patch(
+    with patch("sonitra.source.make_synth", return_value=mock_synth), patch(
         "sonitra.pipeline.build_effects_chain_from_config",
         return_value=pedalboard.Pedalboard([]),
     ):
-        _init_thread_synth_chain(cfg)
+        _init_thread_source_chain(cfg)
         chain_hash = compute_chain_hash(cfg.pedalboard.effects)
         _render_file(midi_fixture("test_c4.mid"), tmp_path, cfg, chain_hash, None, None)
 

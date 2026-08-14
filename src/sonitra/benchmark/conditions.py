@@ -49,7 +49,7 @@ def apply_overrides(config: PipelineConfig, overrides: dict[str, Any]) -> Pipeli
     """Return a new validated config with dotted-path overrides applied.
 
     Paths address nested sections and list elements by index, e.g.
-    'pedalboard.effects.1.wet_level' or 'pipeline.sample_rate'.
+    'pedalboard.effects.1.wet_level' or 'render_pipeline.sample_rate'.
     """
     data = config.model_dump(mode="python")
     for path, value in overrides.items():

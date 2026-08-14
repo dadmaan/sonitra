@@ -57,17 +57,17 @@ Crucially, factories **lazily import backend modules inside the function body** 
 
 ### Config (`config.py`)
 
-Single Pydantic `PipelineConfig` tree, one nested section per concern (`pipeline`, `io`, `dawdreamer`, `fluidsynth`, `pedalboard`, `normalisation`, `quality_gates`, `transcription`, `evaluation`, `benchmark`, `observability`, `separation`). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `config/source.yaml` is the fully-annotated reference documenting every parameter; `default_config_path()` in `config.py` points there. `PipelineConfig.save(path)` serialises a config instance back to YAML.
+Single Pydantic `PipelineConfig` tree, one nested section per concern (`render_pipeline`, `io`, `dawdreamer`, `fluidsynth`, `pedalboard`, `normalisation`, `quality_gates`, `transcription`, `evaluation`, `benchmark`, `observability`, `separation`). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `config/source.yaml` is the fully-annotated reference documenting every parameter; `default_config_path()` in `config.py` points there. `PipelineConfig.save(path)` serialises a config instance back to YAML.
 
-`pipeline.synth_backend` (enum `SynthBackend`: `fluidsynth | dawdreamer_faust | dawdreamer_vst | pedalboard_instrument`) and `pipeline.effects_chain` (enum `EffectsChain`: `none | pedalboard`) replace the former `rendering_mode` key. `pipeline.bpm` (default 120) sets the playback tempo. `pipeline.max_workers` controls render-step parallelism; `transcription.max_workers`, `evaluation.max_workers`, and `benchmark.max_workers` provide independent per-step parallelism.
+`render_pipeline.synth_backend` (enum `SynthBackend`: `fluidsynth | dawdreamer_faust | dawdreamer_vst | pedalboard_instrument`) and `render_pipeline.effects_chain` (enum `EffectsChain`: `none | pedalboard`) replace the former `rendering_mode` key. `render_pipeline.bpm` (default 120) sets the playback tempo. `render_pipeline.max_workers` controls render-step parallelism; `transcription.max_workers`, `evaluation.max_workers`, and `benchmark.max_workers` provide independent per-step parallelism.
 
 Backend-specific validators enforce: `synth_backend=fluidsynth` requires `fluidsynth.soundfont_path`; `synth_backend=dawdreamer_vst` requires `dawdreamer.plugin_path`; `synth_backend=dawdreamer_faust` must NOT set `dawdreamer.plugin_path`.
 
-`validate_worker_constraint()` forces `pipeline.max_workers=1` for DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) — DawDreamer/JUCE is not safe to run concurrently. `fluidsynth` and `pedalboard_instrument` are unaffected. Call it before parallelising work.
+`validate_worker_constraint()` forces `render_pipeline.max_workers=1` for DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) — DawDreamer/JUCE is not safe to run concurrently. `fluidsynth` and `pedalboard_instrument` are unaffected. Call it before parallelising work.
 
 ### Synth backends (`synth/`)
 
-`make_synth(cfg)` in `synth/protocol.py` selects the synthesis backend from `cfg.pipeline.synth_backend`:
+`make_synth(cfg)` in `synth/protocol.py` selects the synthesis backend from `cfg.render_pipeline.synth_backend`:
 
 - **`PedalboardSynth`** — when `synth_backend=pedalboard_instrument`; renders via `pedalboard.instrument.plugin_path`. If `pedalboard.instrument.plugin_path` is null but `fluidsynth.soundfont_path` is set, falls back to `FluidSynth` with a logged warning.
 - **`FluidSynth`** — when `synth_backend=fluidsynth`; requires `fluidsynth.soundfont_path`; invokes the `fluidsynth` CLI against the named `.sf2` SoundFont file. Lazily imported from `synth/fluid_synth.py`.
@@ -75,7 +75,7 @@ Backend-specific validators enforce: `synth_backend=fluidsynth` requires `fluids
 
 ### Pipeline (`pipeline.py`)
 
-`run_pipeline` has **two code paths**: the config-driven path (when `config=` is passed — this is the real one) and a legacy `engine=`-based path kept for the older API/tests. New work goes through the config path. The pipeline is fail-soft: each MIDI file is rendered in a try/except that logs a per-file record and continues; it never aborts the batch. Per-file outcomes are written to a JSONL manifest (`renders.jsonl`) plus an optional `.failed.txt`. Note that some setup steps, such as building the effects chain from config, currently run before the per-file loop and can abort the batch if they fail (e.g., a VST3 plugin cannot be loaded). Order within a file: parse MIDI → synth.render → pre-normalise → effects chain (skipped when `pipeline.effects_chain: none`) → post-normalise → quality gate → write.
+`run_pipeline` has **two code paths**: the config-driven path (when `config=` is passed — this is the real one) and a legacy `engine=`-based path kept for the older API/tests. New work goes through the config path. The pipeline is fail-soft: each MIDI file is rendered in a try/except that logs a per-file record and continues; it never aborts the batch. Per-file outcomes are written to a JSONL manifest (`renders.jsonl`) plus an optional `.failed.txt`. Note that some setup steps, such as building the effects chain from config, currently run before the per-file loop and can abort the batch if they fail (e.g., a VST3 plugin cannot be loaded). Order within a file: parse MIDI → synth.render → pre-normalise → effects chain (skipped when `render_pipeline.effects_chain: none`) → post-normalise → quality gate → write.
 
 ### Benchmark (`benchmark/`)
 

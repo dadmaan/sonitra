@@ -43,7 +43,7 @@ def test_pedalboard_synth_without_plugin_raises_on_render(midi_fixture):
 def test_synth_factory_returns_correct_type_dawdreamer(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
     # config_valid.yaml uses synth_backend: dawdreamer_faust
-    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+    assert cfg.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
     synth = make_synth(cfg)
     assert isinstance(synth, DawDreamerSynth)
 
@@ -66,7 +66,7 @@ def test_synth_factory_returns_fluid_synth_when_soundfont_configured(tmp_path) -
     dummy_sf2.touch()
     from sonitra.config import PipelineConfig
     cfg = PipelineConfig.model_validate({
-        "pipeline": {
+        "render_pipeline": {
             "synth_backend": "fluidsynth", "effects_chain": "none",
             "sample_rate": 44100, "bit_depth": 24, "channels": 2,
             "duration_padding_sec": 2.0, "overwrite": False, "resume": True,

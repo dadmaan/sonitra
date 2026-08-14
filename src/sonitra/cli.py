@@ -32,8 +32,6 @@ from sonitra.terminal import (
 
 app = typer.Typer(name="sonitra")
 
-_MIDI_SUFFIXES: frozenset[str] = frozenset({".mid", ".midi"})
-
 _CLI_VERBOSE = False
 
 
@@ -57,10 +55,15 @@ def _progress_columns() -> list[ProgressColumn | str]:
 
 
 def _discover_midi_files(directory: Path) -> list[Path]:
-    return sorted(
-        p for p in directory.rglob("*")
-        if p.is_file() and p.suffix.lower() in _MIDI_SUFFIXES
-    )
+    """Thin re-export of :func:`sonitra.corpus.discover_midi_files`.
+
+    Kept as a module-level name in ``cli.py`` (rather than importing the
+    corpus module at every call site) so existing imports of
+    ``sonitra.cli._discover_midi_files`` keep working unmodified.
+    """
+    from sonitra.corpus import discover_midi_files
+
+    return discover_midi_files(directory)
 
 
 def _apply_subset(
@@ -119,8 +122,11 @@ def render(
         None, "--seed", help="RNG seed for --limit sampling."
     ),
 ) -> None:
-    """Run the MIDI-to-audio rendering pipeline."""
-    from sonitra.config import load_config, resolve_corpus_paths
+    """Run the MIDI-to-audio rendering pipeline (MIDI mode) or the audio
+    read -> effects -> quality-gate pipeline (audio mode, ``pipeline.input_type:
+    audio``)."""
+    from sonitra.config import InputType, load_config, resolve_corpus_paths
+    from sonitra.corpus import discover_audio_files
     from sonitra.pipeline import run_pipeline
 
     console = get_console()
@@ -129,13 +135,24 @@ def render(
         set_log_level(effective_log_level(cfg))
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
+    audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
 
-    actual_corpus = corpus if corpus is not None else paths.midi
+    if corpus is not None:
+        actual_corpus = corpus
+    elif audio_mode:
+        actual_corpus = paths.recordings
+    else:
+        actual_corpus = paths.midi
     actual_output = output if output is not None else paths.audio
 
-    midi_paths = _discover_midi_files(actual_corpus)
+    if audio_mode:
+        midi_paths = discover_audio_files(actual_corpus)
+        source_label = "audio files"
+    else:
+        midi_paths = _discover_midi_files(actual_corpus)
+        source_label = "MIDI files"
     if not midi_paths:
-        console.print(f"[red]No MIDI files found in[/red] [dim]{actual_corpus}[/dim]")
+        console.print(f"[red]No {source_label} found in[/red] [dim]{actual_corpus}[/dim]")
         raise typer.Exit(code=1)
     midi_paths = _apply_subset(midi_paths, limit, seed)
 
@@ -566,7 +583,8 @@ def benchmark(
 ) -> None:
     """Run the full AMT benchmark: render, transcribe, and evaluate per condition."""
     from sonitra.benchmark.runner import run_benchmark
-    from sonitra.config import load_config, resolve_corpus_paths
+    from sonitra.config import InputType, load_config, resolve_corpus_paths
+    from sonitra.corpus import discover_audio_files, pair_audio_to_reference
 
     console = get_console()
     cfg = load_config(config)
@@ -574,8 +592,17 @@ def benchmark(
         set_log_level(effective_log_level(cfg))
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
+    audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
 
+    # --corpus keeps meaning "reference MIDI dir" in both modes -- it is
+    # never used to locate audio-mode recordings (PLAN.md §2.5.1/§3 Phase 5).
     actual_corpus = corpus if corpus is not None else paths.midi
+    # corpus_root passed to run_benchmark must be an ancestor of the paths
+    # that are actually rendered/evaluated as source_path -- the recordings
+    # (paths.recordings) in audio mode, not the reference-MIDI dir (which
+    # --corpus/actual_corpus denotes); otherwise Path.relative_to() in
+    # _resolve_output_path/_evaluate_one raises ValueError.
+    render_corpus_root = paths.recordings if audio_mode else actual_corpus
     if workdir is not None:
         actual_workdir = workdir
     elif dataset is not None:
@@ -587,7 +614,31 @@ def benchmark(
     if not midi_paths:
         console.print(f"[red]No MIDI files found in[/red] [dim]{actual_corpus}[/dim]")
         raise typer.Exit(code=1)
-    midi_paths = _apply_subset(midi_paths, limit, seed)
+
+    audio_paths: list[Path] | None = None
+    if audio_mode:
+        # Subsetting order matters (PLAN.md §2.5.1): --limit/--seed applies
+        # to the *recordings* list first (the true per-cell unit), then
+        # midi_paths is re-derived as the deduplicated, sorted set of
+        # references paired to the *sampled* recordings -- never sampled
+        # independently, so the two lists stay mutually consistent.
+        recordings = discover_audio_files(paths.recordings)
+        if not recordings:
+            console.print(
+                f"[red]No audio files found in[/red] [dim]{paths.recordings}[/dim]"
+            )
+            raise typer.Exit(code=1)
+        recordings = _apply_subset(recordings, limit, seed)
+        pairing = pair_audio_to_reference(recordings, midi_paths)
+        audio_paths = recordings
+        midi_paths = sorted(set(pairing.mapping.values()))
+        if not midi_paths:
+            console.print(
+                "[red]No sampled recordings paired to a reference MIDI[/red]"
+            )
+            raise typer.Exit(code=1)
+    else:
+        midi_paths = _apply_subset(midi_paths, limit, seed)
 
     show_progress = _progress_enabled(cfg)
     devices = {
@@ -611,7 +662,8 @@ def benchmark(
                 midi_paths,
                 actual_workdir,
                 cfg,
-                corpus_root=actual_corpus,
+                corpus_root=render_corpus_root,
+                audio_paths=audio_paths,
                 progress=prog,
             )
     except KeyboardInterrupt:
@@ -756,7 +808,7 @@ def init(
     from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 
     cfg = PipelineConfig(
-        pipeline=PipelineSection(
+        render_pipeline=PipelineSection(
             synth_backend=SynthBackend.DAWDREAMER_FAUST,
             effects_chain=EffectsChain.NONE,
             bpm=120,

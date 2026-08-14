@@ -26,7 +26,7 @@ from sonitra.terminal import (
 
 def _base_dict(synth_backend: str, effects_chain: str, **overrides) -> dict:
     base = {
-        "pipeline": {
+        "render_pipeline": {
             "synth_backend": synth_backend,
             "effects_chain": effects_chain,
             "bpm": 120,
@@ -70,14 +70,14 @@ def test_all_synth_backends_parse() -> None:
         cfg = PipelineConfig.model_validate(
             _base_dict(backend.value, "none", **extra)
         )
-        assert cfg.pipeline.synth_backend == backend
+        assert cfg.render_pipeline.synth_backend == backend
 
 def test_all_effects_chains_parse() -> None:
     for chain in EffectsChain:
         cfg = PipelineConfig.model_validate(
             _base_dict("dawdreamer_faust", chain.value)
         )
-        assert cfg.pipeline.effects_chain == chain
+        assert cfg.render_pipeline.effects_chain == chain
 
 def test_invalid_synth_backend_raises() -> None:
     with pytest.raises(ConfigError):
@@ -92,7 +92,7 @@ def test_fluidsynth_with_soundfont_passes() -> None:
     data = _base_dict("fluidsynth", "none",
                       fluidsynth={"soundfont_path": "/tmp/dummy.sf2"})
     cfg = PipelineConfig.model_validate(data)
-    assert cfg.pipeline.synth_backend == SynthBackend.FLUIDSYNTH
+    assert cfg.render_pipeline.synth_backend == SynthBackend.FLUIDSYNTH
 
 def test_fluidsynth_without_soundfont_section_raises() -> None:
     data = _base_dict("fluidsynth", "none")
@@ -108,7 +108,7 @@ def test_dawdreamer_vst_with_plugin_path_passes() -> None:
     data = _base_dict("dawdreamer_vst", "none",
                       dawdreamer={"plugin_path": "/tmp/dummy.vst3"})
     cfg = PipelineConfig.model_validate(data)
-    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_VST
+    assert cfg.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_VST
 
 def test_dawdreamer_faust_with_plugin_path_raises() -> None:
     data = _base_dict("dawdreamer_faust", "none",
@@ -118,15 +118,15 @@ def test_dawdreamer_faust_with_plugin_path_raises() -> None:
 
 def test_dawdreamer_faust_without_plugin_path_passes() -> None:
     cfg = PipelineConfig.model_validate(_base_dict("dawdreamer_faust", "none"))
-    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+    assert cfg.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
 
 def test_pedalboard_instrument_without_plugin_path_passes() -> None:
     cfg = PipelineConfig.model_validate(_base_dict("pedalboard_instrument", "none"))
-    assert cfg.pipeline.synth_backend == SynthBackend.PEDALBOARD_INSTRUMENT
+    assert cfg.render_pipeline.synth_backend == SynthBackend.PEDALBOARD_INSTRUMENT
 
 def test_rendering_mode_in_pipeline_raises() -> None:
     data = _base_dict("dawdreamer_faust", "none")
-    data["pipeline"]["rendering_mode"] = "dawdreamer_only"
+    data["render_pipeline"]["rendering_mode"] = "dawdreamer_only"
     with pytest.raises(ConfigError):
         PipelineConfig.model_validate(data)
 
@@ -156,52 +156,52 @@ def test_fluidsynthsection_extra_key_raises() -> None:
 
 def test_validate_worker_constraint_forces_1_for_dawdreamer_faust() -> None:
     cfg = PipelineConfig.model_validate(_base_dict("dawdreamer_faust", "none"))
-    cfg.pipeline.max_workers = 8
+    cfg.render_pipeline.max_workers = 8
     result = cfg.validate_worker_constraint()
-    assert result.pipeline.max_workers == 1
+    assert result.render_pipeline.max_workers == 1
 
 def test_validate_worker_constraint_forces_1_for_dawdreamer_vst() -> None:
     data = _base_dict("dawdreamer_vst", "none",
                       dawdreamer={"plugin_path": "/tmp/x.vst3"})
     cfg = PipelineConfig.model_validate(data)
-    cfg.pipeline.max_workers = 4
-    assert cfg.validate_worker_constraint().pipeline.max_workers == 1
+    cfg.render_pipeline.max_workers = 4
+    assert cfg.validate_worker_constraint().render_pipeline.max_workers == 1
 
 def test_validate_worker_constraint_allows_multiple_for_pedalboard_instrument() -> None:
     cfg = PipelineConfig.model_validate(_base_dict("pedalboard_instrument", "pedalboard"))
-    cfg.pipeline.max_workers = 4
-    assert cfg.validate_worker_constraint().pipeline.max_workers == 4
+    cfg.render_pipeline.max_workers = 4
+    assert cfg.validate_worker_constraint().render_pipeline.max_workers == 4
 
 def test_validate_worker_constraint_allows_multiple_for_fluidsynth() -> None:
     data = _base_dict("fluidsynth", "none",
                       fluidsynth={"soundfont_path": "/tmp/x.sf2"})
     cfg = PipelineConfig.model_validate(data)
-    cfg.pipeline.max_workers = 4
-    assert cfg.validate_worker_constraint().pipeline.max_workers == 4
+    cfg.render_pipeline.max_workers = 4
+    assert cfg.validate_worker_constraint().render_pipeline.max_workers == 4
 
 def test_bpm_defaults_to_120() -> None:
     data = _base_dict("dawdreamer_faust", "none")
-    data["pipeline"].pop("bpm", None)
+    data["render_pipeline"].pop("bpm", None)
     cfg = PipelineConfig.model_validate(data)
-    assert cfg.pipeline.bpm == 120
+    assert cfg.render_pipeline.bpm == 120
 
 def test_bpm_zero_rejected() -> None:
     data = _base_dict("dawdreamer_faust", "none")
-    data["pipeline"]["bpm"] = 0
+    data["render_pipeline"]["bpm"] = 0
     with pytest.raises(ConfigError):
         PipelineConfig.model_validate(data)
 
 def test_bpm_negative_rejected() -> None:
     data = _base_dict("dawdreamer_faust", "none")
-    data["pipeline"]["bpm"] = -10
+    data["render_pipeline"]["bpm"] = -10
     with pytest.raises(ConfigError):
         PipelineConfig.model_validate(data)
 
 def test_bpm_1_is_valid() -> None:
     data = _base_dict("dawdreamer_faust", "none")
-    data["pipeline"]["bpm"] = 1
+    data["render_pipeline"]["bpm"] = 1
     cfg = PipelineConfig.model_validate(data)
-    assert cfg.pipeline.bpm == 1
+    assert cfg.render_pipeline.bpm == 1
 
 
 # ── Observability: log_level + progress ──────────────────────────────
@@ -265,14 +265,14 @@ def test_effective_log_level_falls_back_to_pipeline() -> None:
     cfg = PipelineConfig.model_validate(
         _base_dict("dawdreamer_faust", "none", observability={"log_level": None})
     )
-    cfg.pipeline.log_level = "warning"
+    cfg.render_pipeline.log_level = "warning"
     assert effective_log_level(cfg) == "WARNING"
 
 
 def test_effective_log_level_defaults_to_info() -> None:
     cfg = PipelineConfig.model_validate(_base_dict("dawdreamer_faust", "none"))
     cfg.observability.log_level = None
-    cfg.pipeline.log_level = ""
+    cfg.render_pipeline.log_level = ""
     assert effective_log_level(cfg) == "INFO"
 
 

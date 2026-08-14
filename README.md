@@ -118,9 +118,9 @@ Enable GPU inference by setting `device: GPU:0` in the `transcription.transcribe
 ## Datasets
 
 ```bash
-python scripts/download_datasets.py maestro-v3      # ~1,276 piano MIDI files, ~57 MB
-python scripts/download_datasets.py                 # interactive picker (rich table)
-python scripts/download_datasets.py --all --jobs 4  # download everything, 4 at a time
+python scripts/download_datasets.py maestro-v3-midi  # ~1,276 piano MIDI files, ~57 MB
+python scripts/download_datasets.py                  # interactive picker (rich table)
+python scripts/download_datasets.py --all --jobs 4   # download everything, 4 at a time
 ```
 
 Files land under `corpus/{dataset}/midi/`. See **[docs/datasets.md](docs/datasets.md)** for the full list of supported datasets and script options.
@@ -154,7 +154,7 @@ For VST3 instrument/preset setup and the SoundFont fallback, see **[docs/plugins
 
 ```bash
 # 0. Download a dataset (stdlib-only, no venv required)
-python scripts/download_datasets.py maestro-v3
+python scripts/download_datasets.py maestro-v3-midi
 
 # 1. Write a starter config
 sonitra init --config config.yaml

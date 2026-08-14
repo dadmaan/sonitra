@@ -1,4 +1,4 @@
-pipeline:
+render_pipeline:
   synth_backend: invalid_mode
   effects_chain: none
   sample_rate: 44100
