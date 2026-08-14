@@ -123,7 +123,7 @@ def test_apply_subset_result_is_sorted() -> None:
 # Minimal fluidsynth config used for CLI smoke tests. PedalboardSynth without a
 # plugin now raises ValueError, so we use FluidSynth with the system SoundFont.
 _RENDER_SMOKE_CONFIG = """\
-pipeline:
+render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
   bpm: 120
@@ -322,7 +322,7 @@ def test_evaluate_dataset_with_config_unnamed_transcriber(tmp_path: Path) -> Non
     config_path = tmp_path / f"{config_stem}.yaml"
     config_path.write_text(
         f"""\
-pipeline:
+render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
   bpm: 120

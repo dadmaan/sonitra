@@ -18,7 +18,7 @@ def test_pipeline_uses_dawdreamer_synth_in_dawdreamer_only_mode(
     monkeypatch, tmp_path, midi_fixture, config_fixture
 ):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
+    cfg.render_pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
     spy = []
     orig = DawDreamerSynth.render
     monkeypatch.setattr(DawDreamerSynth, "render", lambda self, *a, **kw: spy.append("dd") or orig(self, *a, **kw))
@@ -115,13 +115,13 @@ def test_output_format_config_controls_extension(tmp_path, midi_fixture, config_
 
 def test_dawdreamer_mode_uses_single_worker(monkeypatch, tmp_path, midi_fixture, config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
-    cfg.pipeline.max_workers = 8
+    cfg.render_pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
+    cfg.render_pipeline.max_workers = 8
     worker_counts = []
 
     monkeypatch.setattr(
         "sonitra.pipeline._get_worker_count",
-        lambda cfg: worker_counts.append(cfg.pipeline.max_workers) or cfg.pipeline.max_workers,
+        lambda cfg: worker_counts.append(cfg.render_pipeline.max_workers) or cfg.render_pipeline.max_workers,
     )
     run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
     assert all(w == 1 for w in worker_counts)

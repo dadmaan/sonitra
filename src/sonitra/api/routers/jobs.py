@@ -35,7 +35,7 @@ async def create_job(
     request: Request,
     store: JobStore = Depends(get_job_store),
 ) -> JobResponse:
-    synth_backend = request.app.state.config.pipeline.synth_backend.value
+    synth_backend = request.app.state.config.render_pipeline.synth_backend.value
     job_id = store.create(
         midi_dir=str(payload.midi_dir),
         out_dir=str(payload.out_dir),

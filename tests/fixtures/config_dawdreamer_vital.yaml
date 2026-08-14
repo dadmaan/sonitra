@@ -1,4 +1,4 @@
-pipeline:
+render_pipeline:
   synth_backend: dawdreamer_vst
   effects_chain: none
   bpm: 120

@@ -15,7 +15,7 @@ def test_init_writes_working_basic_pitch_config(tmp_path: Path) -> None:
     path = tmp_path / "init.yaml"
     init(path)
     cfg = load_config(path)
-    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+    assert cfg.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
     assert cfg.normalisation.enabled is True
     assert any(t.type == "basic_pitch" and t.enabled for t in cfg.transcription.transcribers)
 
@@ -60,7 +60,7 @@ def test_sonitra_console_script_is_registered() -> None:
 # ---------------------------------------------------------------------------
 
 _MINIMAL_CONFIG_TEMPLATE = """\
-pipeline:
+render_pipeline:
   synth_backend: dawdreamer_faust
   effects_chain: pedalboard
   bpm: 120
@@ -240,7 +240,7 @@ def test_transcribe_empty_audio_dir_exits_nonzero(tmp_path: Path) -> None:
 
 
 _TWO_TRANSCRIBERS_CONFIG_TEMPLATE = """\
-pipeline:
+render_pipeline:
   synth_backend: dawdreamer_faust
   effects_chain: pedalboard
   bpm: 120
@@ -386,14 +386,14 @@ def test_init_config_has_synth_backend(tmp_path) -> None:
     result = runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
     assert result.exit_code == 0
     cfg = load_config(tmp_path / "cfg.yaml")
-    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+    assert cfg.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
 
 
 def test_init_config_has_effects_chain(tmp_path) -> None:
     result = runner.invoke(app, ["init", "--config", str(tmp_path / "cfg.yaml")])
     assert result.exit_code == 0
     cfg = load_config(tmp_path / "cfg.yaml")
-    assert cfg.pipeline.effects_chain == EffectsChain.NONE
+    assert cfg.render_pipeline.effects_chain == EffectsChain.NONE
 
 
 def test_init_config_no_rendering_mode_in_yaml(tmp_path) -> None:

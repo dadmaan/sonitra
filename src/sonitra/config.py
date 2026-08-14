@@ -21,6 +21,7 @@ class CorpusPaths:
     audio: Path
     transcription: Path
     eval_results: Path
+    recordings: Path
 
 
 class ConfigError(RuntimeError):
@@ -39,11 +40,17 @@ class EffectsChain(str, Enum):
     PEDALBOARD = "pedalboard"
 
 
+class InputType(str, Enum):
+    MIDI = "midi"
+    AUDIO = "audio"
+
+
 class PipelineSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     synth_backend: SynthBackend
     effects_chain: EffectsChain
+    input_type: InputType = Field(default=InputType.MIDI)
     bpm: int = Field(default=120, ge=1)
     sample_rate: int
     bit_depth: int
@@ -237,7 +244,7 @@ class BenchmarkSection(BaseModel):
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    pipeline: PipelineSection
+    render_pipeline: PipelineSection
     io: IOSection
     dawdreamer: DawDreamerSection = Field(default_factory=DawDreamerSection)
     fluidsynth: FluidSynthSection = Field(default_factory=FluidSynthSection)
@@ -252,7 +259,11 @@ class PipelineConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_backend_fields(self) -> "PipelineConfig":
-        backend = self.pipeline.synth_backend
+        if self.render_pipeline.input_type != InputType.MIDI:
+            # In audio mode the synth is never constructed, so none of the
+            # backend-specific requirements below apply.
+            return self
+        backend = self.render_pipeline.synth_backend
         if backend == SynthBackend.FLUIDSYNTH and not self.fluidsynth.soundfont_path:
             raise ValueError(
                 "synth_backend=fluidsynth requires fluidsynth.soundfont_path to be set"
@@ -276,12 +287,12 @@ class PipelineConfig(BaseModel):
             raise ConfigError(str(exc)) from exc
 
     def validate_worker_constraint(self) -> "PipelineConfig":
-        if self.pipeline.synth_backend in {
+        if self.render_pipeline.synth_backend in {
             SynthBackend.DAWDREAMER_FAUST,
             SynthBackend.DAWDREAMER_VST,
-        } and self.pipeline.max_workers != 1:
+        } and self.render_pipeline.max_workers != 1:
             logger.warning("max_workers forced to 1 for dawdreamer backends")
-            self.pipeline.max_workers = 1
+            self.render_pipeline.max_workers = 1
         return self
 
     def save(self, path: Path | str) -> None:
@@ -310,7 +321,8 @@ def resolve_corpus_paths(
 
     Returns:
         A :class:`CorpusPaths` instance with ``midi``, ``audio``, ``transcription``,
-        and ``eval_results`` attributes as :class:`pathlib.Path` objects.
+        ``eval_results``, and ``recordings`` attributes as :class:`pathlib.Path`
+        objects.
 
         With ``dataset="test"``, ``corpus_root="./corpus"``, and
         ``config_name="pedalboard_baseline"``:
@@ -319,6 +331,7 @@ def resolve_corpus_paths(
         - ``audio``         → ``corpus/test/audio/pedalboard_baseline``
         - ``transcription`` → ``corpus/test/transcription/pedalboard_baseline``
         - ``eval_results``  → ``corpus/test/eval_results``
+        - ``recordings``    → ``corpus/test/recordings``
 
         Without ``dataset``:
 
@@ -326,6 +339,11 @@ def resolve_corpus_paths(
         - ``audio``         → ``corpus/audio/pedalboard_baseline``
         - ``transcription`` → ``corpus/transcription/pedalboard_baseline``
         - ``eval_results``  → ``corpus/eval_results``
+        - ``recordings``    → ``corpus/recordings``
+
+        ``recordings`` is a *source* directory (read-only audio-mode input,
+        mirroring ``midi``) and is distinct from ``audio``, which is the
+        pipeline's *output* directory for rendered/processed audio.
     """
     root = Path(cfg.io.corpus_root)
     base = root / cfg.io.dataset if cfg.io.dataset else root
@@ -334,6 +352,7 @@ def resolve_corpus_paths(
         audio=(base / "audio" / config_name) if config_name else base / "audio",
         transcription=(base / "transcription" / config_name) if config_name else base / "transcription",
         eval_results=base / "eval_results",
+        recordings=base / "recordings",
     )
 
 

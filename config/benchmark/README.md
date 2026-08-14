@@ -120,7 +120,7 @@ benchmark:
 
 Paths address nested sections and indexed list elements:
 
-- `pipeline.sample_rate` — top-level section field
+- `render_pipeline.sample_rate` — top-level section field
 - `pedalboard.effects.1.wet_level` — second element of the `effects` list, `wet_level` key
 - `pedalboard.effects.0.enabled` — boolean toggle on the first effect
 
@@ -138,8 +138,8 @@ when set, otherwise the last dotted segment of `sweep.parameter`. Examples:
 
 ## Worker notes
 
-- `pipeline.max_workers` controls parallelism within a single condition's render
-  pipeline. **Must stay at `1` for DawDreamer modes** (DawDreamer/JUCE global state
+- `render_pipeline.max_workers` controls parallelism within a single condition's render
+  render_pipeline. **Must stay at `1` for DawDreamer modes** (DawDreamer/JUCE global state
   is not thread-safe). FluidSynth and Pedalboard modes can use higher values, but all
   configs in this directory default to `1` for safety.
 - `benchmark.max_workers` controls how many conditions run in parallel subprocesses.

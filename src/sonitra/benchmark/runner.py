@@ -26,7 +26,8 @@ from sonitra.benchmark.results import (
     order_by_condition,
     summarise,
 )
-from sonitra.config import PipelineConfig
+from sonitra.config import InputType, PipelineConfig
+from sonitra.corpus import pair_audio_to_reference
 from sonitra.evaluation.protocol import (
     AudioMetric,
     evaluate_notes,
@@ -146,12 +147,48 @@ class BenchmarkResult:
         }
 
 
+def _validate_no_input_type_sweep(config: PipelineConfig) -> None:
+    """Reject conditions/sweeps that override ``pipeline.input_type``.
+
+    Input mode selects the corpus/pairing for the *entire* benchmark run
+    (which files exist, how audio is paired to a reference) -- it is not a
+    per-condition perturbation axis like ``pedalboard.effects``. Overriding
+    it per-condition would desync the fixed ``audio_paths``/
+    ``audio_to_reference`` computed once at :func:`run_benchmark` setup from
+    what ``apply_overrides`` would separately (re-)validate for that
+    condition. Caught here, once, at setup -- instead of surfacing as a
+    mid-loop ``ConfigError`` out of ``apply_overrides`` (a fail-soft
+    violation, CLAUDE.md).
+
+    Raises:
+        ValueError: If any condition or sweep overrides
+            ``pipeline.input_type``.
+    """
+    offenders = [
+        condition.name
+        for condition in config.benchmark.conditions
+        if "render_pipeline.input_type" in condition.overrides
+    ]
+    offenders += [
+        sweep.parameter
+        for sweep in config.benchmark.sweeps
+        if sweep.parameter == "render_pipeline.input_type"
+    ]
+    if offenders:
+        raise ValueError(
+            "benchmark conditions/sweeps must not override 'render_pipeline.input_type' "
+            f"(offending entries: {offenders}); input mode selects the corpus/pairing "
+            "for the entire benchmark run and cannot vary per condition"
+        )
+
+
 def run_benchmark(
     midi_paths: Iterable[Path | str],
     work_dir: Path | str,
     config: PipelineConfig,
     corpus_root: Path | None = None,
     *,
+    audio_paths: Iterable[Path | str] | None = None,
     progress: BenchmarkProgress | None = None,
 ) -> BenchmarkResult:
     """Run the full benchmark: render -> (separate) -> transcribe -> evaluate.
@@ -161,11 +198,44 @@ def run_benchmark(
     run on the audio, and the transcription is scored against the source MIDI
     with the configured metric suite. Per-file records go to a JSONL file; the
     aggregate summary and the degradation-vs-baseline table go to summary.json.
+
+    In audio mode (``config.render_pipeline.input_type == InputType.AUDIO``),
+    *midi_paths* stays the reference-MIDI list (the evaluation key) and
+    *audio_paths* is required: the source recordings, paired to references
+    once via :func:`sonitra.corpus.pair_audio_to_reference`. One record is
+    produced per (recording, transcriber) cell -- the granularity needed to
+    support datasets where several recordings share one reference MIDI.
+    ``run_benchmark`` never re-derives either list from
+    ``config.io.corpus_root`` itself; both must already be fully resolved by
+    the caller (mirrors how *midi_paths* already crosses the CLI->runner
+    boundary today) -- only the *pairing* between them is computed here.
     """
     start = time.perf_counter()
     midi_paths = [Path(path) for path in midi_paths]
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    _validate_no_input_type_sweep(config)
+
+    audio_to_reference: dict[Path, Path] | None = None
+    if config.render_pipeline.input_type == InputType.AUDIO:
+        if audio_paths is None:
+            raise ValueError(
+                "config.render_pipeline.input_type is 'audio' but run_benchmark() was called "
+                "without audio_paths=; pass the resolved recordings list explicitly "
+                "(run_benchmark does not re-derive it from config.io.corpus_root)."
+            )
+        pairing = pair_audio_to_reference([Path(p) for p in audio_paths], midi_paths)
+        audio_to_reference = pairing.mapping
+        if pairing.unpaired_audio:
+            logger.warning(
+                "%d recording(s) have no matching reference MIDI and will be skipped: %s",
+                len(pairing.unpaired_audio),
+                [str(p) for p in pairing.unpaired_audio],
+            )
+        audio_paths = sorted(audio_to_reference.keys())
+    else:
+        audio_paths = None
 
     transcriber_configs = [t for t in config.transcription.transcribers if t.enabled]
     if not transcriber_configs:
@@ -177,6 +247,12 @@ def run_benchmark(
     condition_order = [condition.name for condition in conditions]
     symbolic_metrics = make_symbolic_metrics(config.evaluation)
     audio_metrics = make_audio_metrics(config.evaluation)
+    if audio_metrics and config.render_pipeline.input_type == InputType.AUDIO:
+        logger.warning(
+            "evaluation.dtw is enabled but will be skipped for every record: "
+            "not applicable in audio-input mode (real recordings have no "
+            "meaningful synth re-render to compare against). See ARCHITECTURE.md."
+        )
     n_workers = config.benchmark.max_workers
 
     results_file = work_dir / config.benchmark.results_path
@@ -213,10 +289,13 @@ def run_benchmark(
     for record in records:
         if record.status in {"succeeded", "failed", "render_failed"}:
             completed_by_condition.setdefault(record.condition, set()).add(
-                (record.midi_path, record.transcriber)
+                (record.source_path or record.midi_path, record.transcriber)
             )
 
-    expected_pairs = {(str(mp), name) for mp in midi_paths for name in transcriber_names}
+    if audio_paths is not None:
+        expected_pairs = {(str(ap), name) for ap in audio_paths for name in transcriber_names}
+    else:
+        expected_pairs = {(str(mp), name) for mp in midi_paths for name in transcriber_names}
     pending_conditions = []
     for condition in conditions:
         done = completed_by_condition.get(condition.name, set())
@@ -234,6 +313,12 @@ def run_benchmark(
         except Exception as exc:  # noqa: BLE001 - recorded as a per-file failure
             logger.warning("Cannot parse reference MIDI %s: %s", path, exc)
             references[path] = None
+
+    # In audio mode, per-condition totals reflect cells (recording x
+    # transcriber), matching the resolved fan-out granularity (§2.5) --
+    # not len(midi_paths), which would undercount when several recordings
+    # share one reference.
+    condition_file_count = len(audio_paths) if audio_paths is not None else len(midi_paths)
 
     if n_workers > 1:
         event_queue: multiprocessing.Queue | None = None
@@ -256,7 +341,7 @@ def run_benchmark(
                     progress.on_condition_started(
                         condition.name,
                         condition.overrides,
-                        len(midi_paths),
+                        condition_file_count,
                         transcriber_names,
                     )
                 futures[
@@ -270,6 +355,8 @@ def run_benchmark(
                         work_dir,
                         corpus_root,
                         completed_by_condition.get(condition.name, set()),
+                        audio_paths,
+                        audio_to_reference,
                     )
                 ] = condition
             for future in as_completed(futures):
@@ -290,7 +377,7 @@ def run_benchmark(
                 progress.on_condition_started(
                     condition.name,
                     condition.overrides,
-                    len(midi_paths),
+                    condition_file_count,
                     transcriber_names,
                 )
             condition_config = apply_overrides(config, condition.overrides)
@@ -313,6 +400,8 @@ def run_benchmark(
                     corpus_root=corpus_root,
                     completed=completed_by_condition.get(condition.name, set()),
                     progress=progress,
+                    audio_paths=audio_paths,
+                    audio_to_reference=audio_to_reference,
                 )
             records.extend(condition_records)
             if progress is not None:
@@ -346,12 +435,17 @@ def _condition_worker(
     work_dir: Path,
     corpus_root: Path | None,
     completed: set[tuple[str, str]] = frozenset(),
+    audio_paths: Sequence[Path] | None = None,
+    audio_to_reference: dict[Path, Path] | None = None,
 ) -> list[BenchmarkRecord]:
     """Run one benchmark condition in a subprocess (for ProcessPoolExecutor).
 
     Recreates transcribers and metrics from configs so no non-picklable state
     crosses the process boundary.  Returns records without writing to disk so
     the parent process can stream-write them to the shared ResultsWriter.
+    *audio_paths*/*audio_to_reference* are picklable (list[Path]/dict[Path,
+    Path]) and cross the process boundary unchanged; both are None in MIDI
+    mode.
     """
     transcribers = [make_transcriber(cfg) for cfg in transcriber_cfgs]
     symbolic_metrics = make_symbolic_metrics(condition_config.evaluation)
@@ -368,6 +462,8 @@ def _condition_worker(
         writer=None,
         corpus_root=corpus_root,
         completed=completed,
+        audio_paths=audio_paths,
+        audio_to_reference=audio_to_reference,
     )
 
 
@@ -384,10 +480,18 @@ def _run_condition(
     corpus_root: Path | None = None,
     completed: set[tuple[str, str]] = frozenset(),
     progress: BenchmarkProgress | None = None,
+    audio_paths: Sequence[Path] | None = None,
+    audio_to_reference: dict[Path, Path] | None = None,
 ) -> list[BenchmarkRecord]:
     # Imported lazily: WorkerEvent is added to sonitra.benchmark.results by the
     # display lane; this keeps the module importable regardless of edit order.
     from sonitra.benchmark.results import WorkerEvent
+
+    # The primary per-cell loop variable: paired recordings in audio mode
+    # (unpaired ones were already filtered out by run_benchmark before this
+    # is called), reference MIDIs in MIDI mode -- where source_path ==
+    # midi_path == the reference itself, as always.
+    source_paths: Sequence[Path] = audio_paths if audio_paths is not None else midi_paths
 
     audio_dir = work_dir / "audio" / condition.slug
     _emit_worker_event(
@@ -402,7 +506,7 @@ def _run_condition(
             ok=True,
         ),
     )
-    render_result = run_pipeline(midi_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
+    render_result = run_pipeline(source_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
     render_log = {entry["midi"]: entry for entry in render_result.log}
     separator = (
         make_separator(condition_config.separation)
@@ -411,31 +515,34 @@ def _run_condition(
     )
 
     records: list[BenchmarkRecord] = []
-    for midi_path in midi_paths:
+    for source_path in source_paths:
+        reference = audio_to_reference[source_path] if audio_paths is not None else source_path
+
         pending_transcribers = [
-            t for t in transcribers if (str(midi_path), t.name) not in completed
+            t for t in transcribers if (str(source_path), t.name) not in completed
         ]
         if not pending_transcribers:
             continue
 
-        entry = render_log.get(str(midi_path), {})
+        entry = render_log.get(str(source_path), {})
         audio_path = Path(entry["output"]) if "output" in entry else None
         if (
             audio_path is None
             or entry.get("status") == "failed"
             or not audio_path.exists()
-            or references[midi_path] is None
+            or references.get(reference) is None
         ):
             reason = entry.get("error", "render failed or produced no output")
             for transcriber in pending_transcribers:
                 record = BenchmarkRecord(
                     condition=condition.name,
                     transcriber=transcriber.name,
-                    midi_path=str(midi_path),
+                    midi_path=str(reference),
                     audio_path=str(audio_path) if audio_path else "",
                     status="render_failed",
                     overrides=condition.overrides,
                     error=str(reason),
+                    source_path=str(source_path) if audio_paths is not None else None,
                 )
                 if writer is not None:
                     writer.write(record)
@@ -446,7 +553,7 @@ def _run_condition(
                         worker_id=os.getpid(),
                         condition=record.condition,
                         transcriber=record.transcriber,
-                        midi_path=record.midi_path,
+                        midi_path=str(source_path),
                         status="done",
                         ok=False,
                     ),
@@ -461,7 +568,7 @@ def _run_condition(
                     worker_id=os.getpid(),
                     condition=condition.name,
                     transcriber="",
-                    midi_path=str(midi_path),
+                    midi_path=str(source_path),
                     status="stage",
                     stage="separate",
                     ok=True,
@@ -485,7 +592,7 @@ def _run_condition(
                     worker_id=os.getpid(),
                     condition=condition.name,
                     transcriber=transcriber.name,
-                    midi_path=str(midi_path),
+                    midi_path=str(source_path),
                     status="start",
                     stage="transcribe",
                     ok=True,
@@ -494,10 +601,11 @@ def _run_condition(
             record = _evaluate_one(
                 condition,
                 condition_config,
-                midi_path,
+                reference,
+                source_path,
                 audio_path,
                 transcribe_input,
-                references[midi_path],
+                references[reference],
                 transcriber,
                 symbolic_metrics,
                 audio_metrics,
@@ -512,7 +620,7 @@ def _run_condition(
                     worker_id=os.getpid(),
                     condition=record.condition,
                     transcriber=record.transcriber,
-                    midi_path=record.midi_path,
+                    midi_path=str(source_path),
                     status="done",
                     ok=record.status == "succeeded",
                 ),
@@ -544,6 +652,7 @@ def _evaluate_one(
     condition: Condition,
     condition_config: PipelineConfig,
     midi_path: Path,
+    source_path: Path,
     audio_path: Path,
     transcribe_input: Path,
     reference: list[NoteEvent],
@@ -554,10 +663,25 @@ def _evaluate_one(
     writer: ResultsWriter | None = None,
     corpus_root: Path | None = None,
 ) -> BenchmarkRecord:
+    """Transcribe + score one (recording, transcriber) cell.
+
+    *midi_path* is the reference MIDI (the evaluation key; always
+    ``record.midi_path``). *source_path* is the file that was actually
+    rendered/transcribed -- identical to *midi_path* in MIDI mode, the
+    paired recording in audio mode. The transcription-output path is keyed
+    on *source_path*, not *midi_path*: with several recordings sharing one
+    reference, deriving it from *midi_path* would collide (last writer
+    wins) while still reporting distinct metric rows as if each were backed
+    by its own transcription.
+    """
     try:
         result = transcriber.transcribe(transcribe_input)
         estimate = notes_from_dicts(result.notes)
-        rel = midi_path.relative_to(corpus_root) if corpus_root is not None else Path(midi_path.stem)
+        rel = (
+            source_path.relative_to(corpus_root)
+            if corpus_root is not None
+            else Path(source_path.stem)
+        )
         transcription_path = (
             work_dir
             / "transcriptions"
@@ -568,7 +692,10 @@ def _evaluate_one(
         write_transcription_outputs(result, transcription_path)
 
         metrics = evaluate_notes(reference, estimate, symbolic_metrics)
-        if audio_metrics:
+        # DTW re-synthesises the transcription and compares it to the audio
+        # the transcriber heard (Bradshaw et al., 2024) -- meaningless for a
+        # real recording, so it's gated off entirely in audio mode.
+        if audio_metrics and condition_config.render_pipeline.input_type == InputType.MIDI:
             metrics.update(
                 _audio_metric_values(
                     audio_path, result.notes, condition_config, audio_metrics
@@ -582,6 +709,7 @@ def _evaluate_one(
             status="succeeded",
             metrics=metrics,
             overrides=condition.overrides,
+            source_path=str(source_path) if source_path != midi_path else None,
         )
     except Exception as exc:  # noqa: BLE001 - benchmark logs and continues
         logger.exception("Transcription failed: %s on %s", transcriber.name, audio_path)
@@ -593,6 +721,7 @@ def _evaluate_one(
             status="failed",
             overrides=condition.overrides,
             error=str(exc),
+            source_path=str(source_path) if source_path != midi_path else None,
         )
     if writer is not None:
         writer.write(record)
@@ -616,7 +745,7 @@ def _audio_metric_values(
     duration = max(
         (float(n["start_sec"]) + float(n["duration_sec"]) for n in estimate_notes),
         default=0.0,
-    ) + condition_config.pipeline.duration_padding_sec
+    ) + condition_config.render_pipeline.duration_padding_sec
     estimate_audio = np.asarray(synth.render(estimate_notes, duration_sec=duration))
 
     values: dict[str, float] = {}

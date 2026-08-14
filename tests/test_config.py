@@ -17,7 +17,7 @@ from sonitra.pipeline import run_pipeline
 
 def _minimal_config_dict() -> dict:
     return {
-        "pipeline": {
+        "render_pipeline": {
             "synth_backend": "dawdreamer_faust",
             "effects_chain": "none",
             "sample_rate": 44100,
@@ -66,7 +66,7 @@ def test_load_malformed_yaml_raises(tmp_path):
 
 def test_synth_backend_parsed_as_enum(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    assert cfg.pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
+    assert cfg.render_pipeline.synth_backend == SynthBackend.DAWDREAMER_FAUST
 
 
 def test_invalid_synth_backend_raises(config_fixture):
@@ -84,32 +84,32 @@ def test_all_synth_backends_valid():
         cfg = PipelineConfig.model_validate(
             {
                 **_minimal_config_dict(),
-                "pipeline": {
-                    **_minimal_config_dict()["pipeline"],
+                "render_pipeline": {
+                    **_minimal_config_dict()["render_pipeline"],
                     "synth_backend": backend.value,
                 },
                 **extra,
             }
         )
-        assert cfg.pipeline.synth_backend == backend
+        assert cfg.render_pipeline.synth_backend == backend
 
 
 # ── max_workers clamp ────────────────────────────────────────────────
 
 def test_dawdreamer_mode_forces_max_workers_1(config_fixture, caplog):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
-    cfg.pipeline.max_workers = 8
+    cfg.render_pipeline.synth_backend = SynthBackend.DAWDREAMER_FAUST
+    cfg.render_pipeline.max_workers = 8
     validated = cfg.validate_worker_constraint()
-    assert validated.pipeline.max_workers == 1
+    assert validated.render_pipeline.max_workers == 1
     assert "max_workers forced to 1" in caplog.text
 
 
 def test_pedalboard_mode_allows_multiple_workers(config_fixture):
     cfg = load_config(config_fixture("config_pedalboard_only.yaml"))
-    cfg.pipeline.max_workers = 4
+    cfg.render_pipeline.max_workers = 4
     validated = cfg.validate_worker_constraint()
-    assert validated.pipeline.max_workers == 4
+    assert validated.render_pipeline.max_workers == 4
 
 
 # ── Effects list ─────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ def test_invalid_output_format_raises():
 def test_config_serialises_to_dict(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
     d = cfg.model_dump()
-    assert "pipeline" in d
+    assert "render_pipeline" in d
     assert "pedalboard" in d
 
 

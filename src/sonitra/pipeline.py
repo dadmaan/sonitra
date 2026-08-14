@@ -12,7 +12,7 @@ import pedalboard
 
 _thread_local: threading.local = threading.local()
 
-from sonitra.config import EffectsChain, PipelineConfig, SynthBackend
+from sonitra.config import EffectsChain, InputType, PipelineConfig, SynthBackend
 from sonitra.engine import RendererEngine
 from sonitra.effects.chain_builder import build_effects_chain_from_config, compute_chain_hash
 from sonitra.manifest import ManifestEntry, ManifestWriter
@@ -20,8 +20,12 @@ from sonitra.midi_reader import parse_midi
 from sonitra.normaliser import normalise_from_config
 from sonitra.quality_gate import check_quality
 from sonitra.renderer import render_notes_faust, render_notes_vst
+from sonitra.source import (  # noqa: F401 - re-exported for backward-compat imports
+    _compute_duration,
+    _scale_note_timings,
+    make_source,
+)
 from sonitra.storage import derive_output_path, write_audio, write_wav
-from sonitra.synth.protocol import make_synth
 
 
 @dataclass
@@ -42,52 +46,67 @@ class PipelineResult:
         }
 
 
-def _init_thread_synth_chain(cfg: PipelineConfig) -> None:
-    """Create per-thread synth and effects-chain instances (called once per thread)."""
-    _thread_local.synth = make_synth(cfg)
+def _init_thread_source_chain(cfg: PipelineConfig) -> None:
+    """Create per-thread source and effects-chain instances (called once per thread)."""
+    _thread_local.source = make_source(cfg)
     _thread_local.chain = build_effects_chain_from_config(cfg)
 
 
+def _manifest_path_kwargs(source_path: Path, cfg: PipelineConfig) -> Dict[str, str | None]:
+    """Split *source_path* between ``ManifestEntry.midi_path``/``source_path``.
+
+    In MIDI mode ``midi_path`` is the rendered MIDI file (as before this
+    refactor) and ``source_path`` is unset. In audio mode the pipeline layer
+    only knows the recording it read -- not any benchmark-level reference
+    pairing -- so ``midi_path`` stays ``""`` and ``source_path`` carries the
+    recording path (see ``ManifestEntry`` docstring / Phase 3 plan).
+    """
+    if cfg.render_pipeline.input_type == InputType.AUDIO:
+        return {"midi_path": "", "source_path": str(source_path)}
+    return {"midi_path": str(source_path), "source_path": None}
+
+
 def _render_file(
-    midi_path: Path,
+    source_path: Path,
     out_dir: Path,
     cfg: PipelineConfig,
     chain_hash: str,
     manifest: ManifestWriter | None,
     corpus_root: Path | None,
 ) -> Dict[str, Any]:
-    """Render one MIDI file using the calling thread's synth/chain.
+    """Render one source file using the calling thread's source/chain.
+
+    *source_path* is a MIDI file in MIDI mode or an audio recording in audio
+    mode -- mode selection lives entirely in ``make_source`` (see
+    ``sonitra.source``); this function has no per-mode branch.
 
     Returns a log-entry dict with a ``'status'`` key: ``'succeeded'``,
-    ``'failed'``, or ``'skipped'``.  Writes to *manifest* directly (which is
+    ``'failed'``, or ``'skipped'``. The dict's ``"midi"`` key is a historical
+    name kept for backward compatibility with downstream consumers (e.g.
+    ``benchmark/runner.py``'s render-log lookup and CLI progress callbacks);
+    it means "the source path" generically, so in audio mode it holds the
+    recording path, not a MIDI path. Writes to *manifest* directly (which is
     thread-safe after Tier-0 changes).
     """
-    output_path = _resolve_output_path(midi_path, out_dir, cfg, corpus_root)
-    if output_path.exists() and not cfg.pipeline.overwrite:
-        return {"midi": str(midi_path), "output": str(output_path), "status": "skipped"}
+    output_path = _resolve_output_path(source_path, out_dir, cfg, corpus_root)
+    if output_path.exists() and not cfg.render_pipeline.overwrite:
+        return {"midi": str(source_path), "output": str(output_path), "status": "skipped"}
 
-    synth = _thread_local.synth
+    source = _thread_local.source
     chain = _thread_local.chain
 
     try:
-        _meta = parse_midi(midi_path, return_meta=True)
-        notes: List[Dict[str, Any]] = _meta["notes"]
-        native_bpm: float = _meta["bpm"]
-        if native_bpm > 0:
-            notes = _scale_note_timings(notes, native_bpm / cfg.pipeline.bpm)
-        duration = _compute_duration(notes, cfg.pipeline.duration_padding_sec)
-        audio = synth.render(notes, duration_sec=duration)
+        audio, sample_rate = source.load(source_path)
         audio = normalise_from_config(audio, cfg, stage="pre")
-        if cfg.pipeline.effects_chain == EffectsChain.PEDALBOARD and len(chain) > 0:
-            audio = chain(audio, cfg.pipeline.sample_rate)
+        if cfg.render_pipeline.effects_chain == EffectsChain.PEDALBOARD and len(chain) > 0:
+            audio = chain(audio, sample_rate)
         audio = normalise_from_config(audio, cfg, stage="post")
 
-        quality = check_quality(audio, cfg.pipeline.sample_rate, cfg.quality_gates)
+        quality = check_quality(audio, sample_rate, cfg.quality_gates)
         if not quality.passed:
             entry = ManifestEntry(
-                midi_path=str(midi_path),
                 output_path=str(output_path),
-                synth_backend=cfg.pipeline.synth_backend.value,
+                synth_backend=cfg.render_pipeline.synth_backend.value,
                 effects_chain_hash=chain_hash,
                 status="failed",
                 duration_sec=quality.duration_sec,
@@ -95,11 +114,12 @@ def _render_file(
                 peak=quality.peak,
                 elapsed_seconds=0.0,
                 quality_flags=quality.to_dict(),
+                **_manifest_path_kwargs(source_path, cfg),
             )
             if manifest:
                 manifest.write(entry)
             return {
-                "midi": str(midi_path),
+                "midi": str(source_path),
                 "output": str(output_path),
                 "status": "failed",
                 "quality_flags": quality.to_dict(),
@@ -108,16 +128,15 @@ def _render_file(
         write_audio(
             audio,
             output_path,
-            sample_rate=cfg.pipeline.sample_rate,
-            bit_depth=cfg.pipeline.bit_depth,
+            sample_rate=sample_rate,
+            bit_depth=cfg.render_pipeline.bit_depth,
             output_format=cfg.io.output_format,
             mp3_bitrate_kbps=cfg.io.mp3_bitrate_kbps,
-            overwrite=cfg.pipeline.overwrite,
+            overwrite=cfg.render_pipeline.overwrite,
         )
         entry = ManifestEntry(
-            midi_path=str(midi_path),
             output_path=str(output_path),
-            synth_backend=cfg.pipeline.synth_backend.value,
+            synth_backend=cfg.render_pipeline.synth_backend.value,
             effects_chain_hash=chain_hash,
             status="done",
             duration_sec=quality.duration_sec,
@@ -125,11 +144,12 @@ def _render_file(
             peak=quality.peak,
             elapsed_seconds=0.0,
             quality_flags=quality.to_dict(),
+            **_manifest_path_kwargs(source_path, cfg),
         )
         if manifest:
             manifest.write(entry)
         return {
-            "midi": str(midi_path),
+            "midi": str(source_path),
             "output": str(output_path),
             "status": "succeeded",
             "quality_flags": quality.to_dict(),
@@ -138,9 +158,8 @@ def _render_file(
         if manifest:
             manifest.write(
                 ManifestEntry(
-                    midi_path=str(midi_path),
                     output_path=str(output_path),
-                    synth_backend=cfg.pipeline.synth_backend.value,
+                    synth_backend=cfg.render_pipeline.synth_backend.value,
                     effects_chain_hash=chain_hash,
                     status="failed",
                     duration_sec=0.0,
@@ -148,10 +167,11 @@ def _render_file(
                     peak=0.0,
                     elapsed_seconds=0.0,
                     quality_flags={"error": str(exc)},
+                    **_manifest_path_kwargs(source_path, cfg),
                 )
             )
         return {
-            "midi": str(midi_path),
+            "midi": str(source_path),
             "output": str(output_path),
             "status": "failed",
             "error": str(exc),
@@ -193,7 +213,7 @@ def run_pipeline(
             else None
         )
 
-        _init_thread_synth_chain(cfg)  # synth + chain for the calling thread
+        _init_thread_source_chain(cfg)  # source + chain for the calling thread
 
         def _tally(entry: Dict[str, Any]) -> None:
             nonlocal succeeded, failed, skipped
@@ -208,10 +228,10 @@ def run_pipeline(
             if on_file_done is not None:
                 on_file_done(entry)
 
-        if cfg.pipeline.synth_backend == SynthBackend.PEDALBOARD_INSTRUMENT and n_workers > 1:
+        if cfg.render_pipeline.synth_backend == SynthBackend.PEDALBOARD_INSTRUMENT and n_workers > 1:
             with ThreadPoolExecutor(
                 max_workers=n_workers,
-                initializer=_init_thread_synth_chain,
+                initializer=_init_thread_source_chain,
                 initargs=(cfg,),
             ) as executor:
                 futures = [
@@ -276,25 +296,6 @@ def run_pipeline(
     )
 
 
-def _scale_note_timings(
-    notes: List[Dict[str, Any]], scale: float
-) -> List[Dict[str, Any]]:
-    if abs(scale - 1.0) <= 1e-6:
-        return notes
-    return [
-        {**n, "start_sec": n["start_sec"] * scale, "duration_sec": n["duration_sec"] * scale}
-        for n in notes
-    ]
-
-
-def _compute_duration(notes: Iterable[Dict[str, Any]], padding_sec: float) -> float:
-    notes_list = list(notes)
-    if not notes_list:
-        return max(0.0, float(padding_sec))
-    last = max(float(note["start_sec"]) + float(note["duration_sec"]) for note in notes_list)
-    return max(0.0, last + float(padding_sec))
-
-
 def _resolve_output_path(midi_path: Path, out_dir: Path, cfg: PipelineConfig, corpus_root: Path | None = None) -> Path:
     ext = f".{cfg.io.output_format}"
     stem = midi_path.stem
@@ -306,4 +307,4 @@ def _resolve_output_path(midi_path: Path, out_dir: Path, cfg: PipelineConfig, co
 
 
 def _get_worker_count(cfg: PipelineConfig) -> int:
-    return cfg.pipeline.max_workers
+    return cfg.render_pipeline.max_workers

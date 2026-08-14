@@ -4,7 +4,9 @@ import pytest
 
 from sonitra.api.models import JobStatus
 from sonitra.api.worker import run_render_worker
+from sonitra.config import PipelineConfig
 from sonitra.pipeline import run_pipeline
+from sonitra.storage import write_wav
 
 
 @pytest.mark.anyio
@@ -92,3 +94,63 @@ async def test_worker_does_not_bleed_dawdreamer_state(
         engine=fresh_engine,
     )
     assert result.succeeded == 1
+
+
+def _audio_worker_config(tmp_path) -> PipelineConfig:
+    """Audio-mode config mirroring ``tests/test_pipeline_audio.py``'s
+    ``_audio_config`` helper: fluidsynth backend (unused/unvalidated in
+    audio mode), permissive quality gates."""
+    return PipelineConfig.model_validate(
+        {
+            "render_pipeline": {
+                "synth_backend": "fluidsynth",
+                "effects_chain": "none",
+                "input_type": "audio",
+                "bpm": 120,
+                "sample_rate": 44100,
+                "bit_depth": 24,
+                "channels": 2,
+                "duration_padding_sec": 2.0,
+                "overwrite": True,
+                "resume": True,
+                "max_workers": 1,
+                "log_level": "INFO",
+            },
+            "io": {
+                "corpus_root": str(tmp_path),
+                "output_format": "wav",
+                "mp3_bitrate_kbps": 192,
+                "file_naming": "{stem}",
+            },
+            "quality_gates": {
+                "silence_threshold_rms": 0.001,
+                "min_duration_sec": 0.05,
+                "max_duration_deviation_sec": 5.0,
+                "clip_threshold": 0.999,
+            },
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_worker_audio_mode_globs_audio_files(tmp_path, job_store, dummy_audio):
+    """In audio mode the worker must glob source recordings (.wav/.flac/.mp3),
+    not ``*.mid``, and run the pipeline's audio path against them."""
+    audio_dir = tmp_path / "audio_in"
+    audio_dir.mkdir()
+    write_wav(dummy_audio, audio_dir / "a.wav", sample_rate=44100, normalize=False)
+    write_wav(dummy_audio, audio_dir / "b.wav", sample_rate=44100, normalize=False)
+    # A stray non-audio file must be ignored in audio mode.
+    (audio_dir / "ignored.mid").write_bytes(b"")
+
+    cfg = _audio_worker_config(tmp_path)
+    job_id = job_store.create(midi_dir=str(audio_dir), out_dir=str(tmp_path / "out"))
+
+    await run_render_worker(job_id, job_store, config=cfg)
+
+    job = job_store.get(job_id)
+    assert job.status == JobStatus.DONE
+    assert job.total == 2
+    assert job.succeeded == 2
+    assert job.failed == 0
+    assert sorted(p.name for p in (tmp_path / "out").glob("*.wav")) == ["a.wav", "b.wav"]

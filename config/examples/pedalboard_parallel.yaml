@@ -4,9 +4,10 @@
 # evaluation.max_workers: 2   -> ThreadPoolExecutor in sonitra evaluate
 # transcribers.device: cpu     -> tf.device("cpu") context in BasicPitchTranscriber
 # quality_gates.silence_threshold_rms: 0.0 -> no silence gate (falls back to FluidSynth when no plugin)
-pipeline:
+render_pipeline:
     synth_backend: pedalboard_instrument
     effects_chain: pedalboard
+    input_type: midi
     bpm: 120
     sample_rate: 44100
     bit_depth: 24

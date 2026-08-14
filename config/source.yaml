@@ -7,7 +7,7 @@
 # Tip: run `sonitra init --config config.yaml` to generate a minimal
 # starter config without the commentary.
 
-pipeline:
+render_pipeline:
     synth_backend: dawdreamer_faust
     # dawdreamer_faust         — DawDreamer synth using Faust oscillator, no VST
     # dawdreamer_vst           — DawDreamer synth using a VST3 plugin
@@ -16,6 +16,15 @@ pipeline:
     effects_chain: pedalboard
     # none                     — no effects chain applied after synthesis
     # pedalboard               — apply Pedalboard effects chain after synthesis
+    input_type: midi
+    # midi                     — render from symbolic MIDI via synth_backend (default)
+    # audio                    — read source audio directly, synth is skipped;
+    #                            fluidsynth.soundfont_path / dawdreamer.plugin_path
+    #                            are not required in this mode; source recordings
+    #                            live in {corpus_root}/{dataset}/recordings/ (sibling
+    #                            of midi/), paired to a reference MIDI by filename
+    #                            token prefix; audio-level DTW (evaluation.dtw) is
+    #                            automatically skipped in this mode — see below
     bpm: 120 # playback tempo during rendering; comment out to use default (derived from MIDI)
     sample_rate: 44100 # Hz; 44100 or 48000 recommended
     bit_depth: 24 # 16 or 24
@@ -27,7 +36,7 @@ pipeline:
     log_level: INFO # DEBUG | INFO | WARNING | ERROR
 
 io:
-    corpus_root: ./corpus # root directory for all corpus data; midi at {corpus_root}/{dataset}/midi/, audio at {corpus_root}/{dataset}/audio/{config}/
+    corpus_root: ./corpus # root directory for all corpus data; midi at {corpus_root}/{dataset}/midi/, audio at {corpus_root}/{dataset}/audio/{config}/, source recordings (input_type: audio) at {corpus_root}/{dataset}/recordings/
     output_format: wav # wav | flac | mp3
     mp3_bitrate_kbps: 192 # only applies when output_format: mp3
     file_naming: "{stem}" # output filename template; {stem} = MIDI filename without extension
@@ -203,7 +212,10 @@ evaluation:
         enabled: true
         harmony_window_sec: 2.0 # sliding window size for pitch-class harmony similarity
     dtw:
-        enabled: false # audio-level DTW requires re-synthesis of the transcription
+        enabled: false # audio-level DTW requires re-synthesis of the transcription;
+        # automatically skipped when pipeline.input_type: audio, regardless of this
+        # setting — comparing re-synthesised transcription audio against a real
+        # recording is not meaningful, so leave this false in audio-mode configs
         frame_size: 4096
         hop_size: 2048
         max_frames: 4000 # truncate comparison to this many frames (memory guard)

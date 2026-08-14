@@ -7,7 +7,8 @@ from typing import Any
 
 from sonitra.api.job_store import JobStore
 from sonitra.api.models import JobStatus
-from sonitra.config import PipelineConfig
+from sonitra.config import InputType, PipelineConfig
+from sonitra.corpus import discover_audio_files
 from sonitra.engine import RendererEngine
 from sonitra.pipeline import run_pipeline
 
@@ -73,7 +74,11 @@ def _render_job_sync(job_id: str, store: JobStore, config: Any = None) -> None:
         return
 
     store.update(job_id, status=JobStatus.RUNNING)
-    midi_paths = sorted(Path(job.midi_dir).glob("*.mid"))
+    cfg = config if isinstance(config, PipelineConfig) else None
+    if cfg is not None and cfg.render_pipeline.input_type == InputType.AUDIO:
+        midi_paths = discover_audio_files(Path(job.midi_dir))
+    else:
+        midi_paths = sorted(Path(job.midi_dir).glob("*.mid"))
     store.update(job_id, total=len(midi_paths))
 
     start = time.perf_counter()

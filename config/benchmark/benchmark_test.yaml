@@ -3,9 +3,10 @@
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/benchmark_test.yaml --dataset test --limit 2
-pipeline:
+render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
+  input_type: audio
   bpm: 120
   sample_rate: 44100
   bit_depth: 24
@@ -133,8 +134,8 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  save_audio: false
-  resume: true
+  save_audio: true
+  resume: false
   conditions:
     - name: no_reverb
       overrides:

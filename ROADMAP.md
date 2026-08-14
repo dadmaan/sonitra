@@ -23,13 +23,21 @@ MIDI → audio synthesis → stem separation → transcription → evaluation vs
 
 ## Additional datasets and instruments
 
-**Status:** Piano and orchestral corpora available; further expansion not yet started.
+**Status:** Piano, orchestral, chamber/orchestral, and drum corpora available; further
+expansion not yet started.
 
-`scripts/download_datasets.py` currently supports MAESTRO V3.0.0 (piano, MIDI-only)
-and BSED (orchestral — Beethoven symphony excerpts, MIDI + real recordings, see
-below). It also offers an interactive dataset picker (rich table) and parallel
-downloads via `--jobs N`. Planned expansion covers more instruments, multi-instrument datasets
-(e.g. Slakh2100), and automated download support for them.
+`scripts/download_datasets.py` currently supports MAESTRO V3.0.0 (piano — `-midi`,
+`-wav`, `-full` variants), BSED (orchestral — Beethoven symphony excerpts, MIDI + real
+recordings), MusicNet (multi-instrument chamber/orchestral, MIDI + audio + per-note
+label CSVs), and the Expanded Groove MIDI Dataset (drums — `-midi`/`-full`; download-only,
+since transcription/evaluation here target pitched instruments, not drum-hit
+classification). It also offers an interactive dataset picker (rich table) and parallel
+downloads via `--jobs N`. Each entry can source from multiple URLs/archive formats
+(zip and tar.gz) and route members to `midi/`, `recordings/`, or `metadata/` by
+extension/prefix rules. MAPS was evaluated but dropped — it's gated behind a
+registration form with no scriptable direct-download URL, incompatible with this
+script's unattended-download model. Planned expansion covers more instruments,
+multi-instrument datasets (e.g. Slakh2100), and automated download support for them.
 
 ## Additional transcription backends
 
@@ -68,9 +76,9 @@ Planned design:
   reference MIDI to its original `.flac`/`.wav` recording.
 - The render step is skipped; transcription output is scored against the reference MIDI
   exactly as in the current workflow.
-- Requires the full dataset audio download (MAESTRO V3.0.0 audio is ~120 GB); the
-  MIDI-only zip (~57 MB) fetched by `scripts/download_datasets.py` is sufficient for the
-  synthesise-then-transcribe workflow.
+- Requires the full dataset audio download (`maestro-v3-full`/`-wav` via
+  `scripts/download_datasets.py`, ~120 GB); the MIDI-only variant (`maestro-v3-midi`,
+  ~57 MB) is sufficient for the synthesise-then-transcribe workflow.
 - Distinct from the current pipeline, where rendering fidelity is itself part of what
   is being benchmarked.
 

@@ -58,7 +58,7 @@ def effective_log_level(cfg: PipelineConfig) -> str:
     Precedence: ``observability.log_level`` → ``pipeline.log_level`` →
     ``"INFO"``. The result is normalized to uppercase.
     """
-    level = cfg.observability.log_level or cfg.pipeline.log_level or "INFO"
+    level = cfg.observability.log_level or cfg.render_pipeline.log_level or "INFO"
     return level.upper()
 
 
