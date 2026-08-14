@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on resume, so a config edit that would change what a condition or record
   means raises an error instead of silently mixing results
 - `observability.log_level` (validated root-logger override, takes precedence
-  over `pipeline.log_level`) and `observability.progress` (default `true`;
+  over `render_pipeline.log_level`) and `observability.progress` (default `true`;
   master switch for live CLI progress bars) config fields
 - New `sonitra.terminal` module: rich console singleton, idempotent rich
   logging setup, effective-log-level resolution, per-file speed column, and a
@@ -109,14 +109,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   samples only reference files with matching estimates so `--limit N` means
   at most N evaluated pairs, staying coherent after a limited
   render/transcribe run
+- Audio-input benchmark mode: `render_pipeline.input_type: audio` reads
+  source recordings directly from `{corpus_root}/{dataset}/recordings/` (new
+  `CorpusPaths.recordings`), skipping synthesis entirely. New
+  `sonitra.corpus` module (`discover_midi_files`, `discover_audio_files`,
+  `pair_audio_to_reference` — deterministic token-prefix pairing of
+  recordings to reference MIDIs) and `sonitra.source` module
+  (`SourceProtocol` with `MidiSource`/`AudioSource`, `make_source` factory;
+  `load()` returns the real sample rate, the source file's own rate in audio
+  mode). Audio-mode benchmark cells are (recording × transcriber) and
+  `evaluation.dtw` is skipped (re-synthesised audio vs a real recording is
+  not meaningful); conditions/sweeps may not override
+  `render_pipeline.input_type` (validated once at setup). `ManifestEntry`
+  and `BenchmarkRecord` gain a `source_path` field naming the recording in
+  audio mode (`midi_path` always stays the reference MIDI)
+- `scripts/download_datasets.py`: new datasets — `maestro-v3-midi`/`-wav`/
+  `-full` (the old `maestro-v3` key is renamed), `musicnet`, and
+  `e-gmd-midi`/`e-gmd-full` (drum dataset, download-only); entries can pull
+  from multiple URLs and both `.zip` and `.tar.gz`, routing members to
+  `midi/`, `recordings/`, or the new `metadata/` by prefix/extension rules
+- API render worker discovers audio files (`.wav`/`.flac`/`.mp3`) instead of
+  only `.mid` when the active config is in audio mode
 
 ### Changed
+
+- **BREAKING:** the `pipeline` config section is renamed to
+  `render_pipeline` (`extra="forbid"` rejects the old key); the new
+  `render_pipeline.input_type` field (`midi` | `audio`, default `midi`)
+  selects MIDI synthesis vs direct audio input, and in audio mode the
+  synth-backend field requirements are skipped since the synth is never
+  constructed
 
 - All six `config/benchmark/*.yaml` presets now set `device: GPU:0` on their
   `basic_pitch` transcriber (previously unset, defaulting to `cpu` — so
   Basic Pitch ran CPU inference even inside a working GPU container), and
   raise `transcription.max_workers` and `evaluation.max_workers` from 1 to 4.
-  `pipeline.max_workers` and `benchmark.max_workers` stay at 1, each with an
+  `render_pipeline.max_workers` and `benchmark.max_workers` stay at 1, each with an
   inline comment recording why: the former is only honoured for the
   `pedalboard_instrument` synth backend, and the latter spawns a process pool
   whose workers would each need their own GPU memory allocation.
