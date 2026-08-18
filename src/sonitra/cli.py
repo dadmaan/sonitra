@@ -725,6 +725,47 @@ def benchmark(
             table.add_row(*cells)
         console.print(table)
 
+    timing_conditions = (
+        result.timing.get("conditions") if result.timing is not None else None
+    )
+    if timing_conditions:
+        timing_table = Table(title="Benchmark timing (seconds)")
+        timing_table.add_column("condition")
+        timing_table.add_column("wall (sec)", justify="right")
+        timing_table.add_column("render (sec)", justify="right")
+        # separate (sec) only when at least one condition has a real value
+        # (all-NaN when separation is disabled).
+        has_separate = any(
+            isinstance(entry.get("separate_seconds"), (int, float))
+            and not math.isnan(entry["separate_seconds"])
+            for entry in timing_conditions
+        )
+        if has_separate:
+            timing_table.add_column("separate (sec)", justify="right")
+        timing_table.add_column("transcribe (sec)", justify="right")
+        timing_table.add_column("evaluate (sec)", justify="right")
+        timing_keys = (
+            "wall_seconds",
+            "render_seconds",
+            "separate_seconds",
+            "transcribe_seconds",
+            "evaluate_seconds",
+        )
+        for entry in timing_conditions:
+            cells = [str(entry.get("condition", ""))]
+            for key in timing_keys:
+                if key == "separate_seconds" and not has_separate:
+                    continue
+                value = entry.get(key, float("nan"))
+                if isinstance(value, (int, float)) and math.isnan(value):
+                    cells.append("[dim]NaN[/dim]")
+                elif isinstance(value, (int, float)):
+                    cells.append(f"{value:.1f}")
+                else:
+                    cells.append(str(value))
+            timing_table.add_row(*cells)
+        console.print(timing_table)
+
     if result.degradation:
         deg_table = Table(title="Benchmark degradation (delta vs baseline)")
         deg_table.add_column("condition")

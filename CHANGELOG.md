@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(No changes yet)
+### Added
+
+- Benchmark timing recording, always on (no new config keys): each
+  `benchmark_results.jsonl` record gains per-cell wall-clock
+  `render_seconds`, `separate_seconds`, `transcribe_seconds`, and
+  `evaluate_seconds` (NaN when a stage does not apply, e.g. separation
+  disabled). `summary.json` gains a `timing` block with the overall run
+  time, a host fingerprint for cross-machine comparison (`cpu_model`,
+  `cpu_count`, `ram_bytes`, `gpu`, `os`, `python`, and installed
+  `packages` versions), and per-condition stage totals with
+  per-transcriber transcribe/evaluate times. `summary` rows stay
+  metrics-only so process time is never conflated with evaluation metrics
+- `sonitra benchmark` CLI: new "Benchmark timing (seconds)" table — one row
+  per condition showing wall/render/separate/transcribe/evaluate seconds —
+  rendered after the summary table (shown only when timing data exists)
+- `renders.jsonl` manifest entries now record real per-file render
+  wall-clock in `elapsed_seconds` (previously hardcoded to `0.0`),
+  benefiting `sonitra render`, the API worker, and benchmark render
+  aggregates
 
 ## [0.3.0] - 2026-08-14
 

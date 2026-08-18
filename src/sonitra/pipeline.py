@@ -90,8 +90,14 @@ def _render_file(
     """
     output_path = _resolve_output_path(source_path, out_dir, cfg, corpus_root)
     if output_path.exists() and not cfg.render_pipeline.overwrite:
-        return {"midi": str(source_path), "output": str(output_path), "status": "skipped"}
+        return {
+            "midi": str(source_path),
+            "output": str(output_path),
+            "status": "skipped",
+            "elapsed_seconds": 0.0,
+        }
 
+    file_start = time.perf_counter()
     source = _thread_local.source
     chain = _thread_local.chain
 
@@ -104,6 +110,7 @@ def _render_file(
 
         quality = check_quality(audio, sample_rate, cfg.quality_gates)
         if not quality.passed:
+            elapsed = time.perf_counter() - file_start
             entry = ManifestEntry(
                 output_path=str(output_path),
                 synth_backend=cfg.render_pipeline.synth_backend.value,
@@ -112,7 +119,7 @@ def _render_file(
                 duration_sec=quality.duration_sec,
                 rms=quality.rms,
                 peak=quality.peak,
-                elapsed_seconds=0.0,
+                elapsed_seconds=elapsed,
                 quality_flags=quality.to_dict(),
                 **_manifest_path_kwargs(source_path, cfg),
             )
@@ -123,6 +130,7 @@ def _render_file(
                 "output": str(output_path),
                 "status": "failed",
                 "quality_flags": quality.to_dict(),
+                "elapsed_seconds": elapsed,
             }
 
         write_audio(
@@ -134,6 +142,7 @@ def _render_file(
             mp3_bitrate_kbps=cfg.io.mp3_bitrate_kbps,
             overwrite=cfg.render_pipeline.overwrite,
         )
+        elapsed = time.perf_counter() - file_start
         entry = ManifestEntry(
             output_path=str(output_path),
             synth_backend=cfg.render_pipeline.synth_backend.value,
@@ -142,7 +151,7 @@ def _render_file(
             duration_sec=quality.duration_sec,
             rms=quality.rms,
             peak=quality.peak,
-            elapsed_seconds=0.0,
+            elapsed_seconds=elapsed,
             quality_flags=quality.to_dict(),
             **_manifest_path_kwargs(source_path, cfg),
         )
@@ -153,8 +162,10 @@ def _render_file(
             "output": str(output_path),
             "status": "succeeded",
             "quality_flags": quality.to_dict(),
+            "elapsed_seconds": elapsed,
         }
     except Exception as exc:  # noqa: BLE001 - pipeline logs and continues
+        elapsed = time.perf_counter() - file_start
         if manifest:
             manifest.write(
                 ManifestEntry(
@@ -165,7 +176,7 @@ def _render_file(
                     duration_sec=0.0,
                     rms=0.0,
                     peak=0.0,
-                    elapsed_seconds=0.0,
+                    elapsed_seconds=elapsed,
                     quality_flags={"error": str(exc)},
                     **_manifest_path_kwargs(source_path, cfg),
                 )
@@ -175,6 +186,7 @@ def _render_file(
             "output": str(output_path),
             "status": "failed",
             "error": str(exc),
+            "elapsed_seconds": elapsed,
         }
 
 

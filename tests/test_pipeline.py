@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from sonitra.config import load_config
@@ -70,3 +71,51 @@ def test_pipeline_config_path_reports_each_file(
     assert entries == result.log
     assert {entry["midi"] for entry in entries} == {str(m) for m in midis}
     assert {entry["status"] for entry in entries} == {"succeeded"}
+    # per-file wall-clock timing is recorded on log entries and in the manifest
+    assert all(entry["elapsed_seconds"] > 0.0 for entry in entries)
+    lines = (tmp_path / "renders.jsonl").read_text().strip().split("\n")
+    assert len(lines) == len(midis)
+    for line in lines:
+        manifest_entry = json.loads(line)
+        assert manifest_entry["status"] == "done"
+        assert manifest_entry["elapsed_seconds"] > 0.0
+
+
+def test_pipeline_config_path_failed_entry_records_elapsed(
+    tmp_path, midi_fixture, config_fixture, monkeypatch
+):
+    cfg = load_config(config_fixture("config_valid.yaml"))
+    cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
+
+    class _BrokenSource:
+        def load(self, *_args, **_kwargs):
+            raise RuntimeError("simulated crash")
+
+    monkeypatch.setattr("sonitra.pipeline.make_source", lambda _cfg: _BrokenSource())
+    result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
+
+    assert result.failed == 1
+    assert result.succeeded == 0
+    entry = result.log[0]
+    assert entry["status"] == "failed"
+    assert entry["elapsed_seconds"] > 0.0
+    manifest_entry = json.loads((tmp_path / "renders.jsonl").read_text().strip())
+    assert manifest_entry["status"] == "failed"
+    assert manifest_entry["elapsed_seconds"] > 0.0
+
+
+def test_pipeline_config_path_skipped_entry_records_zero_elapsed(
+    tmp_path, midi_fixture, config_fixture
+):
+    cfg = load_config(config_fixture("config_valid.yaml"))
+    cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
+    cfg.render_pipeline.overwrite = False
+    run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
+
+    cfg.observability.manifest_path = str(tmp_path / "renders2.jsonl")
+    result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
+
+    assert result.skipped == 1
+    entry = result.log[0]
+    assert entry["status"] == "skipped"
+    assert entry["elapsed_seconds"] == 0.0

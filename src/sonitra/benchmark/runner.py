@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Iterator, Sequence
 import numpy as np
 
 from sonitra.benchmark.conditions import Condition, apply_overrides, expand_conditions
+from sonitra.benchmark.host_info import collect_host_info
 from sonitra.benchmark.results import (
     BenchmarkRecord,
     ResultsWriter,
@@ -25,6 +26,7 @@ from sonitra.benchmark.results import (
     load_records,
     order_by_condition,
     summarise,
+    timing_block,
 )
 from sonitra.config import InputType, PipelineConfig
 from sonitra.corpus import pair_audio_to_reference
@@ -135,6 +137,10 @@ class BenchmarkResult:
     results_path: Path
     summary_path: Path
     elapsed_seconds: float = 0.0
+    timing: dict[str, Any] | None = None
+    """The ``"timing"`` block written to summary.json (overall wall-clock,
+    host info, per-condition wall/stage totals). ``None`` for callers that
+    construct BenchmarkResult directly without a full benchmark run."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +150,7 @@ class BenchmarkResult:
             "results_path": str(self.results_path),
             "summary_path": str(self.summary_path),
             "elapsed_seconds": self.elapsed_seconds,
+            "timing": self.timing,
         }
 
 
@@ -320,6 +327,11 @@ def run_benchmark(
     # share one reference.
     condition_file_count = len(audio_paths) if audio_paths is not None else len(midi_paths)
 
+    # Per-condition wall-clock (whole condition: render + separate + transcribe
+    # + evaluate). Conditions skipped via resume have no entry here, which
+    # timing_block surfaces as NaN rather than crashing.
+    condition_wall: dict[str, float] = {}
+
     if n_workers > 1:
         event_queue: multiprocessing.Queue | None = None
         drainer: Thread | None = None
@@ -361,7 +373,8 @@ def run_benchmark(
                 ] = condition
             for future in as_completed(futures):
                 condition = futures[future]
-                condition_records = future.result()
+                condition_name, condition_seconds, condition_records = future.result()
+                condition_wall[condition_name] = condition_seconds
                 for record in condition_records:
                     writer.write(record)
                     records.append(record)
@@ -387,6 +400,7 @@ def run_benchmark(
                 else nullcontext()
             )
             with output_guard:
+                condition_start = time.perf_counter()
                 condition_records = _run_condition(
                     condition,
                     condition_config,
@@ -403,6 +417,7 @@ def run_benchmark(
                     audio_paths=audio_paths,
                     audio_to_reference=audio_to_reference,
                 )
+                condition_wall[condition.name] = time.perf_counter() - condition_start
             records.extend(condition_records)
             if progress is not None:
                 progress.on_condition_done(condition.name)
@@ -411,9 +426,22 @@ def run_benchmark(
     degradation_rows = order_by_condition(
         degradation(summary, baseline=config.benchmark.baseline_name), condition_order
     )
+    # Computed exactly once; reused for both the BenchmarkResult.elapsed_seconds
+    # field and the summary.json "timing" block so they always agree.
+    overall_seconds = time.perf_counter() - start
+    timing = timing_block(
+        records,
+        overall_seconds=overall_seconds,
+        condition_order=condition_order,
+        host=collect_host_info(),
+        condition_wall_seconds=condition_wall,
+    )
     summary_path = work_dir / "summary.json"
     summary_path.write_text(
-        json.dumps({"summary": summary, "degradation": degradation_rows}, indent=2)
+        json.dumps(
+            {"summary": summary, "degradation": degradation_rows, "timing": timing},
+            indent=2,
+        )
     )
 
     return BenchmarkResult(
@@ -422,7 +450,8 @@ def run_benchmark(
         degradation=degradation_rows,
         results_path=writer.path,
         summary_path=summary_path,
-        elapsed_seconds=time.perf_counter() - start,
+        elapsed_seconds=overall_seconds,
+        timing=timing,
     )
 
 
@@ -437,11 +466,14 @@ def _condition_worker(
     completed: set[tuple[str, str]] = frozenset(),
     audio_paths: Sequence[Path] | None = None,
     audio_to_reference: dict[Path, Path] | None = None,
-) -> list[BenchmarkRecord]:
+) -> tuple[str, float, list[BenchmarkRecord]]:
     """Run one benchmark condition in a subprocess (for ProcessPoolExecutor).
 
     Recreates transcribers and metrics from configs so no non-picklable state
-    crosses the process boundary.  Returns records without writing to disk so
+    crosses the process boundary. Returns ``(condition.name, wall_seconds,
+    records)`` where *wall_seconds* is the whole-condition wall-clock
+    (render + separate + transcribe + evaluate) measured with
+    ``time.perf_counter()``. Records are returned without writing to disk so
     the parent process can stream-write them to the shared ResultsWriter.
     *audio_paths*/*audio_to_reference* are picklable (list[Path]/dict[Path,
     Path]) and cross the process boundary unchanged; both are None in MIDI
@@ -450,7 +482,8 @@ def _condition_worker(
     transcribers = [make_transcriber(cfg) for cfg in transcriber_cfgs]
     symbolic_metrics = make_symbolic_metrics(condition_config.evaluation)
     audio_metrics = make_audio_metrics(condition_config.evaluation)
-    return _run_condition(
+    wall_start = time.perf_counter()
+    records = _run_condition(
         condition,
         condition_config,
         midi_paths,
@@ -465,6 +498,8 @@ def _condition_worker(
         audio_paths=audio_paths,
         audio_to_reference=audio_to_reference,
     )
+    wall_seconds = time.perf_counter() - wall_start
+    return condition.name, wall_seconds, records
 
 
 def _run_condition(
@@ -543,6 +578,7 @@ def _run_condition(
                     overrides=condition.overrides,
                     error=str(reason),
                     source_path=str(source_path) if audio_paths is not None else None,
+                    render_seconds=entry.get("elapsed_seconds", float("nan")),
                 )
                 if writer is not None:
                     writer.write(record)
@@ -560,7 +596,9 @@ def _run_condition(
                 )
             continue
 
+        render_seconds = entry.get("elapsed_seconds", float("nan"))
         transcribe_input = audio_path
+        separate_seconds = float("nan")
         if separator is not None:
             _emit_worker_event(
                 progress,
@@ -574,9 +612,11 @@ def _run_condition(
                     ok=True,
                 ),
             )
+            separate_start = time.perf_counter()
             stems = separator.separate(
                 audio_path, work_dir / "stems" / condition.slug
             )
+            separate_seconds = time.perf_counter() - separate_start
             stem_name = condition_config.separation.stem
             selected = stems.get(stem_name) if stem_name else next(iter(stems.values()), None)
             if selected is None:
@@ -612,6 +652,8 @@ def _run_condition(
                 work_dir,
                 writer,
                 corpus_root=corpus_root,
+                render_seconds=render_seconds,
+                separate_seconds=separate_seconds,
             )
             records.append(record)
             _emit_worker_event(
@@ -662,6 +704,9 @@ def _evaluate_one(
     work_dir: Path,
     writer: ResultsWriter | None = None,
     corpus_root: Path | None = None,
+    *,
+    render_seconds: float = float("nan"),
+    separate_seconds: float = float("nan"),
 ) -> BenchmarkRecord:
     """Transcribe + score one (recording, transcriber) cell.
 
@@ -673,9 +718,21 @@ def _evaluate_one(
     reference, deriving it from *midi_path* would collide (last writer
     wins) while still reporting distinct metric rows as if each were backed
     by its own transcription.
+
+    *render_seconds*/*separate_seconds* are measured by the caller
+    (_run_condition) per file and shared across that file's transcriber
+    cells. Transcription and evaluation wall-clocks are measured here with
+    ``time.perf_counter()``; on failure the partial times measured before
+    the raise are still recorded (NaN when the stage never started).
     """
+    # Defaults: NaN unless a stage actually ran. Reassigned as each stage
+    # completes so a mid-cell exception still carries the measured times.
+    transcribe_seconds = float("nan")
+    evaluate_seconds = float("nan")
     try:
+        transcribe_start = time.perf_counter()
         result = transcriber.transcribe(transcribe_input)
+        transcribe_seconds = time.perf_counter() - transcribe_start
         estimate = notes_from_dicts(result.notes)
         rel = (
             source_path.relative_to(corpus_root)
@@ -691,6 +748,7 @@ def _evaluate_one(
         )
         write_transcription_outputs(result, transcription_path)
 
+        evaluate_start = time.perf_counter()
         metrics = evaluate_notes(reference, estimate, symbolic_metrics)
         # DTW re-synthesises the transcription and compares it to the audio
         # the transcriber heard (Bradshaw et al., 2024) -- meaningless for a
@@ -701,6 +759,7 @@ def _evaluate_one(
                     audio_path, result.notes, condition_config, audio_metrics
                 )
             )
+        evaluate_seconds = time.perf_counter() - evaluate_start
         record = BenchmarkRecord(
             condition=condition.name,
             transcriber=transcriber.name,
@@ -710,6 +769,10 @@ def _evaluate_one(
             metrics=metrics,
             overrides=condition.overrides,
             source_path=str(source_path) if source_path != midi_path else None,
+            render_seconds=render_seconds,
+            separate_seconds=separate_seconds,
+            transcribe_seconds=transcribe_seconds,
+            evaluate_seconds=evaluate_seconds,
         )
     except Exception as exc:  # noqa: BLE001 - benchmark logs and continues
         logger.exception("Transcription failed: %s on %s", transcriber.name, audio_path)
@@ -722,6 +785,10 @@ def _evaluate_one(
             overrides=condition.overrides,
             error=str(exc),
             source_path=str(source_path) if source_path != midi_path else None,
+            render_seconds=render_seconds,
+            separate_seconds=separate_seconds,
+            transcribe_seconds=transcribe_seconds,
+            evaluate_seconds=evaluate_seconds,
         )
     if writer is not None:
         writer.write(record)
