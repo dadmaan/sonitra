@@ -322,6 +322,261 @@ def test_benchmark_audio_mode_cli_discovers_and_subsets_consistently(
     assert len(captured["midi_paths"]) <= limit
 
 
+def test_benchmark_timing_table_shows_condition_timing(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The benchmark command renders a dedicated per-condition timing table
+    from result.timing; the summary table no longer carries timing columns.
+    An all-NaN separate_seconds (separation disabled) must not produce a
+    `separate (sec)` column."""
+    import sys
+
+    from rich.console import Console
+
+    precomputed_dir = tmp_path / "precomputed"
+    precomputed_dir.mkdir()
+
+    corpus_root = audio_corpus_dir.parent
+    dataset = audio_corpus_dir.name
+
+    config_path = audio_corpus_dir / "config.yaml"
+    config_path.write_text(
+        _AUDIO_BENCHMARK_CONFIG.format(
+            corpus_root=str(corpus_root), precomputed_dir=str(precomputed_dir)
+        )
+    )
+
+    # Widen the console so the timing table's headers render untruncated in
+    # CliRunner's 80-char capture.
+    monkeypatch.setattr(
+        "sonitra.cli.get_console",
+        lambda *args, **kwargs: Console(file=sys.stdout, width=200),
+    )
+
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=[],
+            summary=[
+                {
+                    "condition": "baseline",
+                    "transcriber": "basic_pitch",
+                    "n_files": 2,
+                    "n_succeeded": 2,
+                    "note.f1": 0.9,
+                }
+            ],
+            degradation=[],
+            results_path=work_dir / "results.jsonl",
+            summary_path=work_dir / "summary.json",
+            elapsed_seconds=0.0,
+            timing={
+                "overall_seconds": 100.0,
+                "host": {},
+                "conditions": [
+                    {
+                        "condition": "baseline",
+                        "wall_seconds": 30.2,
+                        "render_seconds": 4.0,
+                        "separate_seconds": float("nan"),
+                        "transcribe_seconds": 6.5,
+                        "evaluate_seconds": 1.2,
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--config", str(config_path),
+            "--dataset", dataset,
+        ],
+    )
+    assert result.exit_code == 0, f"benchmark failed:\n{result.output}"
+
+    # Summary table: no timing columns anymore.
+    assert "render s" not in result.output
+    assert "transcribe s" not in result.output
+    assert "eval s" not in result.output
+
+    # Dedicated timing table.
+    assert "Benchmark timing (seconds)" in result.output
+    assert "wall (sec)" in result.output
+    assert "render (sec)" in result.output
+    assert "transcribe (sec)" in result.output
+    assert "evaluate (sec)" in result.output
+    assert "separate (sec)" not in result.output
+    assert "30.2" in result.output
+    assert "4.0" in result.output
+    assert "6.5" in result.output
+    assert "1.2" in result.output
+
+
+def test_benchmark_timing_table_shows_separate_seconds_when_present(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-NaN separate_seconds in any timing condition adds the
+    `separate (sec)` column."""
+    import sys
+
+    from rich.console import Console
+
+    precomputed_dir = tmp_path / "precomputed"
+    precomputed_dir.mkdir()
+
+    corpus_root = audio_corpus_dir.parent
+    dataset = audio_corpus_dir.name
+
+    config_path = audio_corpus_dir / "config.yaml"
+    config_path.write_text(
+        _AUDIO_BENCHMARK_CONFIG.format(
+            corpus_root=str(corpus_root), precomputed_dir=str(precomputed_dir)
+        )
+    )
+
+    # Widen the console so the timing table's headers render untruncated in
+    # CliRunner's 80-char capture.
+    monkeypatch.setattr(
+        "sonitra.cli.get_console",
+        lambda *args, **kwargs: Console(file=sys.stdout, width=200),
+    )
+
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=[],
+            summary=[
+                {
+                    "condition": "baseline",
+                    "transcriber": "basic_pitch",
+                    "n_files": 2,
+                    "n_succeeded": 2,
+                    "note.f1": 0.9,
+                }
+            ],
+            degradation=[],
+            results_path=work_dir / "results.jsonl",
+            summary_path=work_dir / "summary.json",
+            elapsed_seconds=0.0,
+            timing={
+                "overall_seconds": 100.0,
+                "host": {},
+                "conditions": [
+                    {
+                        "condition": "baseline",
+                        "wall_seconds": 30.2,
+                        "render_seconds": 4.0,
+                        "separate_seconds": 3.3,
+                        "transcribe_seconds": 6.5,
+                        "evaluate_seconds": 1.2,
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--config", str(config_path),
+            "--dataset", dataset,
+        ],
+    )
+    assert result.exit_code == 0, f"benchmark failed:\n{result.output}"
+
+    assert "separate (sec)" in result.output
+    assert "3.3" in result.output
+
+
+def test_benchmark_timing_table_absent_without_timing(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BenchmarkResult(timing=None) renders no timing table and no crash;
+    the summary table renders as before."""
+    import sys
+
+    from rich.console import Console
+
+    precomputed_dir = tmp_path / "precomputed"
+    precomputed_dir.mkdir()
+
+    corpus_root = audio_corpus_dir.parent
+    dataset = audio_corpus_dir.name
+
+    config_path = audio_corpus_dir / "config.yaml"
+    config_path.write_text(
+        _AUDIO_BENCHMARK_CONFIG.format(
+            corpus_root=str(corpus_root), precomputed_dir=str(precomputed_dir)
+        )
+    )
+
+    # Widen the console so the summary table's headers render untruncated in
+    # CliRunner's 80-char capture.
+    monkeypatch.setattr(
+        "sonitra.cli.get_console",
+        lambda *args, **kwargs: Console(file=sys.stdout, width=200),
+    )
+
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=[],
+            summary=[
+                {
+                    "condition": "baseline",
+                    "transcriber": "basic_pitch",
+                    "n_files": 2,
+                    "n_succeeded": 2,
+                    "note.f1": 0.9,
+                }
+            ],
+            degradation=[],
+            results_path=work_dir / "results.jsonl",
+            summary_path=work_dir / "summary.json",
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--config", str(config_path),
+            "--dataset", dataset,
+        ],
+    )
+    assert result.exit_code == 0, f"benchmark failed:\n{result.output}"
+
+    assert "Benchmark timing (seconds)" not in result.output
+    assert "Benchmark summary" in result.output
+    assert "note.f1" in result.output
+
+
 # ---------------------------------------------------------------------------
 # transcribe / evaluate — no behavioural change in audio-mode configs
 # ---------------------------------------------------------------------------

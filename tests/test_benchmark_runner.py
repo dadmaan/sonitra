@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from sonitra.benchmark import runner as runner_module
+from sonitra.benchmark.host_info import collect_host_info
 from sonitra.benchmark.runner import run_benchmark
 from sonitra.config import PipelineConfig
 from sonitra.midi_reader import parse_midi
@@ -86,6 +88,57 @@ def test_full_benchmark_run(
     # summary/degradation rows are in declared condition order (baseline, padding=1.0)
     assert [row["condition"] for row in result.summary] == ["baseline", "padding=1.0"]
     assert [row["condition"] for row in result.degradation] == ["padding=1.0"]
+
+    # summary rows are METRICS-ONLY: per-stage timing totals live exclusively
+    # in the top-level "timing" block (asserted below), never in summary rows
+    for row in result.summary:
+        for timing_key in (
+            "render_seconds",
+            "separate_seconds",
+            "transcribe_seconds",
+            "evaluate_seconds",
+        ):
+            assert timing_key not in row
+
+    # timing block: overall wall-clock, host info, per-condition entries in
+    # declared condition order (same order as the summary rows)
+    assert result.elapsed_seconds == pytest.approx(payload["timing"]["overall_seconds"])
+    assert payload["timing"]["overall_seconds"] > 0
+    host = collect_host_info()
+    assert set(host.keys()) <= set(payload["timing"]["host"].keys())
+    assert payload["timing"]["host"]["os"] == host["os"]
+    assert payload["timing"]["host"]["python"] == host["python"]
+    timing_conditions = [c["condition"] for c in payload["timing"]["conditions"]]
+    assert timing_conditions == ["baseline", "padding=1.0"]
+    assert len(payload["timing"]["conditions"]) == 2
+    for entry in payload["timing"]["conditions"]:
+        # both conditions actually ran in this test, so each has a wall entry
+        assert entry["wall_seconds"] > 0
+        assert entry["per_transcriber"][0]["transcriber"] == "oracle"
+
+    # every record carries the per-cell timing keys; succeeded records have a
+    # measurable render time and a (possibly instant) transcribe time
+    record_dicts = [
+        json.loads(line) for line in result.results_path.read_text().splitlines()
+    ]
+    assert len(record_dicts) == 4
+    for record_dict in record_dicts:
+        for key in (
+            "render_seconds",
+            "separate_seconds",
+            "transcribe_seconds",
+            "evaluate_seconds",
+        ):
+            assert key in record_dict
+            assert isinstance(record_dict[key], float)
+    succeeded = [d for d in record_dicts if d["status"] == "succeeded"]
+    assert len(succeeded) == 4
+    assert any(d["render_seconds"] > 0 for d in succeeded)
+    for d in succeeded:
+        # the precomputed transcriber is near-instant; only require a float
+        # (or NaN), never a strictly positive value
+        assert isinstance(d["transcribe_seconds"], float)
+        assert d["transcribe_seconds"] > 0 or math.isnan(d["transcribe_seconds"])
 
 
 class _RecordingProgress:

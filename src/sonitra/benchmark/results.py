@@ -12,7 +12,12 @@ from sonitra.config import PipelineConfig
 
 @dataclass
 class BenchmarkRecord:
-    """One transcription evaluation: a (condition, transcriber, file) cell."""
+    """One transcription evaluation: a (condition, transcriber, file) cell.
+
+    Also records per-cell wall-clock timing (render/separate/transcribe/
+    evaluate) in seconds; timing fields default to NaN for backward
+    compatibility with pre-upgrade JSONL.
+    """
 
     condition: str
     transcriber: str
@@ -28,6 +33,14 @@ class BenchmarkRecord:
     mode ``source_path`` stays ``None`` (``source_path == midi_path`` would
     be redundant there). Optional/defaulted so ``load_records``'s
     ``BenchmarkRecord(**json.loads(line))`` still loads pre-upgrade JSONL."""
+    render_seconds: float = float("nan")
+    """Per-file render wall-clock (same value on every transcriber row of the file)."""
+    separate_seconds: float = float("nan")
+    """Per-file separation wall-clock; NaN when separation is disabled."""
+    transcribe_seconds: float = float("nan")
+    """Per-cell transcription wall-clock."""
+    evaluate_seconds: float = float("nan")
+    """Per-cell evaluation wall-clock."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,7 +113,15 @@ def load_records(path: Path | str) -> list[BenchmarkRecord]:
 
 
 def summarise(records: Iterable[BenchmarkRecord]) -> list[dict[str, Any]]:
-    """Aggregate metric means per (condition, transcriber), NaN-aware."""
+    """Aggregate metric means per (condition, transcriber), NaN-aware.
+
+    Summary rows are METRICS-ONLY: condition, transcriber, n_files,
+    n_succeeded, and the metric means. Per-stage timing totals live
+    exclusively in the ``"timing"`` block produced by :func:`timing_block`
+    (aggregated there with different semantics: condition-level totals over
+    ALL cells, deduped render/separate per file) -- keeping them out of
+    summary rows avoids conflating process time with evaluation time.
+    """
     groups: dict[tuple[str, str], list[BenchmarkRecord]] = {}
     for record in records:
         groups.setdefault((record.condition, record.transcriber), []).append(record)
@@ -181,3 +202,116 @@ def degradation(
                 delta_row[f"delta_{key}"] = value - base_value
         rows.append(delta_row)
     return rows
+
+
+def _nanaware_sum(values: Iterable[float]) -> float:
+    """NaN-aware sum of *values*; NaN when no finite value is present."""
+    total = 0.0
+    seen = 0
+    for value in values:
+        if not math.isnan(value):
+            total += value
+            seen += 1
+    return total if seen else float("nan")
+
+
+def timing_block(
+    records: Iterable[BenchmarkRecord],
+    *,
+    overall_seconds: float,
+    condition_order: Sequence[str],
+    host: dict[str, Any],
+    condition_wall_seconds: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Assemble the per-condition timing block for a benchmark summary.
+
+    Conditions are derived from *records* (grouped by ``condition``) and
+    ordered by *condition_order* using the same index rule as
+    ``order_by_condition``: listed conditions appear in declared order,
+    unlisted ones sort after them. Within a condition, ``per_transcriber``
+    entries are ordered by transcriber name.
+
+    Timing semantics:
+
+    - ``render_seconds``/``separate_seconds`` are recorded once per
+      (condition, file) but duplicated across transcriber rows (the runner
+      keys cells by ``source_path or midi_path``), so the condition-level
+      total dedupes records by file key and sums the first value seen per
+      file, avoiding transcriber double-counting.
+    - ``transcribe_seconds``/``evaluate_seconds`` at condition level sum
+      over ALL records of the condition (failed cells still consumed time).
+    - ``per_transcriber`` totals sum only over records whose ``status`` is
+      ``"succeeded"``.
+    - All sums are NaN-aware (NaN values skipped; a group with no finite
+      values yields NaN). ``wall_seconds`` comes from
+      *condition_wall_seconds*, NaN when a condition is missing from it.
+    - Empty *records* produce ``"conditions": []``.
+    """
+    condition_wall_seconds = condition_wall_seconds or {}
+
+    by_condition: dict[str, list[BenchmarkRecord]] = {}
+    for record in records:
+        by_condition.setdefault(record.condition, []).append(record)
+
+    index = {name: i for i, name in enumerate(condition_order)}
+    condition_names = sorted(
+        by_condition, key=lambda name: index.get(name, len(index))
+    )
+
+    condition_rows: list[dict[str, Any]] = []
+    for condition in condition_names:
+        members = by_condition[condition]
+
+        # render/separate are recorded once per (condition, file) but repeated
+        # on every transcriber row: dedupe by file key, take the first value.
+        per_file: dict[str, list[BenchmarkRecord]] = {}
+        for record in members:
+            per_file.setdefault(record.source_path or record.midi_path, []).append(record)
+        render_seconds = _nanaware_sum(
+            file_records[0].render_seconds for file_records in per_file.values()
+        )
+        separate_seconds = _nanaware_sum(
+            file_records[0].separate_seconds for file_records in per_file.values()
+        )
+        transcribe_seconds = _nanaware_sum(
+            record.transcribe_seconds for record in members
+        )
+        evaluate_seconds = _nanaware_sum(record.evaluate_seconds for record in members)
+
+        per_transcriber: list[dict[str, Any]] = []
+        for name in sorted({record.transcriber for record in members}):
+            succeeded = [
+                record
+                for record in members
+                if record.status == "succeeded" and record.transcriber == name
+            ]
+            per_transcriber.append(
+                {
+                    "transcriber": name,
+                    "transcribe_seconds": _nanaware_sum(
+                        record.transcribe_seconds for record in succeeded
+                    ),
+                    "evaluate_seconds": _nanaware_sum(
+                        record.evaluate_seconds for record in succeeded
+                    ),
+                    "n_succeeded": len(succeeded),
+                }
+            )
+
+        condition_rows.append(
+            {
+                "condition": condition,
+                "wall_seconds": condition_wall_seconds.get(condition, float("nan")),
+                "render_seconds": render_seconds,
+                "separate_seconds": separate_seconds,
+                "transcribe_seconds": transcribe_seconds,
+                "evaluate_seconds": evaluate_seconds,
+                "per_transcriber": per_transcriber,
+            }
+        )
+
+    return {
+        "overall_seconds": overall_seconds,
+        "host": host,
+        "conditions": condition_rows,
+    }
