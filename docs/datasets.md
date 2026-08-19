@@ -34,5 +34,18 @@ Downloaded files land under `corpus/{dataset}/midi/` following the dataset-first
 
 Note: if you downloaded `maestro-v3` with a version of this script prior to the `-midi`/`-wav`/`-full` split, its metadata files (`maestro-v3.0.0.csv`/`.json`, `README`, `LICENSE`) landed inside `midi/` rather than `metadata/`. Re-running `maestro-v3-midi` will treat `metadata/` as missing and re-fetch the (small) MIDI zip; the old files under `midi/` are unaffected and can be moved into `metadata/` by hand if desired.
 
+### Joining dataset metadata into a benchmark export
+
+`scripts/export_regression_table.py` (see [CLI reference](cli.md)) can left-join a dataset's `corpus/{dataset}/metadata/*.csv` onto a benchmark's per-file regression table, e.g. to add composer/work covariates for a mixed-effects analysis:
+
+```bash
+python scripts/export_regression_table.py \
+  --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT \
+  --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --metadata-join-column midi_filename
+```
+
+The join is dataset-agnostic: `--metadata-join-column` names whichever column of the CSV holds a filename (MAESTRO's is `midi_filename`; MusicNet's or a future dataset's may differ), matched against a benchmark row's file by basename. Every other column of a matched row is added as `meta.<column>` — no assumption that datasets share a composer/work vocabulary, since they don't (MusicNet's metadata has `movement`/`ensemble`, MAESTRO's doesn't).
+
 ---
 [← Back to README](../README.md)

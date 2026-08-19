@@ -16,5 +16,14 @@ The batch runner additionally accepts `--config NAME [NAME …]` to run only the
 
 When `--dataset` is set on the CLI it overrides `io.dataset` from the config file. When `--corpus`/`--audio`/`--reference`/`--estimate` are omitted, the paths are resolved from `io.corpus_root` and `io.dataset` in the config.
 
+`sonitra benchmark` writes its results JSONL, `summary.json`, and a `config.yaml` snapshot of the resolved config it ran with to `work_dir` (see [Configuration → Benchmark output](configuration.md#benchmark-output)). To re-generate an existing benchmark's output in place (e.g. after a `sonitra`/config upgrade, so `config.yaml` and per-row `overrides` get (re)populated), re-run the same command with the same `--workdir`:
+
+```bash
+sonitra benchmark --config config/benchmark/old_recording/vintage_scenarios.yaml \
+  --dataset maestro-v3 --workdir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT
+```
+
+`scripts/export_regression_table.py --work-dir DIR [--metadata-csv FILE --metadata-join-column NAME]` turns a benchmark's results JSONL into a per-file regression-ready CSV, optionally joined with a downloaded dataset's metadata (see `docs/datasets.md`).
+
 ---
 [← Back to README](../README.md)

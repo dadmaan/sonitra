@@ -291,6 +291,7 @@ def run_benchmark(
         fingerprint_file.unlink(missing_ok=True)
 
     fingerprint_file.write_text(current_fingerprint)
+    config.save(work_dir / "config.yaml")
 
     completed_by_condition: dict[str, set[tuple[str, str]]] = {}
     for record in records:

@@ -29,6 +29,7 @@ def _record(
     separate_seconds: float = float("nan"),
     transcribe_seconds: float = float("nan"),
     evaluate_seconds: float = float("nan"),
+    overrides: dict | None = None,
 ) -> BenchmarkRecord:
     return BenchmarkRecord(
         condition=condition,
@@ -41,6 +42,7 @@ def _record(
         separate_seconds=separate_seconds,
         transcribe_seconds=transcribe_seconds,
         evaluate_seconds=evaluate_seconds,
+        overrides=overrides if overrides is not None else {},
     )
 
 
@@ -164,7 +166,7 @@ def test_summarise_is_metrics_only_no_timing_keys() -> None:
     ]
     row = summarise(records)[0]
     assert set(row) == {
-        "condition", "transcriber", "n_files", "n_succeeded", "note.onset_f1"
+        "condition", "transcriber", "n_files", "n_succeeded", "note.onset_f1", "overrides"
     }
     assert row["n_files"] == 3
     assert row["n_succeeded"] == 2
@@ -200,8 +202,57 @@ def test_summarise_never_emits_timing_keys() -> None:
     ):
         assert key not in row
     assert set(row) == {
-        "condition", "transcriber", "n_files", "n_succeeded", "note.onset_f1"
+        "condition", "transcriber", "n_files", "n_succeeded", "note.onset_f1", "overrides"
     }
+
+
+def test_summarise_includes_condition_overrides() -> None:
+    """Every record in a (condition, transcriber) group shares the same
+    ``overrides`` (set from the same frozen Condition.overrides) -- summarise
+    surfaces it on the row so summary.json is self-describing per condition."""
+    records = [
+        _record(
+            "shellac_bandlimit_mild", "bp", 0.8,
+            overrides={"pedalboard.effects.0.cutoff_frequency_hz": 51.4},
+        ),
+        _record(
+            "shellac_bandlimit_mild", "bp", 0.9,
+            overrides={"pedalboard.effects.0.cutoff_frequency_hz": 51.4},
+        ),
+        _record("baseline", "bp", 1.0, overrides={}),
+    ]
+    summary = summarise(records)
+    by_key = {(row["condition"], row["transcriber"]): row for row in summary}
+    assert by_key[("shellac_bandlimit_mild", "bp")]["overrides"] == {
+        "pedalboard.effects.0.cutoff_frequency_hz": 51.4
+    }
+    assert by_key[("baseline", "bp")]["overrides"] == {}
+
+
+def test_summarise_overrides_present_even_with_zero_successes() -> None:
+    records = [
+        _record(
+            "shellac_bandlimit_mild", "bp", 0.0, status="failed",
+            overrides={"pedalboard.effects.0.cutoff_frequency_hz": 51.4},
+        ),
+    ]
+    row = summarise(records)[0]
+    assert row["overrides"] == {"pedalboard.effects.0.cutoff_frequency_hz": 51.4}
+
+
+def test_degradation_carries_condition_overrides_undiffed() -> None:
+    summary = summarise(
+        [
+            _record("baseline", "bp", 0.9, overrides={}),
+            _record(
+                "shellac_bandlimit_mild", "bp", 0.6,
+                overrides={"pedalboard.effects.0.cutoff_frequency_hz": 51.4},
+            ),
+        ]
+    )
+    rows = degradation(summary, baseline="baseline")
+    assert rows[0]["overrides"] == {"pedalboard.effects.0.cutoff_frequency_hz": 51.4}
+    assert "delta_overrides" not in rows[0]
 
 
 def test_degradation_skips_timing_columns() -> None:
