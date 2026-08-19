@@ -46,6 +46,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   markers/partials and re-download a dataset from scratch; disk-space
   preflight aborts before downloading when the output filesystem lacks room
   (declared size + 5% headroom)
+- Benchmark output is now self-describing: every `summary.json` row (and
+  every `degradation` row) carries its condition's `overrides` dict — defined
+  even for conditions with zero successful files, since every record in a
+  `(condition, transcriber)` group is written from the same frozen
+  `Condition.overrides` (taken from the group's first record, which
+  silently wins if a fingerprint-less resume ever mixed overrides within a
+  group). `degradation` passes the row's own overrides through undiffed —
+  never diffed against the baseline's. `run_benchmark` also writes a
+  `config.yaml` snapshot of the fully-resolved `PipelineConfig` to `work_dir`
+  on every run, including resumes, so a run's exact settings are reproducible
+- `scripts/export_regression_table.py`: flattens a benchmark run's
+  `benchmark_results.jsonl` into a per-file regression-ready CSV — one row
+  per `(condition, transcriber, file)` with every evaluation metric and every
+  config override as its own column. `pedalboard.effects.<N>.<param>`
+  override columns are labeled by effect type
+  (`override.pedalboard.effects.<N>_<Type>.<param>`) when the run's
+  `config.yaml` snapshot is present, falling back to raw dotted paths for
+  older runs without one; NaN metrics are written as empty cells, matching
+  the existing JSONL→CSV convention. Optionally left-joins a dataset's
+  metadata CSV (`--metadata-csv` / `--metadata-join-column`, matched by file
+  basename) with every other column added as `meta.<column>` — dataset
+  agnostic, since datasets don't share a composer/work vocabulary (MAESTRO's
+  metadata has `midi_filename`; MusicNet's has `movement`/`ensemble`)
 
 ### Fixed
 

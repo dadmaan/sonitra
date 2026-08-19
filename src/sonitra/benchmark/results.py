@@ -134,6 +134,13 @@ def summarise(records: Iterable[BenchmarkRecord]) -> list[dict[str, Any]]:
             "transcriber": transcriber,
             "n_files": len(members),
             "n_succeeded": len(succeeded),
+            # All records in a group share the same Condition.overrides (set at
+            # every write site from the same frozen Condition); taken from
+            # members[0] rather than succeeded[0] so it's defined even when a
+            # condition has zero successes. Note: a resume across a config edit
+            # with a missing fingerprint file (see run_benchmark) could in
+            # theory mix overrides within one group -- members[0] silently wins.
+            "overrides": members[0].overrides,
         }
         metric_names = sorted({name for record in succeeded for name in record.metrics})
         for name in metric_names:
@@ -191,6 +198,11 @@ def degradation(
         }
         for key, value in row.items():
             if key in {"condition", "transcriber", "n_files", "n_succeeded"}:
+                continue
+            if key == "overrides":
+                # Carried through from the row's own (non-baseline) condition,
+                # not diffed against the baseline's overrides.
+                delta_row["overrides"] = value
                 continue
             base_value = reference.get(key)
             if (

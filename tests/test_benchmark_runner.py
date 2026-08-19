@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 from sonitra.benchmark import runner as runner_module
 from sonitra.benchmark.host_info import collect_host_info
@@ -139,6 +140,41 @@ def test_full_benchmark_run(
         # (or NaN), never a strictly positive value
         assert isinstance(d["transcribe_seconds"], float)
         assert d["transcribe_seconds"] > 0 or math.isnan(d["transcribe_seconds"])
+
+
+def test_config_snapshot_written_to_work_dir(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    midi_paths = [midi_fixture("test_c4.mid")]
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    config_path = tmp_path / "config.yaml"
+    assert config_path.exists()
+    saved = PipelineConfig.model_validate(yaml.safe_load(config_path.read_text()))
+    assert [c.name for c in saved.benchmark.conditions] == [
+        c.name for c in benchmark_config.benchmark.conditions
+    ]
+    assert [s.name for s in saved.benchmark.sweeps] == [
+        s.name for s in benchmark_config.benchmark.sweeps
+    ]
+
+
+def test_config_snapshot_persists_and_updates_across_resume(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+    config_path = tmp_path / "config.yaml"
+    assert config_path.exists()
+
+    benchmark_config.benchmark.resume = True
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    assert config_path.exists()
+    saved = PipelineConfig.model_validate(yaml.safe_load(config_path.read_text()))
+    assert saved.benchmark.resume is True
 
 
 class _RecordingProgress:

@@ -60,6 +60,10 @@ Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, Highp
 
 Use sweeps for sensitivity checks that vary a single knob with everything else at baseline. For a full factorial, or any level that needs more than one override applied at once, write an explicit `benchmark.conditions` entry with the combined dotted-path overrides.
 
+### Benchmark output
+
+`sonitra benchmark` writes three things to `work_dir`: the per-(condition×transcriber×file) results JSONL (each record carries its condition's `overrides` dict), `summary.json` (the aggregate `summary` and `degradation` tables, each row also carrying its condition's `overrides` — not diffed in `degradation`, just passed through), and `config.yaml`, a snapshot of the fully-resolved `PipelineConfig` the run actually used (written fresh on every run, including resumes). `scripts/export_regression_table.py` flattens the results JSONL into a per-file CSV for regression analysis — metrics and overrides as columns, pedalboard effect slots labeled by type when `config.yaml` is present — and can optionally left-join a dataset's metadata CSV by filename (see `docs/datasets.md`).
+
 ## Parallelism (max_workers)
 
 Four sections define a `max_workers` parameter. Only two of them affect `sonitra benchmark`:

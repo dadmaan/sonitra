@@ -79,7 +79,7 @@ Backend-specific validators enforce: `synth_backend=fluidsynth` requires `fluids
 
 ### Benchmark (`benchmark/`)
 
-`run_benchmark` is the top-level orchestrator. It expands **conditions** and **sweeps** (`benchmark/conditions.py`) into a list of variants, each defined by **dotted-path config overrides** (e.g. `pedalboard.effects.1.wet_level`) applied via `apply_overrides`. For every condition it re-renders the corpus, runs each enabled transcriber, and scores against the cached reference notes. Outputs: per-(condition×transcriber×file) records to JSONL, plus `summary.json` containing the aggregate `summary` and a `degradation` table of metric deltas vs the `baseline` condition.
+`run_benchmark` is the top-level orchestrator. It expands **conditions** and **sweeps** (`benchmark/conditions.py`) into a list of variants, each defined by **dotted-path config overrides** (e.g. `pedalboard.effects.1.wet_level`) applied via `apply_overrides`. For every condition it re-renders the corpus, runs each enabled transcriber, and scores against the cached reference notes. Outputs: per-(condition×transcriber×file) records to JSONL (each record carries its condition's `overrides` dict), `summary.json` containing the aggregate `summary` (each row also carries its condition's `overrides`) and a `degradation` table of metric deltas vs the `baseline` condition (with `overrides` carried through unchanged, not diffed), and a `config.yaml` snapshot of the fully-resolved `PipelineConfig` the run actually used. `scripts/export_regression_table.py` flattens a run's JSONL into a per-file regression-ready CSV (metrics + overrides as columns, pedalboard effect slots labeled by type when `config.yaml` is present).
 
 ### Evaluation (`evaluation/`)
 
