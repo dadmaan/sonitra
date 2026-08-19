@@ -15,28 +15,36 @@ Usage:
     python scripts/download_datasets.py --all
     python scripts/download_datasets.py --all --jobs 4
     python scripts/download_datasets.py maestro-v3-midi --output-dir /data/corpus
+    python scripts/download_datasets.py maestro-v3-midi --force
     python scripts/download_datasets.py            # interactive picker (TTY only)
 
 Interactive mode: run with no dataset name and no --all on a terminal with
 `rich` installed, pick any number of datasets from the table, and download up
 to --jobs of them concurrently.
+
+Interrupted downloads resume automatically on the next run: partial files are
+kept under <output-dir>/.downloads/ and re-used via HTTP Range requests. Pass
+--force to discard partial state and re-download/re-extract from scratch.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import http.client
+import os
 import queue
 import shutil
 import sys
 import tarfile
-import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional, Tuple
-from urllib.request import urlretrieve
+from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 
 try:
     from rich.console import Console as _RichConsole, Group as _RichGroup
@@ -313,10 +321,48 @@ def _target_dirs(output_dir: Path, spec: Dict) -> List[Path]:
     return [dataset_dir / subdir for subdir in _all_target_subdirs(spec)]
 
 
-def _is_already_present(output_dir: Path, spec: Dict) -> bool:
-    """Return True when every target subdir exists and contains at least one file."""
-    dirs = _target_dirs(output_dir, spec)
-    return all(d.is_dir() and any(d.iterdir()) for d in dirs)
+def _marker_path(output_dir: Path, key: str, index: int) -> Path:
+    """Path of the completion marker for one source of a dataset."""
+    return output_dir / ".downloads" / f"{key}.{index}.ok"
+
+
+def _write_marker(output_dir: Path, key: str, index: int, source: Dict) -> None:
+    """Record that a source's download AND extraction fully succeeded."""
+    marker = _marker_path(output_dir, key, index)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(source["url"] + "\n")
+
+
+def _partial_path(output_dir: Path, key: str, index: int, source: Dict) -> Path:
+    """Deterministic partial-download path for one source (cross-run resume).
+
+    The name is derived from the source URL, so a re-run resumes the same
+    partial; the dataset key prefix avoids collisions when two datasets share
+    a URL (e.g. maestro-v3-wav and maestro-v3-full).
+    """
+    digest: str = hashlib.sha256(source["url"].encode()).hexdigest()[:10]
+    return output_dir / ".downloads" / f"{key}.{digest}.part"
+
+
+def _is_already_present(key: str, spec: Dict, output_dir: Path) -> bool:
+    """Return True when the dataset is fully downloaded and extracted.
+
+    Marker-based: True when every source has a completion marker. When no
+    markers exist at all (e.g. corpora downloaded by the old script), fall
+    back to the legacy check that every target subdir exists and is non-empty.
+    When only some markers exist the dataset is partially complete -> False.
+    """
+    markers = [
+        _marker_path(output_dir, key, index)
+        for index in range(len(spec["sources"]))
+    ]
+    present = [m.exists() for m in markers]
+    if all(present):
+        return True
+    if not any(present):
+        dirs = _target_dirs(output_dir, spec)
+        return all(d.is_dir() and any(d.iterdir()) for d in dirs)
+    return False
 
 
 def _print_list(output_dir: Path) -> None:
@@ -328,28 +374,131 @@ def _print_list(output_dir: Path) -> None:
         print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}")
 
 
-def _make_reporthook(name: str):
-    """Return a urlretrieve reporthook that prints download progress in-place."""
+def _parse_content_range_total(value: Optional[str]) -> int:
+    """Extract the total size from a Content-Range header (0 when unknown).
 
-    def reporthook(block_num: int, block_size: int, total_size: int) -> None:
-        downloaded: float = block_num * block_size
-        if total_size > 0:
-            total_mb: float = total_size / 1_048_576
-            done_mb: float = min(downloaded, total_size) / 1_048_576
-            print(
-                f"\rDownloading {name}: {done_mb:.1f} MB / {total_mb:.1f} MB",
-                end="",
-                flush=True,
-            )
-        else:
-            done_mb = downloaded / 1_048_576
-            print(
-                f"\rDownloading {name}: {done_mb:.1f} MB",
-                end="",
-                flush=True,
-            )
+    Accepts ``bytes a-b/total`` (206 responses) and ``bytes */total`` (416
+    responses); ``total`` may be ``*``, meaning unknown.
+    """
+    if not value:
+        return 0
+    try:
+        total: str = value.rsplit("/", 1)[1].strip()
+    except IndexError:
+        return 0
+    if total == "*":
+        return 0
+    try:
+        return int(total)
+    except ValueError:
+        return 0
 
-    return reporthook
+
+def _download_file_attempt(
+    url: str, dest: Path, *, progress: Optional[Callable[[int, int], None]]
+) -> int:
+    """One download attempt: resume-aware GET + chunked append to `dest`.
+
+    Returns the cumulative byte count written to `dest` (including any
+    resumed prefix). On failure the partial file is left in place — it is the
+    resume foundation for the next attempt/run.
+    """
+    headers: Dict[str, str] = {"User-Agent": "Sonitra-Dataset-Downloader/1.0"}
+    prefix: int = 0
+    mode: str = "wb"
+    if dest.exists() and dest.stat().st_size > 0:
+        prefix = dest.stat().st_size
+        headers["Range"] = f"bytes={prefix}-"
+        mode = "ab"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            status: int = resp.status
+            if status == 206:
+                total: int = _parse_content_range_total(
+                    resp.headers.get("Content-Range")
+                )
+            elif status == 200:
+                if prefix > 0:
+                    # Server ignored the Range header: start over from scratch.
+                    dest.write_bytes(b"")
+                    prefix = 0
+                    mode = "wb"
+                try:
+                    total = int(resp.headers.get("Content-Length") or 0)
+                except ValueError:
+                    total = 0
+            else:
+                raise RuntimeError(f"unexpected HTTP status {status} for {url}")
+            downloaded: int = prefix
+            with dest.open(mode) as fh:
+                while True:
+                    chunk = resp.read(262144)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if progress is not None:
+                        progress(downloaded, total)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416:
+            server_total: int = _parse_content_range_total(
+                exc.headers.get("Content-Range", "")
+            )
+            if prefix > 0 and prefix == server_total:
+                return prefix  # partial already matches the server's file
+            raise RuntimeError(
+                f"partial file {dest} is larger than the server's file "
+                f"({prefix} > {server_total} bytes); delete the .part file "
+                f"or re-run with --force"
+            ) from exc
+        raise
+    if total > 0 and downloaded < total:
+        raise RuntimeError(
+            f"incomplete download: got {downloaded} of {total} bytes"
+        )
+    return downloaded
+
+
+def _download_file(
+    url: str,
+    dest: Path,
+    *,
+    name: str,
+    output_dir: Path,
+    key: str,
+    index: int,
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> int:
+    """Download `url` into `dest` with resume support and bounded retries.
+
+    `dest` is the working file (callers decide final placement). If it
+    already holds bytes, a ``Range`` request resumes from there (206 appends,
+    200 restarts, 416 means the partial already matches the server's file).
+    Up to 4 attempts total with backoff sleeps of 3/10/30 s; retryable errors
+    are URLError (timeouts, resets, refused), IncompleteRead, TimeoutError,
+    and HTTP 408/429/5xx. The partial file is never deleted on failure.
+    Returns the final byte count written to `dest`.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    last_error: Optional[BaseException] = None
+    for attempt in range(4):
+        try:
+            return _download_file_attempt(url, dest, progress=progress)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (408, 429) or exc.code >= 500:
+                last_error = exc
+            else:
+                raise RuntimeError(
+                    f"HTTP {exc.code} {exc.reason} for {url}"
+                ) from exc
+        except (urllib.error.URLError, http.client.IncompleteRead, TimeoutError) as exc:
+            last_error = exc
+        if attempt < 3:
+            time.sleep((3, 10, 30)[attempt])
+    raise RuntimeError(
+        f"download of {name} failed after 4 attempts: {last_error}"
+    ) from last_error
 
 
 def _extract_archive(
@@ -359,6 +508,12 @@ def _extract_archive(
 
     Routes each regular-file member through `_route_member`; members matching
     no rule are skipped. Returns the number of files extracted.
+
+    Each member is written to a sibling ``.part`` file first and moved into
+    place with ``os.replace`` only after the copy completes without exception
+    (zipfile raises BadZipFile on CRC mismatch at EOF of the member stream —
+    the ``.part`` is then discarded). On failure the member's ``.part`` is
+    best-effort unlinked and the exception re-raised.
     """
     files_extracted: int = 0
 
@@ -376,8 +531,14 @@ def _extract_archive(
                     continue
                 dest: Path = dataset_dir / target_subdir / relative
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(member) as src, dest.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                dest_part: Path = dest.with_name(dest.name + ".part")
+                try:
+                    with zf.open(member) as src, dest_part.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    os.replace(dest_part, dest)
+                except Exception:
+                    dest_part.unlink(missing_ok=True)
+                    raise
                 files_extracted += 1
     elif kind == "targz":
         with tarfile.open(tmp_path, "r:gz") as tf:
@@ -393,11 +554,17 @@ def _extract_archive(
                     continue
                 dest = dataset_dir / target_subdir / relative
                 dest.parent.mkdir(parents=True, exist_ok=True)
+                dest_part = dest.with_name(dest.name + ".part")
                 src = tf.extractfile(member)
                 if src is None:  # pragma: no cover - not a regular extractable file
                     continue
-                with src, dest.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                try:
+                    with src, dest_part.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    os.replace(dest_part, dest)
+                except Exception:
+                    dest_part.unlink(missing_ok=True)
+                    raise
                 files_extracted += 1
     else:  # pragma: no cover - defensive, all registry entries use zip/targz here
         raise ValueError(f"unknown archive kind: {kind}")
@@ -405,36 +572,89 @@ def _extract_archive(
     return files_extracted
 
 
+def _reset_download_state(output_dir: Path, key: str, spec: Dict) -> None:
+    """Remove all markers, download partials, and extracted .part files for a dataset.
+
+    Used by ``--force``. The ``rglob("*.part")`` sweep is best-effort: with
+    parallel jobs, datasets sharing a corpus_subdir (e.g. the maestro
+    variants) may race on each other's in-flight ``.part`` files, and that
+    race is accepted.
+    """
+    for index in range(len(spec["sources"])):
+        _marker_path(output_dir, key, index).unlink(missing_ok=True)
+    for index, source in enumerate(spec["sources"]):
+        _partial_path(output_dir, key, index, source).unlink(missing_ok=True)
+    for subdir in _all_target_subdirs(spec):
+        target_dir: Path = output_dir / spec["corpus_subdir"] / subdir
+        for part in target_dir.rglob("*.part"):
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                pass  # best-effort: parallel jobs may share the subdir
+
+
 def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
     """Download and extract every source of one dataset (plain stdlib path).
 
-    Returns the total file count across all of the dataset's sources.
+    Returns the total file count across all of the dataset's sources. Each
+    source downloads into a working ``.part`` file (kept on failure for
+    resume) and a completion marker is written only after its download AND
+    extraction both fully succeed.
     """
     dataset_dir: Path = output_dir / spec["corpus_subdir"]
     files_extracted: int = 0
 
-    for source in spec["sources"]:
+    for index, source in enumerate(spec["sources"]):
         display_name = f"{spec['name']} ({Path(source['url']).name})"
+
+        def progress(downloaded: int, total: int) -> None:
+            if total > 0:
+                print(
+                    f"\rDownloading {display_name}: {downloaded / 1_048_576:.1f} MB "
+                    f"/ {total / 1_048_576:.1f} MB",
+                    end="",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\rDownloading {display_name}: {downloaded / 1_048_576:.1f} MB",
+                    end="",
+                    flush=True,
+                )
 
         if source["kind"] == "file":
             dest = dataset_dir / source["target_subdir"] / source["filename"]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            urlretrieve(source["url"], dest, reporthook=_make_reporthook(display_name))
-            print()
+            part = dest.with_name(dest.name + ".part")
+            _download_file(
+                source["url"],
+                part,
+                name=display_name,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                progress=progress,
+            )
+            print()  # newline after the progress line
+            os.replace(part, dest)
             files_extracted += 1
-            continue
-
-        tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=f".{source['kind']}")
-        tmp_path: str = tmp_fd.name
-        tmp_fd.close()
-        try:
-            urlretrieve(source["url"], tmp_path, reporthook=_make_reporthook(display_name))
+        else:
+            part = _partial_path(output_dir, key, index, source)
+            _download_file(
+                source["url"],
+                part,
+                name=display_name,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                progress=progress,
+            )
             print()  # newline after the progress line
             files_extracted += _extract_archive(
-                tmp_path, source["kind"], source["extract_map"], dataset_dir
+                str(part), source["kind"], source["extract_map"], dataset_dir
             )
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+            Path(part).unlink(missing_ok=True)  # partial removed only on full success
+
+        _write_marker(output_dir, key, index, source)
 
     return files_extracted
 
@@ -491,7 +711,7 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
     table.add_column("status")
     for index, (key, spec) in enumerate(DATASETS.items(), start=1):
         target = output_dir / spec["corpus_subdir"]
-        badge = "present" if _is_already_present(output_dir, spec) else "missing"
+        badge = "present" if _is_already_present(key, spec, output_dir) else "missing"
         table.add_row(
             str(index),
             key,
@@ -550,7 +770,10 @@ class _DownloadDisplay:
         self._total_datasets = total_datasets
         self._total_mb = total_mb
         self._completed = 0
+        self._done = 0
+        self._skipped = 0
         self._failed = 0
+        self._errors: List[str] = []
         self._acc_bytes = 0.0  # bytes from datasets whose slots already finished
         self._started_at = time.monotonic()
         self._progress = _RichProgress(
@@ -579,6 +802,10 @@ class _DownloadDisplay:
             get_renderable=self._get_renderable,
             refresh_per_second=2,
             vertical_overflow="ellipsis",
+            # Keep sys.stderr untouched so per-failure [error] messages reach
+            # the real stderr fd (visible in 2> redirects/pipes), not just the
+            # terminal via rich's console.
+            redirect_stderr=False,
         )
 
     def __enter__(self) -> "_DownloadDisplay":
@@ -622,7 +849,7 @@ class _DownloadDisplay:
             )
 
     def on_progress(self, task_id: int, downloaded: int, total_size: int) -> None:
-        """Feed a urlretrieve reporthook call into the slot's task."""
+        """Feed a download-progress callback into the slot's task."""
         with self._lock:
             if total_size > 0:
                 self._progress.update(
@@ -640,15 +867,40 @@ class _DownloadDisplay:
                 task_id, description=f"[dim]extracting {name}…[/dim]"
             )
 
-    def finish_task(self, task_id: int, name: str, status: str) -> None:
+    def finish_task(
+        self, task_id: int, name: str, status: str, error: Optional[str] = None
+    ) -> None:
         """Mark a slot row done/skipped/errored and count it in the header."""
         with self._lock:
             task = self._progress.tasks[task_id]
             self._acc_bytes += min(task.completed, task.total or 0)
             self._completed += 1
-            if status == "error":
+            if status == "done":
+                self._done += 1
+            elif status == "skip":
+                self._skipped += 1
+            elif status == "error":
                 self._failed += 1
+                if error is not None:
+                    self._errors.append(f"{name}: {error}")
             self._progress.update(task_id, description=f"{name} · {status}")
+
+    def errors(self) -> List[str]:
+        """All per-dataset error messages collected during the run."""
+        with self._lock:
+            return list(self._errors)
+
+    def done_count(self) -> int:
+        with self._lock:
+            return self._done
+
+    def skipped_count(self) -> int:
+        with self._lock:
+            return self._skipped
+
+    def failed_count(self) -> int:
+        with self._lock:
+            return self._failed
 
     def any_failure(self) -> bool:
         with self._lock:
@@ -662,15 +914,20 @@ def _download_one(
     *,
     display: Optional["_DownloadDisplay"] = None,
     task_id: Optional[int] = None,
+    force: bool = False,
 ) -> Tuple[str, int, Optional[str]]:
     """Download and extract one dataset.
 
     Returns a ``(status, files_extracted, error)`` triple with ``status`` one
     of ``"skip"`` (already present), ``"done"``, or ``"error"``. When
     ``display`` is given the dataset's progress is rendered into its slot row.
+    With ``force`` the dataset's markers/partials are reset first so it is
+    re-downloaded and re-extracted from scratch.
     """
     name: str = spec["name"]
-    if _is_already_present(output_dir, spec):
+    if force:
+        _reset_download_state(output_dir, key, spec)
+    elif _is_already_present(key, spec, output_dir):
         if display is not None:
             display.finish_task(task_id, name, "skip")
         return "skip", 0, None
@@ -679,12 +936,14 @@ def _download_one(
             display.start_task(
                 task_id, name, _dataset_size_mb(spec) * 1_048_576
             )
-            n_files: int = _download_and_extract_rich(spec, output_dir, display, task_id)
+            n_files: int = _download_and_extract_rich(
+                key, spec, output_dir, display, task_id
+            )
         else:
             n_files = _download_and_extract(key, spec, output_dir)
     except Exception as exc:  # noqa: BLE001 - per-dataset failure isolation
         if display is not None:
-            display.finish_task(task_id, name, "error")
+            display.finish_task(task_id, name, "error", error=str(exc))
         return "error", 0, str(exc)
     if display is not None:
         display.finish_task(task_id, name, "done")
@@ -692,7 +951,7 @@ def _download_one(
 
 
 def _download_and_extract_rich(
-    spec: Dict, output_dir: Path, display: "_DownloadDisplay", task_id: int
+    key: str, spec: Dict, output_dir: Path, display: "_DownloadDisplay", task_id: int
 ) -> int:
     """Rich path: download every source into the display's slot row, then extract.
 
@@ -706,29 +965,49 @@ def _download_and_extract_rich(
     bytes_before: int = 0
     files_extracted: int = 0
 
-    for source in spec["sources"]:
+    for index, source in enumerate(spec["sources"]):
+        display_name = f"{spec['name']} ({Path(source['url']).name})"
 
-        def reporthook(block_num: int, block_size: int, total_size: int) -> None:
-            display.on_progress(task_id, bytes_before + block_num * block_size, total_bytes)
+        def progress(downloaded: int, total: int) -> None:
+            if total > 0:
+                display.on_progress(
+                    task_id, bytes_before + downloaded, bytes_before + total
+                )
+            else:
+                display.on_progress(task_id, bytes_before + downloaded, total_bytes)
 
         if source["kind"] == "file":
             dest = dataset_dir / source["target_subdir"] / source["filename"]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            urlretrieve(source["url"], dest, reporthook=reporthook)
+            part = dest.with_name(dest.name + ".part")
+            _download_file(
+                source["url"],
+                part,
+                name=display_name,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                progress=progress,
+            )
+            os.replace(part, dest)
             files_extracted += 1
         else:
-            tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=f".{source['kind']}")
-            tmp_path: str = tmp_fd.name
-            tmp_fd.close()
-            try:
-                urlretrieve(source["url"], tmp_path, reporthook=reporthook)
-                display.on_extracting(task_id, name)
-                files_extracted += _extract_archive(
-                    tmp_path, source["kind"], source["extract_map"], dataset_dir
-                )
-            finally:
-                Path(tmp_path).unlink(missing_ok=True)
+            part = _partial_path(output_dir, key, index, source)
+            _download_file(
+                source["url"],
+                part,
+                name=display_name,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                progress=progress,
+            )
+            display.on_extracting(task_id, name)
+            files_extracted += _extract_archive(
+                str(part), source["kind"], source["extract_map"], dataset_dir
+            )
+            Path(part).unlink(missing_ok=True)  # partial removed only on full success
 
+        _write_marker(output_dir, key, index, source)
         bytes_before += int(source.get("size_mb", 0)) * 1_048_576
 
     return files_extracted
@@ -740,6 +1019,7 @@ def _slot_worker(
     work_queue: "queue.Queue[str]",
     display: "_DownloadDisplay",
     output_dir: Path,
+    force: bool = False,
 ) -> bool:
     """Drain the shared queue, one dataset per slot row. Returns True on error."""
     any_failure: bool = False
@@ -749,15 +1029,21 @@ def _slot_worker(
         except queue.Empty:
             return any_failure
         spec = DATASETS[key]
-        status, _n_files, _error = _download_one(
-            key, spec, output_dir, display=display, task_id=task_id
+        status, _n_files, error = _download_one(
+            key, spec, output_dir, display=display, task_id=task_id, force=force
         )
         if status == "error":
             any_failure = True
+            # Visible during the run and in scrollback, not just in the live display.
+            print(f"[error] {spec['name']}: {error}", file=sys.stderr)
 
 
 def _run_rich(
-    selected: List[str], output_dir: Path, jobs: int, display: "_DownloadDisplay"
+    selected: List[str],
+    output_dir: Path,
+    jobs: int,
+    display: "_DownloadDisplay",
+    force: bool = False,
 ) -> bool:
     """Download selected datasets through the rich display. Returns True on error."""
     work_queue: "queue.Queue[str]" = queue.Queue()
@@ -767,7 +1053,13 @@ def _run_rich(
     executor = ThreadPoolExecutor(max_workers=slots)
     futures = [
         executor.submit(
-            _slot_worker, slot, display.tasks[slot], work_queue, display, output_dir
+            _slot_worker,
+            slot,
+            display.tasks[slot],
+            work_queue,
+            display,
+            output_dir,
+            force,
         )
         for slot in range(slots)
     ]
@@ -780,17 +1072,25 @@ def _run_rich(
         raise
     else:
         executor.shutdown(wait=True)
+    if display.any_failure():
+        # Per-failure messages were already printed by _slot_worker; this is
+        # just the final tally.
+        print(
+            f"download finished: {display.done_count()} done, "
+            f"{display.skipped_count()} skipped, {display.failed_count()} failed",
+            file=sys.stderr,
+        )
     return display.any_failure() or any(f.result() for f in futures)
 
 
-def _run_plain(selected: List[str], output_dir: Path, jobs: int) -> bool:
+def _run_plain(selected: List[str], output_dir: Path, jobs: int, force: bool = False) -> bool:
     """Download selected datasets with the plain stdlib output. Returns True on error."""
     any_failure: bool = False
 
     def worker(key: str) -> bool:
         spec = DATASETS[key]
         dataset_dir: Path = output_dir / spec["corpus_subdir"]
-        status, n_files, error = _download_one(key, spec, output_dir)
+        status, n_files, error = _download_one(key, spec, output_dir, force=force)
         if status == "skip":
             print(f"[skip] {spec['name']} — already present at {dataset_dir}")
         elif status == "done":
@@ -822,6 +1122,35 @@ def _run_plain(selected: List[str], output_dir: Path, jobs: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _check_disk_space(output_dir: Path, specs: List[Dict]) -> Optional[str]:
+    """Return an error message when the output filesystem lacks room, else None.
+
+    Needed space is the sum of the selected datasets' declared sizes plus a
+    5% headroom. ``shutil.disk_usage`` requires an existing path, so when
+    ``output_dir`` does not exist yet the nearest existing ancestor is probed
+    instead. Any OSError (e.g. an unmounted path) disables the check.
+    """
+    needed: float = sum(_dataset_size_mb(s) for s in specs) * 1_048_576 * 1.05
+    probe: Path = output_dir
+    while not probe.exists():
+        parent = probe.parent
+        if parent == probe:
+            return None
+        probe = parent
+    try:
+        usage = shutil.disk_usage(probe)
+    except OSError:
+        return None
+    if usage.free < needed:
+        needed_gb: float = needed / (1024**3)
+        free_gb: float = usage.free / (1024**3)
+        return (
+            f"not enough free space on {output_dir}: need ~{needed_gb:.1f} GB, "
+            f"{free_gb:.1f} GB available"
+        )
+    return None
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -851,6 +1180,7 @@ def _parse_args() -> argparse.Namespace:
                 "  python scripts/download_datasets.py bsed",
                 "  python scripts/download_datasets.py --all",
                 "  python scripts/download_datasets.py --all --jobs 4",
+                "  python scripts/download_datasets.py maestro-v3-midi --force",
                 "  python scripts/download_datasets.py  (interactive picker on a TTY)",
             ]
         ),
@@ -871,6 +1201,14 @@ def _parse_args() -> argparse.Namespace:
         "--list",
         action="store_true",
         help="Print available datasets and exit.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-download and re-extract selected datasets even if already "
+            "present or partially complete."
+        ),
     )
     parser.add_argument(
         "--jobs",
@@ -932,6 +1270,12 @@ def main() -> int:
             return 1
         selected = [args.dataset]
 
+    if selected:
+        problem = _check_disk_space(output_dir, [DATASETS[k] for k in selected])
+        if problem is not None:
+            print(f"error: {problem}", file=sys.stderr)
+            return 1
+
     try:
         if _use_rich_output() and selected:
             display = _DownloadDisplay(
@@ -940,9 +1284,13 @@ def main() -> int:
                 total_datasets=len(selected),
                 total_mb=sum(_dataset_size_mb(DATASETS[k]) for k in selected),
             )
-            any_failure = _run_rich(selected, output_dir, args.jobs, display)
+            any_failure = _run_rich(
+                selected, output_dir, args.jobs, display, force=args.force
+            )
         else:
-            any_failure = _run_plain(selected, output_dir, args.jobs)
+            any_failure = _run_plain(
+                selected, output_dir, args.jobs, force=args.force
+            )
     except KeyboardInterrupt:
         if _use_rich_output():
             _RichConsole().print("[yellow]Interrupted — partial results kept[/yellow]")

@@ -26,6 +26,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wall-clock in `elapsed_seconds` (previously hardcoded to `0.0`),
   benefiting `sonitra render`, the API worker, and benchmark render
   aggregates
+- `scripts/download_datasets.py`: downloads now resume from partial files
+  via HTTP `Range` requests (partials are kept under
+  `<output-dir>/.downloads/` instead of being deleted on failure), retry up
+  to 4 times with 3/10/30 s backoff on transient errors (timeouts, resets,
+  408/429/5xx), validate the received size against `Content-Length`, send a
+  `User-Agent` header, and use a 60 s socket timeout so stalled connections
+  fail visibly instead of hanging
+- `scripts/download_datasets.py`: per-source completion markers under
+  `<output-dir>/.downloads/` — a dataset counts as present only when all of
+  its sources are marked complete (legacy dirs-non-empty check kept as a
+  fallback for pre-existing corpora), so a failed download/extraction can no
+  longer silently mark a dataset as "already present"
+- `scripts/download_datasets.py`: atomic extraction — each archive member is
+  written to a `.part` file and moved into place only after the copy
+  completes, so a corrupt/truncated member never leaves a bad file at its
+  final path; `file`-kind sources use the same `.part` + rename pattern
+- `scripts/download_datasets.py`: new `--force` flag to discard
+  markers/partials and re-download a dataset from scratch; disk-space
+  preflight aborts before downloading when the output filesystem lacks room
+  (declared size + 5% headroom)
+
+### Fixed
+
+- `scripts/download_datasets.py`: failed downloads are now visible — the rich
+  display no longer swallows per-dataset errors (each failure prints
+  `[error] <name>: <message>` to stderr during the run, with a final
+  done/skipped/failed tally after the display exits), and rich's Live no
+  longer redirects stderr so messages also reach `2>` redirects
 
 ## [0.3.0] - 2026-08-14
 
