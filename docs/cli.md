@@ -25,5 +25,7 @@ sonitra benchmark --config config/benchmark/old_recording/vintage_scenarios.yaml
 
 `scripts/export_regression_table.py --work-dir DIR [--metadata-csv FILE --metadata-join-column NAME]` turns a benchmark's results JSONL into a per-file regression-ready CSV, optionally joined with a downloaded dataset's metadata (see `docs/datasets.md`).
 
+`scripts/run_mixed_effects_analysis.py --work-dir DIR [--input FILE] [--output-dir DIR] [--ref-level NAME] [--rscript PATH] [--dry-run]` fits a beta mixed-effects model to that exported table, writing the results to `regression_analysis/` beside it. Requires R with `glmmTMB` (see [Statistical analysis](statistical-analysis.md)).
+
 ---
 [← Back to README](../README.md)

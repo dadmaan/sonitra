@@ -104,6 +104,14 @@ NaN values are written as `null` in JSONL and as empty cells `""` in CSV.
 
 The script accepts `--jobs N` (default: 1) to process N configs in parallel; each config's render→transcribe→evaluate steps still run serially within the worker. Use `--skip-render` to reuse previously rendered audio.
 
+`scripts/run_mixed_effects_analysis.py` fits the condition-effect mixed model on a table from `export_regression_table.py` (which must have been run with `--metadata-csv`, since the model needs the `meta.*` columns):
+
+```
+note.onset_f1 ~ condition + duration + year + (1 | song) + (1 | composer),  family = beta_family(logit)
+```
+
+ **R** executes via `scripts/mixed_effects_analysis.R`; no crossed random effects beta GLMM in Python stack. Python handles validation/reporting, calls `Rscript` (not rpy2) ensuring standalone R runnable and ABI-bound C extensions. Requires R with `glmmTMB`, `jsonlite`; `--rscript` or `$SONITRA_RSCRIPT` overrides interpreter. Output to `regression_analysis/` alongside input CSV (`model_summary.txt`, `fixed_effects.csv`, `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`). Model spec copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R`; do not improve.
+
 ### Config directory (`config/`)
 
 `config/source.yaml` is the fully-annotated reference config documenting every parameter (not a runnable pipeline config). Runnable preset configs are split across two subdirectories — these are not test fixtures (those live in `tests/fixtures/`):

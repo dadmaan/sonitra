@@ -45,6 +45,8 @@ python scripts/export_regression_table.py \
   --metadata-join-column midi_filename
 ```
 
+The joined table is the input `scripts/run_mixed_effects_analysis.py` expects — see [Statistical analysis](statistical-analysis.md).
+
 The join is dataset-agnostic: `--metadata-join-column` names whichever column of the CSV holds a filename (MAESTRO's is `midi_filename`; MusicNet's or a future dataset's may differ), matched against a benchmark row's file by basename. Every other column of a matched row is added as `meta.<column>` — no assumption that datasets share a composer/work vocabulary, since they don't (MusicNet's metadata has `movement`/`ensemble`, MAESTRO's doesn't).
 
 ---

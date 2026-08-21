@@ -90,6 +90,31 @@ RUN apt-get update \
         tmux \
     && rm -rf /var/lib/apt/lists/*
 
+# R + glmmTMB for scripts/run_mixed_effects_analysis.py, which fits the
+# benchmark condition-effect model. That model is a beta GLMM with crossed
+# random effects, which has no equivalent in the Python statistics stack, so
+# the fit happens in R (scripts/mixed_effects_analysis.R) and Python drives it.
+#
+# Debian's r-cran-* packages are prebuilt and ABI-matched to r-base-core, so
+# nothing compiles here. Installing glmmTMB via install.packages() instead
+# would pull TMB + RcppEigen from source plus a full toolchain, and is the
+# usual source of the "glmmTMB was built with TMB version X" mismatch.
+#
+# Gated because it adds roughly 400 MB to an image whose main job is audio
+# rendering and transcription, not statistics: build with
+# `--build-arg INSTALL_R=0` to leave it out. The library() check fails the
+# build loudly rather than leaving an R that only breaks at analysis time.
+ARG INSTALL_R=1
+RUN if [ "$INSTALL_R" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends \
+            r-base-core \
+            r-cran-glmmtmb \
+            r-cran-jsonlite \
+        && Rscript -e 'library(glmmTMB); library(jsonlite)' \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Bring uv into the runtime image — it is used by the default CMD.
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 
@@ -202,6 +227,29 @@ RUN apt-get update \
     && ln -sf /usr/local/bin/python3.11 /usr/local/bin/python3 \
     && ln -sf /usr/local/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
+
+# R + glmmTMB for scripts/run_mixed_effects_analysis.py — same rationale as the
+# CPU runtime stage above, but sourced from jammy's universe repo (already in
+# use here for python3.11) rather than Debian's. Ubuntu builds r-base-core,
+# r-cran-glmmtmb, and r-cran-tmb together in one archive, so they are
+# ABI-matched to each other and nothing compiles.
+#
+# NOTE: jammy pins an older stack than the Debian-based CPU image — R 4.1.2 /
+# glmmTMB 1.1.2.3 / TMB 1.7.22, against R 4.5 / glmmTMB 1.1.10 there. The model
+# fits the same on both, but estimates need not agree to the last digit across
+# glmmTMB versions, so do not mix results from the two images in one analysis.
+# Every run records its exact versions in model_meta.json; check there first if
+# two runs disagree.
+ARG INSTALL_R=1
+RUN if [ "$INSTALL_R" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends \
+            r-base-core \
+            r-cran-glmmtmb \
+            r-cran-jsonlite \
+        && Rscript -e 'library(glmmTMB); library(jsonlite)' \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 

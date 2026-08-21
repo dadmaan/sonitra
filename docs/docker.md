@@ -77,5 +77,16 @@ Swap `--profile cpu run --rm sonitra` for `--profile gpu run --rm sonitra-gpu` t
 
 Set `SONITRA_CONFIG` in `.env` to point at a different config path inside the container (default: `/app/config/config.yaml`).
 
+## R (statistical analysis)
+
+Both images install R with `glmmTMB` and `jsonlite`, so `scripts/run_mixed_effects_analysis.py` works without extra setup (see [Statistical analysis](statistical-analysis.md)). It adds roughly 400 MB; set `INSTALL_R=0` in `.env` to leave it out of either build if you never fit the model:
+
+```bash
+echo "INSTALL_R=0" >> .env
+docker compose -f docker/docker-compose.yml --profile cpu build   # or --profile gpu
+```
+
+The two images ship **different versions** of the R stack, because they sit on different bases: the CPU image (Debian) has R 4.5 with glmmTMB 1.1.10, the GPU image (Ubuntu 22.04) has R 4.1.2 with glmmTMB 1.1.2.3. Both fit the same model, but estimates need not agree to the last digit across glmmTMB versions — so don't mix results from the two images within one analysis. Each run records the exact versions it used in `model_meta.json`.
+
 ---
 [← Back to README](../README.md)
