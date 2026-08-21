@@ -72,6 +72,7 @@ markers = [
     "skip_if_no_vst: requires a real VST plugin path",
     "integration: end-to-end tests requiring a VST",
     "slow: tests that invoke optional/heavy backends such as basic-pitch",
+    "requires_r: requires an R install with glmmTMB (skipped when absent)",
 ]
 
 [build-system]

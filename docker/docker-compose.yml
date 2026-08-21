@@ -64,6 +64,9 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+        # R + glmmTMB for scripts/run_mixed_effects_analysis.py. Set
+        # INSTALL_R=0 in .env to drop ~400 MB if you never fit the model.
+        INSTALL_R: ${INSTALL_R:-1}
     image: sonitra:latest
     ports:
       - "8000:8000"
@@ -84,6 +87,9 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+        # R + glmmTMB for scripts/run_mixed_effects_analysis.py. Set
+        # INSTALL_R=0 in .env to drop ~400 MB if you never fit the model.
+        INSTALL_R: ${INSTALL_R:-1}
     image: sonitra:gpu
     ports:
       - "8000:8000"

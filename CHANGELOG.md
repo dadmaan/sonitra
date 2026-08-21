@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Mixed-effects benchmark analysis: `scripts/run_mixed_effects_analysis.py`
+  fits a beta mixed-effects model (`note.onset_f1 ~ condition + duration +
+  year + (1 | song) + (1 | composer)`, logit link) to a regression table
+  exported by `scripts/export_regression_table.py --metadata-csv`, separating
+  each condition's effect on transcription accuracy from the difficulty of the
+  individual pieces. The fit runs in R (`scripts/mixed_effects_analysis.R`,
+  `glmmTMB`) driven as a subprocess; Python owns input validation, provenance,
+  and reporting. Requires R with `glmmTMB`/`jsonlite` (`--rscript` /
+  `$SONITRA_RSCRIPT` override the interpreter). Outputs `regression_analysis/`
+  next to the input CSV (`model_summary.txt`, `fixed_effects.csv`,
+  `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`). Model spec
+  is copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R` — do
+  not improve
+- `docs/statistical-analysis.md`: new page documenting the model, R
+  requirements, input prep, and run steps; linked from `README.md`,
+  `docs/cli.md`, and `docs/datasets.md`
+- Docker CPU/GPU/devcontainer images now install R + `glmmTMB` + `jsonlite` so
+  the analysis runs without extra setup; gated by a new `INSTALL_R` build arg
+  (default `1`) on the two `docker/Dockerfile` stages and threaded through
+  `docker/docker-compose.yml` (set `INSTALL_R=0` in `.env` to drop ~400 MB).
+  The two images ship different R/glmmTMB versions (Debian R 4.5 / glmmTMB
+  1.1.10 vs Ubuntu 22.04 R 4.1.2 / glmmTMB 1.1.2.3); both fit the same model but
+  estimates need not agree to the last digit, so don't mix results across
+  images — each run records exact versions in `model_meta.json`
+- `pyproject.toml`: new `requires_r` pytest marker for tests needing an R
+  install with `glmmTMB` (skipped when absent)
 - Benchmark timing recording, always on (no new config keys): each
   `benchmark_results.jsonl` record gains per-cell wall-clock
   `render_seconds`, `separate_seconds`, `transcribe_seconds`, and

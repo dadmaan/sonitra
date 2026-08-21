@@ -185,6 +185,10 @@ See **[docs/configuration.md](docs/configuration.md)** for the full section refe
 
 Note-level, frame-level, and expressive-performance metrics (mir_eval-compatible matching, implemented in NumPy/SciPy), plus an optional audio-level DTW metric. See **[docs/evaluation.md](docs/evaluation.md)** for the full metric family table.
 
+## Statistical analysis
+
+`python scripts/run_mixed_effects_analysis.py --work-dir DIR` fits a mixed-effects regression to a benchmark run, separating each condition's effect on transcription accuracy from the difficulty of the individual pieces. Requires R with `glmmTMB`; see **[docs/statistical-analysis.md](docs/statistical-analysis.md)**.
+
 ## Python API and REST API
 
 Sonitra can be driven programmatically (`run_pipeline`) or via a FastAPI server (`sonitra serve --port 8000`). See **[docs/python-api.md](docs/python-api.md)** and **[docs/rest-api.md](docs/rest-api.md)**.

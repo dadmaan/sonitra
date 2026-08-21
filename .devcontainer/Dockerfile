@@ -72,6 +72,25 @@ RUN apt-get update \
   timidity \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# R + glmmTMB for scripts/run_mixed_effects_analysis.py, which fits the
+# benchmark condition-effect model (a beta GLMM with crossed random effects —
+# there is no equivalent in the Python statistics stack, so the fit happens in
+# R and Python drives it).
+#
+# Debian's r-cran-* packages are prebuilt and ABI-matched to r-base-core, so
+# nothing compiles here. Installing glmmTMB via install.packages() instead
+# would pull in TMB + RcppEigen from source and a full toolchain, and is the
+# usual source of the "glmmTMB was built with TMB version X" mismatch.
+# Costs roughly 400 MB. The library() check fails the build loudly rather than
+# leaving an R that only breaks at analysis time.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+  r-base-core \
+  r-cran-glmmtmb \
+  r-cran-jsonlite \
+  && Rscript -e 'library(glmmTMB); library(jsonlite)' \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Install Node.js 20
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 apt-get install -y nodejs
