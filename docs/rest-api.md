@@ -1,5 +1,5 @@
+<!--In progress-->
 # REST API
-
 Start the server with `sonitra serve --port 8000` or programmatically:
 
 ```python
