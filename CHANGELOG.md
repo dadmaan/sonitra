@@ -95,6 +95,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   basename) with every other column added as `meta.<column>` — dataset
   agnostic, since datasets don't share a composer/work vocabulary (MAESTRO's
   metadata has `midi_filename`; MusicNet's has `movement`/`ensemble`)
+- `config/benchmark/paper_experiments/`: paper-run degradation studies —
+  `piano_only.yaml` (moved from `config/benchmark/20260814_experiment/`,
+  header stripped, `save_audio` now `false`) and new `guitar_only.yaml`
+  (amp/cabinet/slapback/room chain); both run in audio-input mode
+
+### Changed
+
+- Agent guidance moved from `CLAUDE.md` to `AGENT.md` (`CLAUDE.md` is now a
+  one-line pointer); wording generalised from Claude Code to coding agents
+- `scripts/run_mixed_effects_analysis.py`: default input table renamed from
+  `regression_table_with_metadata.csv` to `regression_table.csv` to match
+  `export_regression_table.py` output
+- `.gitignore`: ignore `misc/` local workspace
+- `pyproject.toml` now declares the licence as an SPDX identifier
+  (`AGPL-3.0-or-later`), previously omitted; the README licence section
+  notes third-party GPLv3 components (`pedalboard`, `dawdreamer`) and
+  dataset licences, which Sonitra's licence does not cover
 
 ### Fixed
 

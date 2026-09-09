@@ -43,7 +43,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 R_SCRIPT = SCRIPT_DIR / "mixed_effects_analysis.R"
 
-DEFAULT_TABLE_NAME = "regression_table_with_metadata.csv"
+DEFAULT_TABLE_NAME = "regression_table.csv"
 OUTPUT_DIR_NAME = "regression_analysis"
 
 RESPONSE_COLUMN = "note.onset_f1"

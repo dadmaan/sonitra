@@ -1,17 +1,3 @@
-# Factorial degradation study (draft, 2026-08-13).
-# Full factorial: instrument (timbre) x reverb x chorus x distortion.
-#   3 x 3 x 2 x 3 = 54 cells; the all-off piano cell is the baseline, so
-#   53 named conditions + baseline = 54 runs.
-# Base state: fluidsynth, all three effects disabled (clean piano).
-# Conditions enable/configure effects and swap the soundfont per instrument.
-#
-# NOTE: e_piano / organ soundfont paths are placeholders - supply the files
-# before running (see appendix). baseline = clean piano, no effects.
-# Normalisation is RMS (equal loudness across conditions), not peak - peak
-# normalisation would confound the distortion/reverb factors with gain.
-#
-# Usage:
-#   sonitra benchmark --config config/benchmark/factorial_degradation.yaml --dataset <name>
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -135,7 +121,7 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  save_audio: true
+  save_audio: false
   resume: true
   conditions:
     - name: inst=piano_reverb=off_chorus=off_dist=15

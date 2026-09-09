@@ -211,3 +211,5 @@ Set `VST_PATH` or `VST3_PATH` in your environment to enable VST-dependent tests.
 ## License
 
 Sonitra is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE) (`AGPL-3.0-or-later`).
+
+Third-party dependencies are distributed under their own terms, including GPLv3 components (`pedalboard`, `dawdreamer`). Datasets downloaded by `scripts/download_datasets.py` carry their own licences (e.g. MAESTRO is CC BY-NC-SA 4.0) and are not covered by this licence.
