@@ -57,6 +57,29 @@ python scripts/export_regression_table.py \
 
 Without `--metadata-csv` the table has no `meta.*` columns and the script stops with an explanation. See [datasets.md](datasets.md#joining-dataset-metadata-into-a-benchmark-export) for the join.
 
+### Composition year (optional enrichment)
+
+`meta.year` is MAESTRO's competition year (2004–2018). It indexes the recording batch, not the music. `misc/MAESTRO_comp_year.txt` carries an AI-compiled composition (finalization) year per work. Use it when the question is about the age of the music rather than the recording session. It spans 1612–2006 across 60 composers, most with works in several different years, so it is not collinear with the `(1 | composer)` intercept.
+
+Enrich the metadata first, then export against the enriched file. The export flags are unchanged:
+
+```bash
+python scripts/enrich_metadata.py \
+  --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --annotations misc/MAESTRO_comp_year.txt --annotations-delimiter '|' \
+  --on canonical_composer=Composer --on canonical_title=Piece \
+  --add Year=composition_year \
+  --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv
+
+python scripts/export_regression_table.py \
+  --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT \
+  --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv \
+  --metadata-join-column midi_filename \
+  --output corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT/regression_table_with_metadata.csv
+```
+
+The regression table gains `meta.composition_year`. The script writes `<output>.provenance.json` (input SHA-256s, argv, coverage) alongside the enriched CSV. Annotation quoting is disabled by default (the comp-year file has unbalanced quotes); `--require-full-coverage` exits non-zero on any unmatched row.
+
 ## Running it
 
 ```bash

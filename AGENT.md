@@ -112,6 +112,22 @@ note.onset_f1 ~ condition + duration + year + (1 | song) + (1 | composer),  fami
 
  **R** executes via `scripts/mixed_effects_analysis.R`; no crossed random effects beta GLMM in Python stack. Python handles validation/reporting, calls `Rscript` (not rpy2) ensuring standalone R runnable and ABI-bound C extensions. Requires R with `glmmTMB`, `jsonlite`; `--rscript` or `$SONITRA_RSCRIPT` overrides interpreter. Output to `regression_analysis/` alongside input CSV (`model_summary.txt`, `fixed_effects.csv`, `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`). Model spec copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R`; do not improve.
 
+`scripts/enrich_metadata.py` left-joins any delimited annotation table onto any dataset metadata CSV on a composite key, producing an enriched CSV for the unchanged `export_regression_table.py --metadata-csv` flow (two-step: enrich first, then export):
+
+```
+python scripts/enrich_metadata.py \
+    --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+    --annotations misc/MAESTRO_comp_year.txt --annotations-delimiter '|' \
+    --on canonical_composer=Composer --on canonical_title=Piece \
+    --add Year=composition_year \
+    --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv
+python scripts/export_regression_table.py --work-dir <benchmark-dir> \
+    --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv \
+    --metadata-join-column midi_filename
+```
+
+Annotation parsing defaults to quoting-disabled (QUOTE_NONE semantics, like R `quote=""`) because the comp-year file has unbalanced quotes; the base metadata stays RFC4180 (`--annotations-quotechar '"'` opts an annotation file into RFC4180). Join keys are stripped tuples, never pasted strings; first row wins on duplicate keys (identical vs conflicting counted separately); unmatched rows get blank cells; `<output>.provenance.json` records input sha256s, argv, coverage, and duplicate-key counts. `--require-full-coverage` turns partial coverage into a non-zero exit; `--output` never clobbers `--metadata`.
+
 ### Config directory (`config/`)
 
 `config/source.yaml` is the fully-annotated reference config documenting every parameter (not a runnable pipeline config). Runnable preset configs are split across two subdirectories — these are not test fixtures (those live in `tests/fixtures/`):

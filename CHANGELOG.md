@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/enrich_metadata.py`: dataset-agnostic enrichment that left-joins
+  any delimited annotation table onto any dataset metadata CSV on a
+  composite key, producing an enriched CSV for the unchanged
+  `export_regression_table.py --metadata-csv` flow. First use joins
+  `misc/MAESTRO_comp_year.txt` (AI-compiled composition year per work,
+  `Composer|Piece|Year`) onto MAESTRO metadata
+  (`--on canonical_composer=Composer --on canonical_title=Piece
+  --add Year=composition_year`), so the regression table gains
+  `meta.composition_year` — the age of the music, distinct from MAESTRO's
+  competition/recording-batch `meta.year`. Join keys are stripped tuples
+  (never pasted strings); annotation quoting is disabled by default (the
+  comp-year file has unbalanced quotes) with `--annotations-quotechar` to
+  opt into RFC4180; unmatched rows get blank cells; `--require-full-coverage`
+  exits non-zero on partial coverage; `--output` never clobbers `--metadata`;
+  every run writes `<output>.provenance.json` (input SHA-256s, argv,
+  coverage, duplicate-key counts). Covered by
+  `tests/test_enrich_metadata.py` (27 tests) and documented in
+  `AGENT.md` plus a new `docs/statistical-analysis.md` subsection
 - Mixed-effects benchmark analysis: `scripts/run_mixed_effects_analysis.py`
   fits a beta mixed-effects model (`note.onset_f1 ~ condition + duration +
   year + (1 | song) + (1 | composer)`, logit link) to a regression table
