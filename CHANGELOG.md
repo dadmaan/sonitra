@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AGENT.md` plus a new `docs/statistical-analysis.md` subsection
 - Mixed-effects benchmark analysis: `scripts/run_mixed_effects_analysis.py`
   fits a beta mixed-effects model (`note.onset_f1 ~ condition + duration +
-  year + (1 | song) + (1 | composer)`, logit link) to a regression table
+  performance_year + (1 | song) + (1 | composer)`, logit link) to a regression table
   exported by `scripts/export_regression_table.py --metadata-csv`, separating
   each condition's effect on transcription accuracy from the difficulty of the
   individual pieces. The fit runs in R (`scripts/mixed_effects_analysis.R`,
@@ -40,6 +40,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`). Model spec
   is copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R` — do
   not improve
+- Mixed-effects covariate models: `scripts/run_mixed_effects_analysis.py`
+  gains a generic `--covariate COL` (plus `--covariate-transform
+  none|center|center-scale`, `--covariate-divisor N` default `100`, and
+  `--interact-with-condition`) fitting the nested set `base` ->
+  `<covariate>` -> `<covariate>_x_condition`. First use is
+  `--covariate meta.composition_year`. Competition year is renamed
+  `year` -> `performance_year` (CSV columns unchanged); `center-scale` is a
+  fixed divisor (default `/100`, per century), not an SD, so estimates stay
+  comparable across reruns. Every model fits on one complete-case subset with
+  raised optimizer limits (`iter.max`/`eval.max` 10000) after a convergence
+  fix (the interaction previously reported an unconverged AIC `-59344.33`
+  vs `-59410.55` converged); outputs add `model_comparison.csv`,
+  `models/<label>/` per-model artifacts, and `model_meta.json` additions
+   (`primary_model`, `models`, `covariate`, `n_complete`,
+   `n_dropped_covariate`); `--dry-run` lists the model set. The pre-covariate
+   R spec is preserved byte-identical as
+   `scripts/mixed_effects_analysis_LEGACY.R` for provenance
 - `docs/statistical-analysis.md`: new page documenting the model, R
   requirements, input prep, and run steps; linked from `README.md`,
   `docs/cli.md`, and `docs/datasets.md`

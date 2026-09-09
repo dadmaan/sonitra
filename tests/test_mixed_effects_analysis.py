@@ -49,6 +49,7 @@ def _row(**overrides: object) -> dict[str, object]:
         "meta.canonical_composer": "Bach",
         "meta.duration": 300.0,
         "meta.year": 2011,
+        "meta.composition_year": 1900,
     }
     row.update(overrides)
     return row
@@ -82,6 +83,9 @@ def _balanced_rows(
                         "meta.canonical_composer": f"composer_{song_index % 3}",
                         "meta.duration": 120.0 + 30.0 * song_index,
                         "meta.year": 2004 + (song_index % 8),
+                        # A song-level attribute: constant across the conditions
+                        # of one song, varying across songs.
+                        "meta.composition_year": 1750 + 7 * song_index,
                     },
                 )
             )
@@ -256,6 +260,137 @@ def test_main_dry_run_reports_without_invoking_r(
 
 
 # --------------------------------------------------------------------------
+# covariate support (PLAN §6 items 1-8: no R required)
+# --------------------------------------------------------------------------
+
+
+def test_missing_columns_includes_covariate_when_requested(mea: ModuleType) -> None:
+    header = [column for column in _row() if column != "meta.composition_year"]
+    assert mea.missing_columns(header, covariate="meta.composition_year") == [
+        "meta.composition_year"
+    ]
+
+
+def test_missing_columns_empty_when_covariate_present(mea: ModuleType) -> None:
+    assert mea.missing_columns(list(_row()), covariate="meta.composition_year") == []
+
+
+def test_summarise_input_counts_blank_covariate_cells(
+    mea: ModuleType, tmp_path: Path
+) -> None:
+    rows = [
+        _row(song="a"),
+        _row(song="b", **{"meta.composition_year": ""}),
+        _row(song="c", **{"meta.composition_year": "NA"}),
+    ]
+    path = _write_csv(tmp_path / "table.csv", rows)
+    summary = mea.summarise_input(path, covariate="meta.composition_year")
+    assert summary.n_missing_covariate == 2
+    # Without a covariate requested, the count stays at its default.
+    assert mea.summarise_input(path).n_missing_covariate == 0
+
+
+def test_build_command_passes_covariate_flags_through(
+    mea: ModuleType, tmp_path: Path
+) -> None:
+    command = mea.build_command(
+        rscript="/usr/bin/Rscript",
+        r_script=R_SCRIPT_PATH,
+        csv_path=tmp_path / "in.csv",
+        output_dir=tmp_path / "out",
+        ref_level="baseline",
+        covariate="meta.composition_year",
+        covariate_transform="center",
+        covariate_divisor=50,
+        interact_with_condition=True,
+    )
+    assert command[command.index("--covariate") + 1] == "meta.composition_year"
+    assert command[command.index("--covariate-transform") + 1] == "center"
+    assert command[command.index("--covariate-divisor") + 1] == "50"
+    assert "--interact-with-condition" in command
+
+    plain = mea.build_command(
+        rscript="/usr/bin/Rscript",
+        r_script=R_SCRIPT_PATH,
+        csv_path=tmp_path / "in.csv",
+        output_dir=tmp_path / "out",
+        ref_level="baseline",
+    )
+    assert "--covariate" not in plain
+    assert "--covariate-transform" not in plain
+    assert "--covariate-divisor" not in plain
+    assert "--interact-with-condition" not in plain
+
+
+def test_main_rejects_interact_without_covariate(
+    mea: ModuleType, tmp_path: Path, capsys
+) -> None:
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=4))
+    code = mea.main(["--input", str(path), "--interact-with-condition"])
+    assert code != 0
+    assert "--covariate" in capsys.readouterr().err
+
+
+def test_main_errors_when_covariate_absent_from_header(
+    mea: ModuleType, tmp_path: Path, capsys
+) -> None:
+    rows = _balanced_rows(n_songs=4)
+    for row in rows:
+        row.pop("meta.composition_year")
+    path = _write_csv(tmp_path / "table.csv", rows)
+    code = mea.main(["--input", str(path), "--covariate", "meta.composition_year"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "meta.composition_year" in err
+    assert "enrich_metadata.py" in err
+
+
+def test_main_rejects_covariate_with_bad_identifier(
+    mea: ModuleType, tmp_path: Path, capsys
+) -> None:
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=4))
+    code = mea.main(["--input", str(path), "--covariate", "meta.comp-year!"])
+    assert code != 0
+    assert "meta.comp-year!" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("column", ["duration", "meta.duration"])
+def test_main_rejects_covariate_colliding_with_base_term(
+    mea: ModuleType, tmp_path: Path, capsys, column: str
+) -> None:
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=4))
+    code = mea.main(["--input", str(path), "--covariate", column])
+    assert code != 0
+    assert column in capsys.readouterr().err
+
+
+def test_main_dry_run_lists_model_set_without_invoking_r(
+    mea: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=4))
+
+    def _explode(*args: object, **kwargs: object) -> None:
+        raise AssertionError("R must not be invoked for --dry-run")
+
+    monkeypatch.setattr(mea.subprocess, "run", _explode)
+    code = mea.main(
+        [
+            "--input",
+            str(path),
+            "--dry-run",
+            "--covariate",
+            "meta.composition_year",
+            "--interact-with-condition",
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "base" in out
+    assert "composition_year" in out
+    assert "composition_year_x_condition" in out
+
+
+# --------------------------------------------------------------------------
 # end-to-end against a real R + glmmTMB install
 # --------------------------------------------------------------------------
 
@@ -336,6 +471,107 @@ def test_end_to_end_survives_a_degenerate_fit(mea: ModuleType, tmp_path: Path, c
     meta = json.loads((tmp_path / "regression_analysis" / "model_meta.json").read_text())
     if not (meta["converged"] and meta["positive_definite_hessian"]):
         assert "did not converge" in captured.err
+
+
+@pytest.mark.requires_r
+@pytest.mark.slow
+def test_end_to_end_covariate_run_writes_model_set(
+    mea: ModuleType, tmp_path: Path
+) -> None:
+    rscript = _rscript_or_skip()
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=30))
+    out = tmp_path / "regression_analysis"
+
+    code = mea.main(
+        [
+            "--input",
+            str(path),
+            "--rscript",
+            rscript,
+            "--covariate",
+            "meta.composition_year",
+            "--interact-with-condition",
+        ]
+    )
+    assert code == 0
+
+    assert (out / "model_comparison.csv").exists()
+    for label in ("base", "composition_year", "composition_year_x_condition"):
+        assert (out / "models" / label).is_dir(), f"missing model dir: {label}"
+
+
+@pytest.mark.requires_r
+@pytest.mark.slow
+def test_end_to_end_covariate_models_share_n_obs_with_missing_values(
+    mea: ModuleType, tmp_path: Path
+) -> None:
+    """NA covariate rows must drop from every model, including the base one."""
+    rscript = _rscript_or_skip()
+    rows = _balanced_rows(n_songs=30)
+    for row in rows[::10]:
+        row["meta.composition_year"] = ""
+    path = _write_csv(tmp_path / "table.csv", rows)
+    out = tmp_path / "regression_analysis"
+
+    code = mea.main(
+        [
+            "--input",
+            str(path),
+            "--rscript",
+            rscript,
+            "--covariate",
+            "meta.composition_year",
+            "--interact-with-condition",
+        ]
+    )
+    assert code == 0
+
+    with (out / "model_comparison.csv").open(newline="", encoding="utf-8") as handle:
+        comparison = list(csv.DictReader(handle))
+    assert len(comparison) == 3
+    assert len({row["n_obs"] for row in comparison}) == 1
+
+
+@pytest.mark.requires_r
+@pytest.mark.slow
+def test_end_to_end_default_run_has_performance_year_term(
+    mea: ModuleType, tmp_path: Path
+) -> None:
+    rscript = _rscript_or_skip()
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=30))
+    out = tmp_path / "regression_analysis"
+
+    code = mea.main(["--input", str(path), "--rscript", rscript])
+    assert code == 0
+
+    terms = [row["term"] for row in csv.DictReader((out / "fixed_effects.csv").open())]
+    assert "performance_year" in terms
+    # No covariate: the flat layout is unchanged, no comparison artifacts.
+    assert not (out / "model_comparison.csv").exists()
+    assert not (out / "models").exists()
+
+
+@pytest.mark.requires_r
+@pytest.mark.slow
+def test_end_to_end_covariate_fit_r_is_byte_identical(
+    mea: ModuleType, tmp_path: Path
+) -> None:
+    rscript = _rscript_or_skip()
+    path = _write_csv(tmp_path / "table.csv", _balanced_rows(n_songs=30))
+    out = tmp_path / "regression_analysis"
+
+    code = mea.main(
+        [
+            "--input",
+            str(path),
+            "--rscript",
+            rscript,
+            "--covariate",
+            "meta.composition_year",
+        ]
+    )
+    assert code == 0
+    assert (out / "fit.R").read_bytes() == R_SCRIPT_PATH.read_bytes()
 
 
 def test_r_locale_env_prefers_c_utf8(mea: ModuleType) -> None:
