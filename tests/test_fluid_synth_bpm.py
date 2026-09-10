@@ -81,3 +81,53 @@ def test_tempo_meta_matches_bpm_120(tmp_path: Path) -> None:
     tempos = [msg.tempo for msg in mid.tracks[0] if msg.type == "set_tempo"]
     assert len(tempos) == 1
     assert abs(tempos[0] - 500_000) <= 1   # 60_000_000 / 120 = 500_000
+
+
+# ── Program change handling ──────────────────────────────────────────────
+
+def _sample_notes() -> list[dict]:
+    return [
+        {"pitch": 60, "velocity": 64, "start_sec": 1.0, "duration_sec": 0.5},
+        {"pitch": 64, "velocity": 64, "start_sec": 1.5, "duration_sec": 0.5},
+    ]
+
+
+def test_program_none_writes_no_program_change(tmp_path: Path) -> None:
+    path = tmp_path / "out.mid"
+    _write_notes_to_midi(path, _sample_notes(), bpm=120, program=None)
+    mid = mido.MidiFile(str(path))
+    program_changes = [msg for msg in mid.tracks[0] if msg.type == "program_change"]
+    assert program_changes == []
+
+
+def test_program_24_writes_single_change_before_first_note_on(tmp_path: Path) -> None:
+    path = tmp_path / "out.mid"
+    _write_notes_to_midi(path, _sample_notes(), bpm=120, program=24)
+    mid = mido.MidiFile(str(path))
+    program_changes = [msg for msg in mid.tracks[0] if msg.type == "program_change"]
+    assert len(program_changes) == 1
+    assert program_changes[0].channel == 0
+    assert program_changes[0].program == 24
+    types = [msg.type for msg in mid.tracks[0]]
+    assert types.index("program_change") < types.index("note_on")
+
+
+def test_program_present_with_empty_note_list(tmp_path: Path) -> None:
+    path = tmp_path / "out.mid"
+    _write_notes_to_midi(path, [], bpm=120, program=24)
+    mid = mido.MidiFile(str(path))
+    program_changes = [msg for msg in mid.tracks[0] if msg.type == "program_change"]
+    assert len(program_changes) == 1
+    assert program_changes[0].channel == 0
+    assert program_changes[0].program == 24
+
+
+def test_timing_invariant_holds_with_program_change(tmp_path: Path) -> None:
+    path = tmp_path / "out.mid"
+    _write_notes_to_midi(
+        path,
+        [{"pitch": 60, "velocity": 64, "start_sec": 1.0, "duration_sec": 0.5}],
+        bpm=120,
+        program=24,
+    )
+    assert abs(_parse_onset_sec(path) - 1.0) < 1e-3

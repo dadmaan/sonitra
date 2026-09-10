@@ -99,6 +99,34 @@ def test_fluidsynth_without_soundfont_section_raises() -> None:
     with pytest.raises(ConfigError, match="soundfont_path"):
         PipelineConfig.model_validate(data)
 
+
+def test_fluidsynth_program_defaults_to_none() -> None:
+    data = _base_dict("fluidsynth", "none",
+                      fluidsynth={"soundfont_path": "/tmp/dummy.sf2"})
+    cfg = PipelineConfig.model_validate(data)
+    assert cfg.fluidsynth.program is None
+
+
+def test_fluidsynth_program_24_validates() -> None:
+    data = _base_dict("fluidsynth", "none",
+                      fluidsynth={"soundfont_path": "/tmp/dummy.sf2", "program": 24})
+    cfg = PipelineConfig.model_validate(data)
+    assert cfg.fluidsynth.program == 24
+
+
+def test_fluidsynth_program_minus1_raises() -> None:
+    data = _base_dict("fluidsynth", "none",
+                      fluidsynth={"soundfont_path": "/tmp/dummy.sf2", "program": -1})
+    with pytest.raises(ConfigError):
+        PipelineConfig.model_validate(data)
+
+
+def test_fluidsynth_program_128_raises() -> None:
+    data = _base_dict("fluidsynth", "none",
+                      fluidsynth={"soundfont_path": "/tmp/dummy.sf2", "program": 128})
+    with pytest.raises(ConfigError):
+        PipelineConfig.model_validate(data)
+
 def test_dawdreamer_vst_without_plugin_path_raises() -> None:
     data = _base_dict("dawdreamer_vst", "none")
     with pytest.raises(ConfigError, match="plugin_path"):

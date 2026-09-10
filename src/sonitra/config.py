@@ -94,6 +94,7 @@ class FluidSynthSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     soundfont_path: Path | None = None
+    program: int | None = Field(default=None, ge=0, le=127)
 
 
 class PedalboardInstrumentSection(BaseModel):

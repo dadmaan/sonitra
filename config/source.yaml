@@ -61,6 +61,10 @@ fluidsynth:
     # Required when synth_backend: fluidsynth.
     # Install on Linux: sudo apt install fluid-soundfont-gm
     soundfont_path: null # e.g. /usr/share/sounds/sf2/default-GM.sf2
+    program: null # GM program 0-127 forced on every FluidSynth render (e.g. 24 = Acoustic Guitar (nylon), relevant for GuitarSet MIDI input).
+        # null (default) inherits the source MIDI's program when unambiguous (zero or one distinct program_change in the file);
+        # a number overrides the file; multi-timbral files (two or more distinct programs) fall back to the SoundFont's own
+        # preset with a warning — set this to choose one explicitly.
 
 pedalboard:
     instrument:

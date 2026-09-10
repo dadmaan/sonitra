@@ -28,21 +28,27 @@ class FluidSynth:
         channels: int = 2,
         soundfont_path: Path | str,
         bpm: int = 120,
+        program: int | None = None,
     ) -> None:
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
         self.soundfont_path = Path(soundfont_path)
         self.bpm = int(bpm)
+        self.program = program
         if not self.soundfont_path.exists():
             raise FileNotFoundError(f"SoundFont not found: {self.soundfont_path}")
 
-    def render(self, notes: Iterable[dict], duration_sec: float) -> np.ndarray:
+    def render(
+        self, notes: Iterable[dict], duration_sec: float, *, program: int | None = None
+    ) -> np.ndarray:
         """Render ``notes`` to audio using the configured SoundFont.
 
         Args:
             notes: Iterable of note dictionaries with keys ``pitch``,
                 ``velocity``, ``start_sec``, and ``duration_sec``.
             duration_sec: Target duration of the rendered audio in seconds.
+            program: GM program for this render; the constructor value takes
+                precedence when set.
 
         Returns:
             Audio array of shape ``(channels, samples)`` normalised to
@@ -51,13 +57,14 @@ class FluidSynth:
         """
         duration = max(0.0, float(duration_sec))
         notes_list = list(notes)
+        effective = self.program if self.program is not None else program
 
         with tempfile.TemporaryDirectory(prefix="sonitra_fluid_") as tmpdir:
             tmp_path = Path(tmpdir)
             midi_path = tmp_path / "render.mid"
             wav_path = tmp_path / "render.wav"
 
-            _write_notes_to_midi(midi_path, notes_list, bpm=self.bpm)
+            _write_notes_to_midi(midi_path, notes_list, bpm=self.bpm, program=effective)
             _run_fluidsynth(
                 soundfont_path=self.soundfont_path,
                 midi_path=midi_path,
@@ -72,7 +79,9 @@ class FluidSynth:
         return _trim_or_pad(audio, int(duration * self.sample_rate))
 
 
-def _write_notes_to_midi(path: Path, notes: list[dict], bpm: int = 120) -> None:
+def _write_notes_to_midi(
+    path: Path, notes: list[dict], bpm: int = 120, *, program: int | None = None
+) -> None:
     """Write note dictionaries to a type-0 MIDI file at ``path``.
 
     Args:
@@ -80,6 +89,8 @@ def _write_notes_to_midi(path: Path, notes: list[dict], bpm: int = 120) -> None:
         notes: List of note dicts with keys ``pitch``, ``velocity``,
             ``start_sec``, and ``duration_sec``.
         bpm: Beats per minute for tempo meta message and tick computation.
+        program: GM program (0-127) written as a ``program_change`` on
+            channel 0 before the first note. ``None`` writes no program change.
     """
     bpm = int(bpm)
     tempo_us = round(60_000_000 / bpm)
@@ -88,6 +99,8 @@ def _write_notes_to_midi(path: Path, notes: list[dict], bpm: int = 120) -> None:
     track = mido.MidiTrack()
     midi.tracks.append(track)
     track.append(mido.MetaMessage("set_tempo", tempo=tempo_us, time=0))
+    if program is not None:
+        track.append(mido.Message("program_change", channel=0, program=int(program), time=0))
 
     events: list[tuple[int, str, int, int]] = []
     for note in notes:

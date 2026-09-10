@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class SynthesiserProtocol(Protocol):
-    def render(self, notes: list[dict], duration_sec: float) -> np.ndarray: ...
+    def render(
+        self, notes: list[dict], duration_sec: float, *, program: int | None = None
+    ) -> np.ndarray: ...
 
 
 def make_synth(cfg: PipelineConfig) -> SynthesiserProtocol:
@@ -35,6 +37,7 @@ def make_synth(cfg: PipelineConfig) -> SynthesiserProtocol:
                 channels=cfg.render_pipeline.channels,
                 soundfont_path=cfg.fluidsynth.soundfont_path,
                 bpm=cfg.render_pipeline.bpm,
+                program=cfg.fluidsynth.program,
             )
         return PedalboardSynth(
             sample_rate=cfg.render_pipeline.sample_rate,
@@ -54,6 +57,7 @@ def make_synth(cfg: PipelineConfig) -> SynthesiserProtocol:
             channels=cfg.render_pipeline.channels,
             soundfont_path=cfg.fluidsynth.soundfont_path,
             bpm=cfg.render_pipeline.bpm,
+            program=cfg.fluidsynth.program,
         )
 
     return DawDreamerSynth(

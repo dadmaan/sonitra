@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `fluidsynth.program` config (GM 0–127, default `null`): `null` inherits
+  the source MIDI's program when the file carries exactly one distinct
+  `program_change`, a number forces that program and overrides the file,
+  and multi-timbral files (two or more distinct programs) keep the
+  SoundFont's default preset with a once-per-`MidiSource` warning telling
+  the user to set `fluidsynth.program`. `parse_midi(..., return_meta=True)`
+  now surfaces `programs` (sorted distinct list); `FluidSynth` writes it as
+  a channel-0 `program_change` before the first note, and `make_synth`
+  threads the config value at both construction sites. GuitarSet MIDI input
+  now renders with program 24 (Acoustic Guitar nylon) instead of piano;
+  MAESTRO output is byte-identical. Covered by new tests in
+  `tests/test_source.py` plus additions to `test_midi_reader`,
+  `test_fluid_synth(_bpm)`, `test_synth_protocol`, and
+  `test_config_new_fields`; documented in `config/source.yaml`,
+  `docs/configuration.md`, and `AGENT.md`
 - `scripts/enrich_metadata.py`: dataset-agnostic enrichment that left-joins
   any delimited annotation table onto any dataset metadata CSV on a
   composite key, producing an enriched CSV for the unchanged

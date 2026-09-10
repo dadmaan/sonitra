@@ -102,3 +102,64 @@ def test_fluid_synth_render_passes_bpm_to_write_notes(tmp_path: Path) -> None:
                 fs.render([], duration_sec=1.0)
     _, call_kwargs = mock_write.call_args
     assert call_kwargs.get("bpm") == 100
+
+
+def test_fluid_synth_program_defaults_to_none(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2)
+    assert fs.program is None
+
+
+def test_fluid_synth_constructor_stores_program(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2, program=24)
+    assert fs.program == 24
+
+
+def _render_with_mocks(fs: FluidSynth, notes: list, **render_kwargs):
+    """Render with _write_notes_to_midi/_run_fluidsynth/wavfile.read mocked.
+
+    Returns the kwargs passed to _write_notes_to_midi.
+    """
+    with patch("sonitra.synth.fluid_synth._write_notes_to_midi") as mock_write:
+        with patch("sonitra.synth.fluid_synth._run_fluidsynth"):
+            with patch("sonitra.synth.fluid_synth.wavfile.read") as mock_read:
+                mock_read.return_value = (44100, np.zeros((44100, 2), dtype=np.int16))
+                mock_write.return_value = None
+                fs.render(notes, duration_sec=1.0, **render_kwargs)
+    _, call_kwargs = mock_write.call_args
+    return call_kwargs
+
+
+def test_fluid_synth_render_config_program_wins_over_file(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2, program=10)
+    call_kwargs = _render_with_mocks(fs, [], program=24)
+    assert call_kwargs.get("program") == 10
+
+
+def test_fluid_synth_render_config_program_used_when_file_none(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2, program=10)
+    call_kwargs = _render_with_mocks(fs, [], program=None)
+    assert call_kwargs.get("program") == 10
+
+
+def test_fluid_synth_render_file_program_used_when_config_none(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2)
+    call_kwargs = _render_with_mocks(fs, [], program=24)
+    assert call_kwargs.get("program") == 24
+
+
+def test_fluid_synth_render_no_program_when_both_none(tmp_path: Path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    fs = FluidSynth(sample_rate=44100, soundfont_path=dummy_sf2)
+    call_kwargs = _render_with_mocks(fs, [], program=None)
+    assert call_kwargs.get("program") is None

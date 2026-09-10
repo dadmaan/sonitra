@@ -70,7 +70,7 @@ Backend-specific validators enforce: `synth_backend=fluidsynth` requires `fluids
 `make_synth(cfg)` in `synth/protocol.py` selects the synthesis backend from `cfg.render_pipeline.synth_backend`:
 
 - **`PedalboardSynth`** — when `synth_backend=pedalboard_instrument`; renders via `pedalboard.instrument.plugin_path`. If `pedalboard.instrument.plugin_path` is null but `fluidsynth.soundfont_path` is set, falls back to `FluidSynth` with a logged warning.
-- **`FluidSynth`** — when `synth_backend=fluidsynth`; requires `fluidsynth.soundfont_path`; invokes the `fluidsynth` CLI against the named `.sf2` SoundFont file. Lazily imported from `synth/fluid_synth.py`.
+- **`FluidSynth`** — when `synth_backend=fluidsynth`; requires `fluidsynth.soundfont_path`; invokes the `fluidsynth` CLI against the named `.sf2` SoundFont file. Lazily imported from `synth/fluid_synth.py`. Honours `fluidsynth.program` (0–127 GM program override); when null (default), the source MIDI's program is used when the file carries exactly one distinct program, otherwise the SoundFont's default preset applies.
 - **`DawDreamerSynth`** — when `synth_backend=dawdreamer_faust` (built-in Faust oscillator) or `synth_backend=dawdreamer_vst` (VST3 plugin, requires `dawdreamer.plugin_path`); both values map to the same implementation branch.
 
 ### Pipeline (`pipeline.py`)

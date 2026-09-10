@@ -18,6 +18,7 @@ remember to do at each call site.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Protocol, runtime_checkable
 
@@ -27,6 +28,8 @@ from sonitra.config import InputType, PipelineConfig
 from sonitra.midi_reader import parse_midi
 from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -61,6 +64,7 @@ class MidiSource:
     def __init__(self, cfg: PipelineConfig) -> None:
         self._cfg = cfg
         self._synth = make_synth(cfg)
+        self._warned_multi_program = False
 
     def load(self, path: Path) -> tuple[np.ndarray, int]:
         cfg = self._cfg
@@ -70,7 +74,23 @@ class MidiSource:
         if native_bpm > 0:
             notes = _scale_note_timings(notes, native_bpm / cfg.render_pipeline.bpm)
         duration = _compute_duration(notes, cfg.render_pipeline.duration_padding_sec)
-        audio = self._synth.render(notes, duration_sec=duration)
+        programs = meta.get("programs", [])
+        if len(programs) == 1:
+            file_program = programs[0]
+        elif len(programs) == 0:
+            file_program = None
+        else:
+            file_program = None
+            if not self._warned_multi_program:
+                logger.warning(
+                    "MIDI file %s contains multiple programs %s; "
+                    "using SoundFont default "
+                    "(set fluidsynth.program to choose one).",
+                    path,
+                    list(programs),
+                )
+                self._warned_multi_program = True
+        audio = self._synth.render(notes, duration_sec=duration, program=file_program)
         return audio, cfg.render_pipeline.sample_rate
 
 

@@ -15,7 +15,7 @@ These are the main sections and what each one does:
 | `render_pipeline` | Synth backend (`synth_backend`), effects chain (`effects_chain`), BPM, sample rate, bit depth, channels, parallelism (`max_workers`) |
 | `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template |
 | `dawdreamer` | Faust script path, VST3 plugin path, preset path — required when `synth_backend: dawdreamer_vst`; `plugin_path` must NOT be set for `synth_backend: dawdreamer_faust` |
-| `fluidsynth` | `soundfont_path` — path to the `.sf2` SoundFont file; required when `synth_backend: fluidsynth` |
+| `fluidsynth` | `soundfont_path` — path to the `.sf2` SoundFont file; required when `synth_backend: fluidsynth` — plus optional `program` (0–127 GM program; `null` inherits the source MIDI's program when unambiguous) |
 | `pedalboard` | Pedalboard effects chain (`pedalboard.effects`); `pedalboard.instrument` sub-section configures the VST3 instrument plugin for the `pedalboard_instrument` backend |
 | `normalisation` | Peak or RMS normalisation, target dB, pre/post effects |
 | `quality_gates` | Silence, clipping, and minimum duration checks |
@@ -33,7 +33,7 @@ This section picks how Sonitra turns MIDI scores into sound, and whether it adds
 |---|---|---|
 | `dawdreamer_faust` | DawDreamer + built-in Faust oscillator | — |
 | `dawdreamer_vst` | DawDreamer + VST3 instrument | `dawdreamer.plugin_path` |
-| `fluidsynth` | FluidSynth CLI + SoundFont | `fluidsynth.soundfont_path` |
+| `fluidsynth` | FluidSynth CLI + SoundFont | `fluidsynth.soundfont_path` (plus optional `fluidsynth.program` to force a GM program, otherwise inherited from the source MIDI when unambiguous) |
 | `pedalboard_instrument` | Pedalboard VST3 instrument | `pedalboard.instrument.plugin_path` |
 
 `render_pipeline.effects_chain`

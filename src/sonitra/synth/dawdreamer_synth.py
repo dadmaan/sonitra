@@ -29,7 +29,10 @@ class DawDreamerSynth:
         self.faust_code = faust_code
         self.clear_midi_between_renders = clear_midi_between_renders
 
-    def render(self, notes: Iterable[dict], duration_sec: float) -> np.ndarray:
+    def render(
+        self, notes: Iterable[dict], duration_sec: float, *, program: int | None = None
+    ) -> np.ndarray:
+        """Render notes via the plugin engine (GM program ignored: timbre comes from the plugin preset)."""
         self.engine.engine.set_bpm(float(self.bpm))
         if self.plugin_path is None:
             return render_notes_faust(list(notes), engine=self.engine, duration_sec=duration_sec)

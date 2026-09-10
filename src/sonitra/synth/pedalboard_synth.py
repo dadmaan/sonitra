@@ -29,7 +29,10 @@ class PedalboardSynth:
         self.bpm = int(bpm)
         self._plugin = None
 
-    def render(self, notes: Iterable[dict], duration_sec: float) -> np.ndarray:
+    def render(
+        self, notes: Iterable[dict], duration_sec: float, *, program: int | None = None
+    ) -> np.ndarray:
+        """Render notes via the VST instrument (GM program ignored: timbre comes from the plugin preset)."""
         duration = max(0.0, float(duration_sec))
         if self.plugin_path is None:
             raise ValueError(

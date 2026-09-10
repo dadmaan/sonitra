@@ -79,6 +79,68 @@ def test_synth_factory_returns_fluid_synth_when_soundfont_configured(tmp_path) -
     assert isinstance(make_synth(cfg), FluidSynth)
 
 
+def _fluidsynth_config(tmp_path, program: int | None):
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    from sonitra.config import PipelineConfig
+    fluidsynth: dict = {"soundfont_path": str(dummy_sf2)}
+    if program is not None:
+        fluidsynth["program"] = program
+    return PipelineConfig.model_validate({
+        "render_pipeline": {
+            "synth_backend": "fluidsynth", "effects_chain": "none",
+            "sample_rate": 44100, "bit_depth": 24, "channels": 2,
+            "duration_padding_sec": 2.0, "overwrite": False, "resume": True,
+            "max_workers": 1, "log_level": "INFO",
+        },
+        "io": {"corpus_root": ".", "output_format": "wav",
+               "mp3_bitrate_kbps": 192, "file_naming": "{stem}"},
+        "fluidsynth": fluidsynth,
+    })
+
+
+def test_make_synth_fluidsynth_branch_threads_program(tmp_path) -> None:
+    cfg = _fluidsynth_config(tmp_path, program=24)
+    synth = make_synth(cfg)
+    assert isinstance(synth, FluidSynth)
+    assert synth.program == 24
+
+
+def test_make_synth_pedalboard_fallback_threads_program(tmp_path) -> None:
+    dummy_sf2 = tmp_path / "dummy.sf2"
+    dummy_sf2.touch()
+    from sonitra.config import PipelineConfig
+    cfg = PipelineConfig.model_validate({
+        "render_pipeline": {
+            "synth_backend": "pedalboard_instrument", "effects_chain": "none",
+            "sample_rate": 44100, "bit_depth": 24, "channels": 2,
+            "duration_padding_sec": 2.0, "overwrite": False, "resume": True,
+            "max_workers": 1, "log_level": "INFO",
+        },
+        "io": {"corpus_root": ".", "output_format": "wav",
+               "mp3_bitrate_kbps": 192, "file_naming": "{stem}"},
+        "fluidsynth": {"soundfont_path": str(dummy_sf2), "program": 24},
+    })
+    synth = make_synth(cfg)
+    assert isinstance(synth, FluidSynth)
+    assert synth.program == 24
+
+
+def test_dawdreamer_render_accepts_program(midi_fixture) -> None:
+    synth = DawDreamerSynth(sample_rate=44100)
+    notes = parse_midi(midi_fixture("test_c4.mid"))
+    audio = synth.render(notes, duration_sec=2.0, program=24)
+    assert isinstance(audio, np.ndarray)
+    assert audio.ndim == 2
+
+
+def test_pedalboard_render_accepts_program(midi_fixture) -> None:
+    synth = PedalboardSynth(sample_rate=44100, channels=2, plugin_path=None)
+    notes = parse_midi(midi_fixture("test_c4.mid"))
+    with pytest.raises(ValueError, match="requires a VST instrument"):
+        synth.render(notes, duration_sec=2.0, program=24)
+
+
 def test_synth_factory_returns_dawdreamer_with_vital(config_fixture):
     cfg = load_config(config_fixture("config_dawdreamer_vital.yaml"))
     synth = make_synth(cfg)

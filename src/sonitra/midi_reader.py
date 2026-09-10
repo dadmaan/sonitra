@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 import mido
 
@@ -16,6 +16,7 @@ def parse_midi(path: Path | str, return_meta: bool = False) -> List[Dict[str, An
     midi = mido.MidiFile(midi_path)
     notes: List[Dict[str, Any]] = []
     active_notes: Dict[Tuple[int, int], List[Tuple[float, int]]] = {}
+    programs: Set[int] = set()
     time_sec = 0.0
     bpm = mido.tempo2bpm(DEFAULT_TEMPO)
     initial_bpm: float | None = None
@@ -29,6 +30,8 @@ def parse_midi(path: Path | str, return_meta: bool = False) -> List[Dict[str, An
                 initial_bpm = bpm
         elif message.type == "time_signature":
             time_signature = (message.numerator, message.denominator)
+        elif message.type == "program_change":
+            programs.add(int(message.program))
         elif message.type == "note_on" and message.velocity > 0:
             active_notes.setdefault((message.channel, message.note), []).append((time_sec, message.velocity))
         elif message.type == "note_off" or (message.type == "note_on" and message.velocity == 0):
@@ -49,6 +52,6 @@ def parse_midi(path: Path | str, return_meta: bool = False) -> List[Dict[str, An
             )
 
     if return_meta:
-        return {"notes": notes, "bpm": initial_bpm if initial_bpm is not None else mido.tempo2bpm(DEFAULT_TEMPO), "time_signature": time_signature}
+        return {"notes": notes, "bpm": initial_bpm if initial_bpm is not None else mido.tempo2bpm(DEFAULT_TEMPO), "time_signature": time_signature, "programs": sorted(programs)}
 
     return notes
