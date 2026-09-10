@@ -1,332 +1,323 @@
-# Evaluation Metrics and Systems for Audio-to-MIDI Transcription in Synthetic-Augmentation Pipelines
+# Evaluation metrics and systems for audio-to-MIDI transcription in synthetic-augmentation pipelines
+
+This guide sums up past work on AMT testing. AMT means automatic music transcription, turning audio into notes. MIDI is a digital score format that stores notes, timing, and loudness. A synthetic-augmentation pipeline means you make audio from scores, change the sound on purpose, and test how well transcription still works.
 
 ## Executive overview
 
-Automatic music transcription (AMT) for audio-to-MIDI is most established for solo piano and, increasingly, multi-instrument settings; state-of-the-art models are predominantly deep neural networks (Onsets & Frames, Kong-style regression models, Transformers such as MT3 and hFT, and new seq2seq approaches like Aria-AMT).[^1][^2][^3][^4] Evaluation practice is dominated by information-retrieval (IR) style metrics at frame and note level (precision/recall/F1) with specific onset/offset tolerances, but researchers increasingly recognise these as musically impoverished and insufficient for expressive and notation-level use cases.[^2][^5][^1]
+AMT for audio-to-MIDI works best for solo piano today. It is growing for music with many instruments. Top models are mostly deep neural nets. Examples are Onsets and Frames, Kong-style timing models, Transformers such as MT3 and hFT, and new step-by-step models like Aria-AMT.[^1][^2][^3][^4] Tests mostly use information-retrieval scores at frame and note level. Frame means a short slice of sound. Note means a single musical note. These scores use precision, recall, and F1 with set time limits for note starts and ends. But more researchers say these scores miss musical quality and fall short for expressive playing and full notation.[^2][^5][^1]
 
-For a study perturbing rendered audio (reverb, noise, EQ, style), suitable metrics fall into three families: (1) standard IR metrics (frame, note, note-with-offset, velocity); (2) musically informed performance metrics (timing/articulation/harmony/dynamics correlations, notation edit distances); and (3) robustness metrics versus controlled augmentations (F1 degradation curves, sensitivity to individual transforms, DTW-based similarity of audio vs re-synthesised transcription).[^6][^7][^5][^4][^2] Several recent AMT and robustness/augmentation studies (Hawthorne et al. 2018, Kong et al. 2021, Edwards et al. 2024, Hu et al. 2024, Bradshaw et al. 2024) describe augmentation pipelines (pitch shift, reverberation, background noise, EQ, synthetic re-performances) and show which metrics are sensitive to these manipulations.[^8][^5][^4][^6][^2]
+If you change rendered audio with reverb, noise, EQ, or style shifts, use three score groups. EQ means tone controls that boost or cut bass and treble. Reverb means room echo. First, standard hit-or-miss scores (frame, note, note-with-end, loudness). Second, musical performance scores (timing, playing style, harmony, and loudness links). Third, strength scores against planned sound changes (F1 drop curves, response to each change, DTW similarity of audio vs remade transcription). DTW means dynamic time warping, a way to line up two clips in time and measure the gap.[^6][^7][^5][^4][^2] Past AMT and strength studies (Hawthorne et al. 2018, Kong et al. 2021, Edwards et al. 2024, Hu et al. 2024, Bradshaw et al. 2024) describe sound-change pipelines (pitch shift, room echo, background noise, EQ, remade performances) and show which scores react to these changes.[^8][^5][^4][^6][^2]
 
-For a benchmark matching your pipeline, the most relevant systems span: classic piano baselines (Onsets & Frames, Kong’s regression model), modern multi-instrument Transformers (MT3, T5-style models, hFT), efficient open-source tools (Basic Pitch), and robust seq2seq systems such as Aria-AMT. Commercial tools like AnthemScore, Melodyne, ScoreCloud, and AudioScore serve as additional black-box baselines.[^9][^3][^10][^11][^12][^1]
+Good systems to test span classic piano baselines (Onsets and Frames, Kong's timing model), modern multi-instrument Transformers (MT3, T5-style models, hFT), fast open tools (Basic Pitch), and strong step-by-step systems such as Aria-AMT. Shop tools like AnthemScore, Melodyne, ScoreCloud, and AudioScore give extra real-world baselines.[^9][^3][^10][^11][^12][^1]
 
 
 ## 1. State of the art AMT in context of synthetic perturbation
 
 ### 1.1 Canonical overviews and problem decomposition
 
-Benetos et al. (2019) survey AMT by decomposing it into frame-level (multi-pitch estimation), note-level (note tracking), stream-level (voice/instrument grouping), and notation-level transcription, emphasising persistent challenges: polyphony, overlapping harmonics, expressive timing, annotation scarcity, and robustness across acoustic conditions.[^1] The survey notes that evaluation traditionally focuses on MIREX-style tasks—multi-F0 estimation and note tracking—with IR metrics over carefully curated datasets (e.g., MAPS), and flags the gap between parametric output (piano-rolls) and actual music-notation-level quality, where suitable metrics remain open.[^1]
+Benetos et al. (2019) break AMT into four steps. They are frame-level pitch finding, note tracking, voice and instrument grouping, and full notation writing. They stress hard gaps that remain. These are many notes at once, overlapping overtones, expressive timing, few labeled sets, and weak results across rooms and mics.[^1] They note tests still focus on MIREX-style tasks. MIREX is a shared music-test contest. Tasks are multi-pitch finding and note tracking on curated sets such as MAPS. They flag the gap between raw note grids (piano-rolls) and true notation quality, where good scores are still open.[^1]
 
-A newer systematic survey (2024) covers the same levels and notes the dominance of two method families (NMF and neural networks), the centrality of MAESTRO and MAPS, and the role of data augmentation (time-stretch, pitch shift) and dataset integration (MAESTRO + GiantMIDI) for current ML-based AMT.[^13]
+A newer 2024 survey covers the same steps. It notes two main tool groups (NMF and neural nets), the use of MAESTRO and MAPS piano sets, and the role of sound changes (time-stretch, pitch shift) and set mixes (MAESTRO plus GiantMIDI) for current ML-based AMT.[^13] NMF means non-negative matrix factorization, an older math method for splitting sounds. ML means machine learning.
 
 
 ### 1.2 Modern piano transcription architectures
 
 #### Onsets & Frames
 
-Hawthorne et al.’s "Onsets and Frames" model introduced a dual-objective architecture with separate onset and frame branches (CNN + BiLSTM), using onset predictions to gate frame-wise activations during inference.[^2]
+Hawthorne et al.'s "Onsets and Frames" model uses two linked aims. One branch finds note starts. One branch finds active frames. It uses CNN plus BiLSTM layers, which are neural-net parts that read sound pictures and time order. Note-start guesses gate frame activity at test time.[^2] Onset means note start. Frame means a short time slice.
 
-They evaluate on MAPS with:
+They test on MAPS with:
 - Frame-level precision/recall/F1.
 - Note-level F1 with onset-only tolerance (±50 ms).
 - Note-with-offset F1 requiring offsets within 20% of duration or 50 ms (whichever larger).
 - Velocity-augmented note metrics that add a velocity tolerance of 0.1 in normalised velocity space.[^2]
 
-The authors argue that note-with-offset (and velocity) F1 correlates better with perceptual quality than frame- or onset-only metrics and recommend it as a primary metric.[^2]
+The authors say note-with-end (and loudness) F1 tracks heard quality better than frame or start-only scores. They urge it as a main score.[^2]
 
-#### High-resolution regression model (Kong et al.)
+#### High-resolution timing model (Kong et al.)
 
-Kong et al. (2021) propose a high-resolution piano transcription model that regresses onset and offset times and supports pedal estimation; this architecture underlies newer robustness and augmentation studies.[^6][^8] The model uses CNN + recurrent layers with regression heads for onset/offset timing, and is typically trained and evaluated on MAESTRO and MAPS with note-level F1 metrics (onsets and onsets+offsets).[^8]
+Kong et al. (2021) build a high-detail piano model. It predicts exact start and end times and can track pedal use. This design sits behind newer strength and sound-change studies.[^6][^8] The model uses CNN plus time-based layers with timing outputs. Teams most often train and test it on MAESTRO and MAPS with note-level F1 scores (starts and starts-plus-ends).[^8]
 
 #### Transformers and multi-instrument AMT
 
-MT3 (Multi-Task Multitrack Music Transcription) uses a T5-style sequence-to-sequence Transformer to jointly transcribe multiple instruments and datasets, emphasising multi-task learning and low-resource instruments.[^3][^14] It is evaluated with note-level F1 metrics (frame, onset, onset+offset, note-with-instrument), and the authors call out limitations of heterogeneous evaluation metrics across datasets, arguing for more consistent evaluation.[^14][^15]
+MT3 (Multi-Task Multitrack Music Transcription) uses a T5-style step-by-step Transformer. A Transformer is a neural net that tracks long links across time. It transcribes many instruments and sets at once, which helps rare instruments.[^3][^14] It reports note-level F1 scores (frame, start, start-plus-end, note-with-instrument). The authors note mixed scoring rules across sets block fair compare, and they call for steadier tests.[^14][^15]
 
-More recent work from Toyama et al. (hFT: hierarchical frequency-time Transformer) achieves very high note-level F1 on MAESTRO and MAPS using Transformer architecture specialised over frequency and time axes.[^4]
+Newer work from Toyama et al. (hFT, a Transformer split over pitch and time) hits very high note-level F1 on MAESTRO and MAPS.[^4]
 
-#### Seq2seq/Whisper-style AMT and robustness
+#### Seq2seq and Whisper-style AMT and strength
 
-Bradshaw et al. (Aria-AMT, 2024) adapt a Whisper-like encoder-decoder to AMT, using heavy data augmentation (RIR, noise, EQ, pitch detuning), synthetic pretraining on Pianoteq-rendered MIDI, and a bootstrapping loop that uses DTW to filter auto-transcribed data.[^4] They report state-of-the-art F1 scores on MAESTRO and MAPS (including augmented test variants), and systematically study correlations between DTW audio–audio distance and human judgments and mir_eval metrics, arguing DTW is a useful complementary robustness metric.[^4]
+Bradshaw et al. (Aria-AMT, 2024) adapt a Whisper-like encoder-decoder to AMT. An encoder-decoder reads audio in and writes notes out step by step. They use heavy sound changes (room impulse responses, noise, EQ, pitch drift), pretraining on Pianoteq-made MIDI, and a loop that uses DTW to keep good auto-labeled data. RIR means room impulse response, a record of room echo. DTW lines up two clips in time.[^4] They report top F1 scores on MAESTRO and MAPS (with changed test variants). They study links between DTW audio distance, human ratings, and mir_eval scores. Mir_eval is a standard music-scoring library. They urge DTW as a useful extra strength score.[^4]
 
 
 ### 1.3 Multi-modal and notation-level directions
 
-Recent work explores multimodal AMT combining audio with score images (MUSCAT) and visual piano transcription; these broaden the transcription context but still rely on standard IR metrics (note F1) and are less central to an audio-perturbation pipeline.[^16][^1]
+Newer work joins audio with score images (MUSCAT) and camera-based piano tracking. These widen context but still use standard note F1. They matter less for a sound-change pipeline.[^16][^1]
 
-For true notation-level evaluation, Cogliati & Duan (2017) propose a metric that treats music notation as a sequence of sets of musical objects aligned over time and defines an edit distance over 12 aspects: barlines, clefs, key signatures, time signatures, notes, spelling, durations, stem directions, beaming/groupings, rests, rest durations, and staff assignment.[^7] They fit a linear regression from these aspect-wise error counts to human ratings of pitch notation, rhythm notation, and note positioning, showing moderate correlation (R² around 0.53–0.60), and releasing code and data. This gives a notation-level metric that can sit on top of an audio→MIDI→notation pipeline.[^17][^7]
+For true notation tests, Cogliati and Duan (2017) treat notation as timed groups of musical items. They set an edit distance over 12 parts: barlines, clefs, key marks, time marks, notes, spelling, lengths, stem sides, beams and groups, rests, rest lengths, and staff slots.[^7] They fit a straight-line model from these error counts to human ratings of pitch writing, rhythm writing, and note place. The fit is fair (R² about 0.53-0.60, where 1.0 is perfect). They share code and data. This gives a notation score you can place on top of an audio-to-MIDI-to-notation chain.[^17][^7]
 
 
 ## 2. Metrics currently used in AMT
 
-### 2.1 Standard IR-style metrics
+### 2.1 Standard hit-or-miss metrics
 
 #### 2.1.1 Frame-level metrics
 
-Frame-level evaluation compares binary piano-roll matrices (pitches × time frames, e.g., 10 ms hop) between reference and prediction; precision, recall, and F1 are computed over active vs inactive frames.[^5][^1]
+Frame tests compare note grids (pitches by time steps, for example 10 ms hops) between truth and guess. Precision, recall, and F1 count active vs silent frames. Precision means the share of guessed frames that are right. Recall means the share of true frames you found. F1 blends the two.[^5][^1]
 
-Frame metrics are:
-- Simple and widely used (MIREX, Onsets & Frames, MT3, Kong et al.).
-- Sensitive to sustain and segmentation but agnostic to note identity as musical events.
-- Known to over-reward diffuse note activations and under-penalise short spurious notes.[^5][^2]
+Frame scores are:
+- Simple and widely used (MIREX, Onsets and Frames, MT3, Kong et al.).
+- Affected by note length and splits, but blind to notes as musical events.
+- Known to reward smeared note activity too much and punish short false notes too little.[^5][^2]
 
 #### 2.1.2 Note-level metrics
 
-Note-level metrics treat notes as tuples of (onset time, offset time, pitch[, velocity]), with matching procedures defined by mir_eval.[^5][^2]
+Note scores treat notes as groups of start time, end time, pitch, and (at times) loudness. Matching rules come from mir_eval.[^5][^2] Mir_eval is a standard music-scoring library.
 
-Standard variants include:
-- **Onset-only note F1**: onsets must lie within ±50 ms of reference onset; offsets ignored.
-- **Onset+offset note F1**: onset condition above plus offsets within max(20% of reference duration, 50 ms).
-- **Onset+offset+velocity F1**: above plus velocity within tolerance (typically 0.1 in normalised velocity after linear rescaling).[^13][^5][^2]
+Standard types are start-only note F1, start-plus-end note F1, and start-plus-end-plus-loudness F1. Start-only means starts must fall within ±50 ms of the true start, and ends are ignored. Ms means milliseconds. Start-plus-end adds ends within the larger of 20% of true length or 50 ms. Start-plus-end-plus-loudness adds loudness within 0.1 in scaled loudness after straight-line rescaling.[^13][^5][^2]
 
-These metrics are computed per piece and averaged; they are the core reporting metrics in Onsets & Frames, Kong et al., MT3, Toyama’s hFT, and most MAESTRO-based work.[^3][^8][^5][^2]
+Teams score each piece and then average. These are the main reported scores in Onsets and Frames, Kong et al., MT3, Toyama's hFT, and most MAESTRO-based work.[^3][^8][^5][^2]
 
-Note-level metrics are more musically meaningful than frame metrics, but still treat all note errors uniformly and ignore aspects like voice assignment, spelling, or musical role (melody vs accompaniment).[^5]
+Note scores mean more musically than frame scores. But they still treat all note errors the same. They ignore voice links, spelling, or musical role (tune vs backing).[^5]
 
 
-### 2.2 Musically informed and notation-aware metrics
+### 2.2 Musical and notation-aware metrics
 
-#### 2.2.1 Musically informed performance metrics (mpteval)
+#### 2.2.1 Musical performance metrics (mpteval)
 
-Hu et al. (2024) criticise standard IR metrics for ignoring musical dimensions like articulation, dynamics, rhythmic microtiming, and harmonic context, and propose musically informed metrics implemented in the mpteval library.[^18][^5]
+Hu et al. (2024) say standard hit-or-miss scores skip musical parts like playing style, loudness, fine timing, and chord context. They offer musical scores in the mpteval library.[^18][^5] Mpteval means musical piano transcription evaluation.
 
-Metrics are defined as correlations between time series extracted from reference and predicted MIDI for different expressive dimensions:
-- **Timing**: Inter-onset intervals (IOI) for melody and accompaniment streams (Melody IOI, Accompaniment IOI).[^5]
-- **Articulation**: Key-overlap ratio (KOR) for melody and bass, plus ratio KOR (melody vs bass legato).[^5]
-- **Harmony**: Cloud Diameter and Cloud Momentum based on Chew’s spiral array tonal model, evaluated over sliding windows.[^5]
-- **Dynamics**: Loudness ratio between melody and bass using a simple velocity-to-loudness model.[^5]
+Scores compare time lines drawn from true and guessed MIDI for each expressive part. Timing covers gaps between note starts (IOI means inter-onset interval) for tune and backing lines. Playing style covers key-overlap ratio (KOR means how much notes overlap, a legato measure) for tune and bass, plus tune-vs-bass ratio. Harmony covers Cloud Diameter and Cloud Momentum from Chew's spiral pitch model, scored over sliding windows. Loudness covers tune-to-bass loudness ratio from a simple loudness-from-velocity rule.[^5]
 
-These metrics yield correlation scores in [−1, 1]; Hu et al. show that models which look similar on F1 can differ markedly in timing/articulation/dynamics quality, and that these metrics are more discriminative under audio perturbations (reverb, noise) than IR metrics.[^5]
+These scores give links from −1 to 1, where 1 means perfect match. Hu et al. show models that look tied on F1 can split wide on timing, style, and loudness. These musical scores also tell models apart better under audio changes (reverb, noise) than hit-or-miss scores.[^5]
 
-#### 2.2.2 Notation accuracy metric (Cogliati–Duan)
+#### 2.2.2 Notation accuracy metric (Cogliati-Duan)
 
-As noted above, Cogliati & Duan’s metric defines an edit distance over high-level notation aspects after aligning two scores by pitch content using dynamic time warping.[^7][^17]
+As noted above, Cogliati and Duan's score sets an edit distance over high-level notation parts. It first lines up two scores by pitch with dynamic time warping.[^7][^17] Dynamic time warping lines up two time lines that drift.
 
-This metric provides 12 aspect-wise error counts, which can be normalised and combined linearly to approximate human ratings for pitch notation, rhythm notation, and note positioning; the authors release code and a dataset of transcriptions evaluated by music theorists.[^7]
+This score gives 12 per-part error counts. You can scale them and add them with weights to guess human ratings for pitch writing, rhythm writing, and note place. The authors share code and a set of transcriptions rated by music theorists.[^7]
 
-The notation metric is well-suited when the pipeline produces full notation (MusicXML) rather than just MIDI, especially if quantisation, spelling, and voice assignment are in scope.
+Use this notation score when your chain outputs full notation (MusicXML). It fits most when note values, spelling, and voice slots matter.
 
-#### 2.2.3 Perceptually informed metrics (PEAMT)
+#### 2.2.3 Sense-based metrics (PEAMT)
 
-Hu et al. also reference PEAMT (Ycart et al.) as a perceptually informed piano transcription metric; in their experiments, PEAMT correlates most with frame-level F1 and their harmony Cloud Momentum metric, suggesting that listeners weigh harmonic context heavily.[^5]
+Hu et al. also name PEAMT (Ycart et al.) as a hearing-based piano score. In their tests, PEAMT tracks most with frame-level F1 and their harmony Cloud Momentum score. This hints listeners weigh chord context a lot.[^5]
 
-While PEAMT is not yet standard, it may be useful as an additional reference for perceptual quality if available.
+PEAMT is not yet standard. But it may help as an extra sense-based check if you have it.
 
 
-### 2.3 Robustness and augmentation-related metrics
+### 2.3 Strength scores for changed audio
 
-#### 2.3.1 Out-of-distribution F1 and degradation analysis
+#### 2.3.1 New-room F1 and drop checks
 
-Edwards et al. (2024) focus on robustness and data augmentation. They retrain Kong et al.’s regression model on a re-recorded MAESTRO (Studio MAESTRO) and augmented variants, and evaluate out-of-distribution note-onset F1 on MAPS without training on MAPS.[^6][^8]
+Edwards et al. (2024) study strength and sound changes. They retrain Kong et al.'s timing model on remade MAESTRO (Studio MAESTRO) and changed variants. They test note-start F1 on MAPS with no MAPS training.[^6][^8] Out-of-distribution (OOD) means tested on a new set the model never trained on.
 
-Reported practices and metrics:
-- Report note-onset F1 on both in-distribution (MAESTRO, Studio MAESTRO) and OOD (MAPS) test sets.
-- Compare models trained with/without augmentation and with different augmentation subsets.
-- Quantify degradation from baseline to perturbed audio (e.g., with added noise, EQ, pitch shifts, reverb) at test time.[^6]
+Common practice:
+- Report note-start F1 on both known sets (MAESTRO, Studio MAESTRO) and new sets (MAPS).
+- Compare models trained with and without sound changes and with each change subset.
+- Measure the drop from clean to changed audio at test time, for example with added noise, EQ, pitch shifts, or reverb.[^6]
 
-They also conduct:
-- **Single augmentation experiments**: train with only one augmentation (background noise, pitch shift, reverb, EQ) to measure individual impact on OOD F1.
-- **Ablation of augmentation pipeline**: train with full augmentation then omit one component at a time.[^6]
+They also run one-change tests and leave-one-out tests. One-change tests train with only one change (background noise, pitch shift, reverb, EQ) to gauge each change's pull on new-set F1. Leave-one-out tests train with all changes, then drop one part at a time. Ablation means removing one part to see what it did.[^6]
 
-This yields explicit sensitivity metrics: e.g., dropping pitch-shift or reverb reduced OOD note-onset F1 by about 3–4 points on MAPS, whereas EQ and background noise had smaller effects.[^6]
+This gives clear response scores. For example, dropping pitch-shift or reverb cut new-set note-start F1 by about 3-4 points on MAPS. EQ and background noise moved it less.[^6]
 
-#### 2.3.2 Musically informed robustness under perturbations
+#### 2.3.2 Musical strength under sound changes
 
-Using their MPTEVAL metrics, Hu et al. analyse how Onsets & Frames, Kong’s model, and a Transformer model behave on re-recorded MAESTRO via a Disklavier and on artificially perturbed audio (multiple reverberation and noise levels).[^5]
+Hu et al. use their MPTEVAL musical scores to test Onsets and Frames, Kong's model, and a Transformer model. They use MAESTRO remade on a Disklavier player piano and fake-changed audio with several reverb and noise levels.[^5]
 
-They show that:
-- Standard note F1 degrades under perturbations but less discriminatively than their timing and articulation metrics.
-- For example, Melody IOI correlations and KOR metrics reveal substantial differences in timing/articulation preservation across models under reverberation and noise that F1 alone obscures.[^5]
+They find:
+- Standard note F1 falls under changes, but it tells models apart less well than timing and style scores.
+- For example, tune timing links and overlap scores show wide gaps in timing and style care across models under echo and noise. F1 alone hides these gaps.[^5] IOI means gap between note starts. KOR means note-overlap ratio.
 
-This indicates that a robustness study focused on expressive performance should include such musically informed metrics alongside F1.
+So a strength study about expressive playing should pair F1 with these musical scores.
 
-#### 2.3.3 Dynamic Time Warping (DTW) based metrics
+#### 2.3.3 Dynamic time warping (DTW) scores
 
-Bradshaw et al. use DTW between original audio and re-synthesised transcription audio to score transcription quality and to filter synthetic training data.[^4]
+Bradshaw et al. use DTW between source audio and remade transcription audio to score quality and to sift made training data.[^4] DTW lines up two clips in time and measures the gap.
 
-They demonstrate that:
-- DTW correlates strongly (Spearman −0.88) with human annotations of transcription quality on a 1–5 scale.[^4]
-- DTW correlates well with mir_eval F1 metrics, particularly onset F1.[^4]
-- DTW is surprisingly robust to recording quality (reverb, noise) in piano recordings, likely because the onset structure dominates.[^4]
+They show:
+- DTW tracks human quality ratings from 1 to 5 very well (Spearman −0.88, where −1 means perfect reverse link, since lower DTW is better).[^4]
+- DTW tracks mir_eval F1 scores well, most of all start F1.[^4]
+- DTW holds up well to recording quality (reverb, noise) in piano clips, likely because note starts rule the score.[^4]
 
-In an augmentation pipeline, DTW measures how far the perturbed audio diverges, after transcription and re-synthesis, from the original reference.
+In a sound-change chain, DTW tells how far the changed audio drifts, after transcription and remaking, from the source.
 
 
-## 3. Data augmentation in AMT and their metrics
+## 3. Sound changes in AMT and their scores
 
-### 3.1 Augmentation techniques in robust piano transcription
+### 3.1 Change methods in strong piano transcription
 
-Edwards et al. (2024) give a detailed augmentation pipeline, implemented via the audiomentations library; the core components are:[^6]
-- Two random 7-band parametric EQs.
-- Additive background noise from pub/café recordings, with variable SNR.
-- Small random pitch shifts (±0.1 semitone) to mitigate overfitting to instrument tuning.
-- Reverb derived from multiple real impulse responses.
+Edwards et al. (2024) give a full change chain built with the audiomentations library. Audiomentations is a Python sound-change tool. Core parts are:[^6]
+- Two random 7-band tone controls (EQ).
+- Added background noise from pub and café clips, with varied SNR. SNR means signal-to-noise ratio, how loud music is next to noise.
+- Small random pitch shifts (±0.1 semitone, where a semitone is one piano-key step) to stop overfit to tuning.
+- Room echo from many real room records (RIR means room impulse response).
 
-Training data combines original MAESTRO audio, re-recorded Studio MAESTRO, and six Pianoteq-rendered variants per piece, with sampling probabilities across these sources.[^6]
+Training blends source MAESTRO audio, remade Studio MAESTRO, and six Pianoteq-made versions per piece, picked with set odds.[^6] Pianoteq is a piano sound tool.
 
-They show that:
-- Without augmentation, a model trained on Studio MAESTRO overfits heavily: note-onset F1 drops from 97.3 (Studio MAESTRO test) to 80.8 (original MAESTRO test) and further for OOD MAPS.[^6]
-- Augmentation plus diversified timbre yields state-of-the-art OOD note-onset F1 of 88.4 on MAPS without training on MAPS.[^8]
+They show:
+- With no changes, a model trained on Studio MAESTRO fits too tight. Note-start F1 falls from 97.3 (Studio MAESTRO test) to 80.8 (source MAESTRO test) and lower for new-set MAPS.[^6]
+- Changes plus varied tone give top new-set note-start F1 of 88.4 on MAPS with no MAPS training.[^8]
 
-Single-augmentation and ablation results quantify the relative contribution of each augmentation (pitch shift and reverb being most impactful for robustness, background noise and EQ less so for MAPS).[^6]
+One-change and leave-one-out tests weigh each part. Pitch shift and reverb help strength most. Background noise and EQ help MAPS less.[^6]
 
 
-### 3.2 Other augmentation-related AMT work
+### 3.2 Other sound-change AMT work
 
-The same paper reviews prior augmentation use:
-- MAESTRO’s original paper emphasises data augmentation (noise, reverb, compression, synthesiser rendering) for training Onsets & Frames though ablations suggested limited gains, likely due to the dataset size and domain.[^2][^6]
-- Thickstun et al. and Lu et al. use label-preserving pitch-shift and cross-dataset mixtures for multi-instrument transcription and low-resource instruments.[^6]
+The same paper sums up past change use:
+- MAESTRO's first paper stresses sound changes (noise, reverb, squeeze, synth remakes) for training Onsets and Frames. But leave-one-out tests showed small gains, likely due to set size and scope.[^2][^6]
+- Thickstun et al. and Lu et al. use pitch-shift that keeps labels true and cross-set mixes for multi-instrument work and rare instruments.[^6]
 
-Beyond piano, generalised audio data augmentation tutorials (e.g., torchaudio’s) cover RIR-based reverberation simulation and SNR-controlled noise addition, which are directly applicable to your synthesis-plus-perturbation stage.[^19]
+Past piano, broad audio-change guides (for example torchaudio's) cover room-echo fakes with RIRs and noise set by SNR. These fit your make-plus-change step at once.[^19] RIR means room echo record. SNR sets how loud noise is.
 
-Bradshaw et al. go further by combining synthetic Pianoteq rendering with heavy spectrogram masking, RIR, noise, dynamic EQ, and detuning, then bootstrapping more training data, again measured via standard F1 and DTW.[^4]
+Bradshaw et al. go further. They join Pianoteq-made sound with heavy sound-picture masks, RIRs, noise, live EQ, and tuning drift. Then they grow more training data in a loop, still scored with standard F1 and DTW.[^4]
 
+### 3.3 Scores used in change studies
 
-### 3.3 Metrics used specifically in augmentation studies
+Across these change-focused works, teams report note-start hit, miss, and blend scores (precision, recall, and F1) on new sets (MAPS, remade MAESTRO). OOD means a set the model never trained on.[^8][^6]
+- At times, full note-with-end F1 on MAESTRO and new-set data.[^8][^5]
+- Drop tables showing F1 loss under each test-time change on its own, for example background noise, EQ (tone controls), pitch shift, or reverb (room echo) alone.[^6]
+- For musical scores, timing, style, harmony, and loudness links before and after changes.[^5]
+- DTW between source and remade audio as a smooth quality score.[^4]
 
-Across these augmentation-focused works, the metrics used to report results are:
-- **Note-onset precision/recall/F1** on OOD datasets (MAPS, new re-recorded MAESTRO).[^8][^6]
-- Occasionally, full note-with-offset F1 on MAESTRO and OOD data.[^8][^5]
-- Degradation tables showing F1 drop under specific test-time perturbations (e.g., adding background noise, EQ, pitch shift, reverb individually).[^6]
-- For musically informed metrics, timing/articulation/harmony/dynamics correlations before and after perturbations.[^5]
-- DTW between original and re-synthesised audio as a continuous quality metric.[^4]
+So for a sound-change study, report three things. Report plain F1 on new sets. Report F1 drop per change. Report musical link scores.
 
-These patterns suggest that for an augmentation study, the main axes are: absolute OOD F1, F1 degradation per augmentation, and expressive-dimension correlations.
 
+## 4. Best score set for your chain
 
-## 4. Recommended metric set for your pipeline
+Your chain is score file to sound to sound change to transcription to scoring. Symbolic means the score file. Past work points to three score levels.
 
-Given your pipeline (symbolic → synthesis → perturbation → transcription → score analysis) and existing practice, a metric suite at three levels captures the main concerns:
+### 4.1 Core note-match scores
 
-### 4.1 Symbolic equivalence level (core AMT metrics)
+These match guessed MIDI to source MIDI and skip notation style. MIDI is a digital score.
 
-These compare predicted MIDI to original MIDI ignoring notational issues:
+Frame precision, recall, and F1 work for sanity checks and compare with older papers. Note scores use mir_eval or a like tool, a standard music scorer:
+  - Start-only F1 (±50 ms) as a base. Ms means milliseconds.
+  - Start-plus-end F1 with 20% or 50 ms rule. Use the larger of the two.
+  - Start-plus-end-plus-loudness F1 where your tools write loudness and you can steer loudness in sound making.[^20][^2]
 
-- **Frame-level precision/recall/F1** for sanity and comparison with older literature.
-- **Note-level metrics** (using mir_eval or equivalent):
-  - Onset-only F1 (±50 ms) as a baseline.
-  - Onset+offset F1 with 20%/50 ms rule.
-  - Onset+offset+velocity F1 where your systems output velocities and you can control dynamics in synthesis.[^20][^2]
+For a sound-change study, stress start-plus-end and start-plus-end-plus-loudness F1. This tracks Hawthorne et al.'s urging and later MAESTRO top-paper use.[^2][^5] SOTA means state of the art, the best known.
 
-For a perturbation study, note-with-offset and note-with-offset+velocity F1 should be emphasised, aligning with Hawthorne et al.'s recommendation and later usage in MAESTRO-based SOTA papers.[^2][^5]
 
+### 4.2 Musical expressive scores
 
-### 4.2 Musically informed expressive metrics
+Use these to see how sound changes and tools shape expressive music past plain right or wrong:
 
-To analyse how perturbations and systems affect expressive content (timing, articulation, dynamics) beyond binary correctness:
+MPTEVAL scores from Hu et al. MPTEVAL means musical piano transcription evaluation:
+  - Tune timing links and backing timing links (IOI means gap between note starts).
+  - Tune overlap, bass overlap, and their ratio for playing style (KOR means note-overlap ratio).
+  - Cloud Diameter and Cloud Momentum for key and chord color.
+  - Loudness (tune-to-bass loudness ratio).[^18][^5]
 
-- **MPTEVAL metrics** from Hu et al.:
-  - Melody IOI and Accompaniment IOI correlations for timing.
-  - Melody KOR, Bass KOR, Ratio KOR for articulation.
-  - Cloud Diameter and Cloud Momentum for tonal/harmonic aspects.
-  - Dynamics (loudness ratio melody/bass).[^18][^5]
+Sonitra draws these from paired true and guessed MIDI. They fit best when you start from clean scores and study playing style.
 
-These are computed from paired reference and predicted MIDI and are particularly suitable when starting from clean symbolic scores and analysing performance aspects.
+At will, PEAMT works as a hearing-based score, if you want one number that tries to sum what stands out to ears.[^5]
 
-- Optionally, **PEAMT** as a perceptual metric, if you want a single scalar that attempts to aggregate perceptual salience.[^5]
 
+### 4.3 Notation and whole-track strength scores
 
-### 4.3 Notation-level and perceptual/robustness metrics
+For full notation and whole-track quality:
 
-For full notation and global quality/robustness:
+Notation edit score (Cogliati-Duan) on MusicXML scores made from true and guessed MIDI with the same note-rounding and print chain. MusicXML is a notation file format. Use it if you care about read quality and high-level rightness (key marks, beams, staff slots).[^17][^7]
+DTW likeness between source made audio and remade transcription audio. DTW lines up two clips in time. Use it as one number that catches both pitch and rhythm slips at sound level.[^4]
 
-- **Notation edit metric** (Cogliati–Duan) applied to MusicXML scores generated from reference and predicted MIDI via the same quantisation and engraving pipeline, if you care about notation readability and high-level correctness (key signatures, beaming, staff assignment).[^17][^7]
-- **DTW-based similarity** between original synthesised audio and re-synthesised transcription, used as a scalar measure that captures both pitch and rhythmic mismatches at the waveform/spectral level.[^4]
+This DTW score can (a) help weed out very bad outputs in big runs, and (b) pair with F1 when you ask how sound changes shift tone color with no big hit to note scores.
 
-This DTW measure can (a) help filter pathologically bad transcriptions in large-scale experiments, and (b) complement F1 when investigating how augmentations alter spectral properties without dramatically affecting IR metrics.
+### 4.4 Response and setting-effect checks
 
+To study "sound-setting effects":
 
-### 4.4 Sensitivity and parameter influence analysis
+- Set test axes (for example SNR, RT60, EQ slope, wobble depth) and draw F1 and musical score drop curves across setting sweeps. SNR means how loud music is next to noise. RT60 means how long room echo takes to fade 60 dB. EQ slope means tone tilt.
+- Work out slopes or effect sizes (for example F1 drop per dB of noise, per 0.1 semitone random drift) to weigh strength. dB means decibel, a loudness step. A semitone is one piano-key step.
+- If you use DTW, draw DTW-against-setting curves next to F1. This shows whether some changes mostly shift heard likeness and not note scores.
 
-To study "audio synthesis parameter influence":
+This tracks Edwards et al. (sound-harm and leave-one-out tables) and Hu et al. (grid test over reverb and noise mixes).[^6][^5]
 
-- Define controlled axes (e.g., SNR, RT60, EQ tilt, modulation depth) and measure **F1 and musically informed metric degradation curves** across parameter sweeps.
-- Compute **partial derivatives** or effect sizes (e.g., F1 drop per dB noise, per 0.1 semitone random detune) to quantify robustness.
-- If using DTW, analyse DTW vs parameter curves alongside F1 to examine whether some perturbations primarily affect perceptual similarity but not frame/note metrics.
 
-This follows the approach of Edwards et al. (data degradation and ablation tables) and Hu et al. (grid search over reverb and noise combination levels).[^6][^5]
+## 5. Change methods and scores in past work
 
+### 5.1 Key change-focused studies
 
-## 5. Augmentation methods and metrics in literature
+- Onsets and Frames (Hawthorne et al.) note sound changes (loudness fix, reverb, squeeze, noise, other synth sounds). But they say changes did not move their MAPS scores much. They still urge better sets with more sounds over more changes.[^2] Squeeze means dynamic compression.
 
-### 5.1 Summary of key augmentation-oriented studies
+- Edwards et al. 2024 (A Data-Driven Analysis of Robust Automatic Piano Transcription):
+  - Bring Studio MAESTRO (Disklavier remakes, a player piano) and extra Pianoteq-made sounds. Pianoteq is a piano sound tool.
+  - Study the change chain (EQ, noise, pitch shift, reverb) and its pull on new-set note-start F1, most of all on MAPS. EQ means tone controls.
+  - Use note-start F1 and per-change drop tables as main scores.[^8][^6]
 
-- **Onsets & Frames (Hawthorne et al.)** acknowledge data augmentation (normalisation, reverb, compression, noise, alternative synthesis) but report that it did not substantially change their performance on MAPS; they still recommend better datasets and more diversity rather than more augmentation.[^2]
+- Bradshaw et al. 2024 (Aria-AMT):
+  - Use wide changes (room records, noise, EQ, tuning drift, sound-picture masks) and large made pretraining. RIR means room echo record.
+  - Test with mir_eval F1 scores on MAESTRO, MAPS, and strongly changed variants. Mir_eval is a standard music scorer.
+  - Bring DTW as a score and show tight links to human ratings and F1. DTW lines up two clips in time.[^4]
 
-- **Edwards et al. 2024 (A Data-Driven Analysis of Robust Automatic Piano Transcription):**
-  - Introduce Studio MAESTRO (re-recorded Disklavier) and additional synthetic Pianoteq renderings.
-  - Focus on data augmentation pipeline (EQ, noise, pitch shift, reverb) and its impact on OOD note-onset F1, particularly on MAPS.
-  - Use note-onset F1 and augmentation-specific degradation tables as main metrics.[^8][^6]
-
-- **Bradshaw et al. 2024 (Aria-AMT):**
-  - Use extensive augmentations (RIRs, noise, EQ, detuning, spectrogram masking) and large synthetic pretraining.
-  - Evaluate with mir_eval F1 metrics on MAESTRO, MAPS, and heavily augmented variants.
-  - Introduce DTW as a metric and show strong correlation with human judgment and F1.[^4]
-
-- **Hu et al. 2024 (musically informed metrics):**
-  - Use additive noise and multiple reverberation settings on re-recorded MAESTRO and show that their correlation-based metrics are more sensitive to musical quality than F1 alone under perturbation.[^5]
+- Hu et al. 2024 (musical scores):
+  - Add noise and many reverb settings to remade MAESTRO. Show their link-based scores sense musical quality better than F1 alone under change.[^5]
 
 
 ### 5.2 Takeaways for your study
 
-- Note-onset and note-with-offset F1 remain the primary benchmark for parametric correctness, especially for piano and MAESTRO/MAPS-style data.[^8][^2][^6]
-- Musically informed metrics are valuable when the research question involves expressive performance aspects or when the audio perturbations may subtly affect timing/articulation rather than gross note correctness.[^5]
-- DTW complements symbolic metrics in large-scale and robustness settings, especially when scoring synthetic vs perturbed audio.[^4]
-- Reporting OOD performance (e.g., training on one corpus, testing on another, or on re-recorded/perturbed audio) is essential to avoid overfitting to specific acoustics.[^6][^5]
+- Note-start and note-with-end F1 stay the main test for plain note rightness, most of all for piano and MAESTRO or MAPS-like data.[^8][^2][^6]
+- Musical scores pay off when your question covers expressive playing. They also pay off when audio changes may bend timing or style more than plain note hits.[^5]
+- DTW pairs with note scores in big and strength runs, most of all when you score made vs changed audio.[^4]
+- Report new-set results (for example train on one set, test on one more, or on remade or changed audio). This guards against overfit to one room sound.[^6][^5] Overfit means too tied to training sound.
 
 
-## 6. Candidate AMT systems to include
+## 6. Candidate AMT systems to test
 
-### 6.1 Open-source research systems
+AMT means turning audio into notes.
 
-For a research-grade evaluation, include representative systems across architecture families:
+### 6.1 Open research tools
 
-- **Onsets & Frames** (Magenta / Google Brain implementation): canonical piano baseline, strong on MAESTRO/MAPS, well-known metrics and open code.[^9][^2]
-- **Kong et al.’s high-resolution regression model** (Bytedance piano transcription): strong piano performance and used in robustness studies.[^8][^6]
-- **MT3** (multi-task multitrack Transformer): modern multi-instrument AMT with T5 architecture; open-source implementation via Magenta and PyTorch ports.[^21][^22][^3]
-- **Basic Pitch** (Spotify): lightweight multi-pitch and note tracking model optimised for speed and general instruments, open-source and usable as a practical baseline.[^23][^11]
-- **Aria-AMT** or similar seq2seq/Whisper-style models, if code is available: designed explicitly for robustness and dataset expansion; highly relevant to an augmentation study.[^4]
-- **Other recent research systems** (e.g., NoteEM, unaligned supervision methods) that claim strong cross-dataset generalisation and robust notes-with-instrument F1.[^24]
+For a research-grade test, cover each design group:
+
+- Onsets and Frames (Magenta and Google Brain code): standard piano base, strong on MAESTRO and MAPS, known scores and open code.[^9][^2]
+- Kong et al.'s high-detail timing model (Bytedance piano tool): strong piano scores and used in strength studies.[^8][^6]
+- MT3 (multi-task multitrack Transformer): modern multi-instrument AMT with T5 design. A Transformer tracks long time links. Open code through Magenta and PyTorch ports.[^21][^22][^3]
+- Basic Pitch (Spotify): light pitch and note tracker built for speed and many instruments. Open code and good as a fast base.[^23][^11]
+- Aria-AMT or like step-by-step Whisper-style models, if code is open: built for strength and set growth. Strong fit for a sound-change study.[^4] Seq2seq means step-by-step, reading in sound and writing out notes.
+- Other newer research tools (for example NoteEM, no-align training methods) that claim strong cross-set results and strong note-with-instrument F1.[^24]
 
 
-### 6.2 Commercial and semi-commercial systems
+### 6.2 Shop tools
 
-Commonly cited commercial AMT tools include: Melodyne, AudioScore, ScoreCloud, AnthemScore, and Transcribe!.[^10][^12][^1]
+Often named shop AMT tools are Melodyne, AudioScore, ScoreCloud, AnthemScore, and Transcribe!.[^10][^12][^1]
 
-These provide audio-to-MIDI/notation functionality but typically do not expose internal metrics; they are mainly suitable as black-box baselines where you compute your own metrics on their output.
+These turn audio into MIDI or notation. But they most often hide inside scores. So use them as closed baselines where you score their outputs yourself. Closed means you see outputs, not inside workings.
 
 For example:
-- **AnthemScore**: dedicated audio-to-notation transcription for full tracks, desktop and web versions.[^10]
-- **Melodyne**: widely used in production for pitch/time editing; can export MIDI and is often used for monophonic or polyphonic pitch tracking.[^12]
-- **ScoreCloud**: real-time audio-to-notation tool focused on musician-friendly notation output.[^12]
+- AnthemScore: transcription for full tracks, with desktop and web versions.[^10]
+- Melodyne: widely used in studios for pitch and time fixes. It can save MIDI and often tracks single and chord pitch.[^12]
+- ScoreCloud: live audio-to-notation tool that stresses player-friendly scores.[^12]
 
-Including one or two of these as external baselines would allow comparison of research models vs tools actual musicians use.
-
-
-### 6.3 Practical selection tailored to your pipeline
-
-Given the synthetic-piano focus of your pipeline (MIDI/MusicXML → synthesis → perturbation → transcription), piano-focused and multitrack symbolic systems work best:
-- At least one strong piano-optimised model (Kong, Onsets & Frames, or Edwards’ re-trained variant).[^2][^8][^6]
-- At least one multi-instrument model (MT3 or hFT) to test generalisation beyond piano synthesis, especially if you later include non-piano instruments.[^3][^4]
-- A lightweight open-source general-purpose model (Basic Pitch) as a fast baseline.[^11]
-- Optionally, Aria-AMT or similar for robustness-focused seq2seq comparisons.[^4]
-- One commercial system (AnthemScore or Melodyne) for a “real-world” baseline.[^10][^12]
+Adding one or two of these lets you weigh research models against tools players truly use.
 
 
-## 7. How these metrics map onto your pipeline stages
+### 6.3 Pragmatic pick for your chain
 
-Given your pipeline:
+Your chain stresses made piano sound (MIDI and MusicXML to sound to change to transcription). MusicXML is a notation file. MIDI is a digital score. Piano-tuned and multi-track note tools fit best:
+- At least one strong piano-tuned model (Kong, Onsets and Frames, or Edwards' retrained form).[^2][^8][^6]
+- At least one multi-instrument model (MT3 or hFT) to test reach past piano sound, most of all if you later add more instruments.[^3][^4]
+- A light open general tool (Basic Pitch) as a fast base.[^11]
+- At will, Aria-AMT or like model for strength-focused step-by-step compare.[^4]
+- One shop tool (AnthemScore or Melodyne) for a real-world base.[^10][^12]
 
-1. Start with a symbolic corpus (MIDI/MusicXML).
-2. Render audio with controllable synthesis parameters (timbre, reverb, mic position, style).
-3. Apply controlled perturbations (noise, reverb RIRs, EQ, style transfers, optional source separation).
-4. Run transcription systems.
-5. Compare transcribed output to original symbolic score and analyse influence of synthesis and perturbation parameters.
 
-The recommended metric layering is:
+## 7. How these scores fit your chain steps
 
-- **Core correctness**: note-onset/note-with-offset/note-with-offset+velocity F1 + frame F1.
-- **Expressive fidelity**: musically informed metrics (IOI timing, KOR articulation, dynamics, harmony) between original and transcribed MIDI.
-- **Notation quality**: Cogliati–Duan notation accuracy metric on MusicXML where available.
-- **Audio-level similarity**: DTW between original synthesised audio and audio re-synthesised from the transcription.
-- **Robustness curves**: F1 and expressive metrics as functions of perturbation parameters (SNR, RT60, EQ slopes, etc.), including ablation of perturbations.
+Your chain is:
+
+1. Start with score files (MIDI and MusicXML). MIDI is a digital score. MusicXML is a notation file.
+2. Make audio with set sound controls (tone color, room echo, mic place, style). Timbre means tone color.
+3. Change the sound on purpose (noise, room-echo records, tone controls, style shifts, at-will track split). RIR means room echo record.
+4. Run transcription tools.
+5. Match outputs to source scores and weigh how sound and change settings moved results.
+
+Use scores in layers:
+
+- Core rightness: note-start, note-with-end, and note-with-end-plus-loudness F1 plus frame F1. F1 blends missed and extra notes.
+- Expressive truth: musical scores (timing gaps called IOI, overlap style called KOR, loudness, harmony) between source and guessed MIDI.
+- Notation quality: Cogliati-Duan notation score on MusicXML where you have it.
+- Audio likeness: DTW between source made audio and remade audio from the transcription. DTW lines up two clips in time.
+- Strength curves: F1 and expressive scores drawn against change settings (SNR, RT60, EQ slopes, and more), with leave-one-out change tests. SNR means music-vs-noise loudness. RT60 means echo fade time. EQ means tone controls. Ablation means dropping one part to test it.
 
 ---
 
@@ -368,7 +359,7 @@ The recommended metric layering is:
 
 18. [CPJKU/mpteval: Musical piano transcription evaluation](https://github.com/CPJKU/mpteval) - Towards Musically Informed Evaluation of Piano Transcription Models ... This repository provides a s...
 
-19. [Audio Data Augmentation — Torchaudio 2.10.0 ...](https://docs.pytorch.org/audio/stable/tutorials/audio_data_augmentation_tutorial.html) - torchaudio provides a variety of ways to augment audio data. In this tutorial, we look into a way to...
+19. [Audio Data Augmentation: Torchaudio 2.10.0 ...](https://docs.pytorch.org/audio/stable/tutorials/audio_data_augmentation_tutorial.html) - torchaudio provides a variety of ways to augment audio data. In this tutorial, we look into a way to...
 
 20. [Automatic Music Transcription: An Overview](https://labsites.rochester.edu/air/publications/benetatos19automaticmusic.pdf) - It involves perception (analyzing complex auditory scenes), cog- nition (recognizing musical objects...
 

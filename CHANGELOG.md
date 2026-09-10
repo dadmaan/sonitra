@@ -189,6 +189,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `README.md`, `ROADMAP.md`, and `docs/` (except `docs/abstract.md`):
+  rewritten in plain language and polished for human tone — shorter
+  active sentences, jargon defined at first use, AI-writing patterns
+  removed. No commands, flags, paths, config keys, or metric definitions
+  changed
 - `scripts/download_datasets.py`: completion bookkeeping in
   `<output-dir>/.downloads/` is now transient — once a dataset's every source
   is downloaded and extracted, its `.ok` markers and `.part` files are removed

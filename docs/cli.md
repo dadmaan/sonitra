@@ -1,5 +1,7 @@
 # CLI reference
 
+Use these commands to run Sonitra from your terminal. Each command needs a config file. You pass it with `--config FILE`.
+
 ```bash
 sonitra init     --config FILE                                                              # write a starter config.yaml
 sonitra render   --config FILE [--corpus DIR] [--output DIR] [--dataset NAME] [--workers N] [--limit N] [--seed N]
@@ -10,22 +12,22 @@ sonitra serve    --port 8000                                                    
 sonitra --version
 ```
 
-`--limit N` selects a reproducible random subset of N files (useful for smoke testing). `--seed` controls the random draw (default: 123). The flags are available on all four commands (`render`, `transcribe`, `evaluate`, `benchmark`); the batch runner (`scripts/run_transcribe_eval.py`) forwards them to the render step.
+`--limit N` picks N files at random so you can do a quick trial run. `--seed` sets the random starting point, so you get the same files each time. The default seed is 123. You can use both flags with `render`, `transcribe`, `evaluate`, and `benchmark`. The batch script (`scripts/run_transcribe_eval.py`) passes them to the render step.
 
-The batch runner additionally accepts `--config NAME [NAME …]` to run only the named preset configs instead of all configs under `config/examples/`, and `--jobs N` (default: 1) to process N configs in parallel (each config's render→transcribe→evaluate steps still run serially within the worker).
+The batch script can also run only some preset configs. Use `--config NAME [NAME …]` to name them. It will run all configs under `config/examples/` if you skip this flag. Use `--jobs N` to run N configs at the same time. The default is 1. Each config still runs its own render, transcribe, and evaluate steps one after another.
 
-When `--dataset` is set on the CLI it overrides `io.dataset` from the config file. When `--corpus`/`--audio`/`--reference`/`--estimate` are omitted, the paths are resolved from `io.corpus_root` and `io.dataset` in the config.
+If you set `--dataset` on the command line, it replaces `io.dataset` from your config file. If you skip `--corpus`, `--audio`, `--reference`, or `--estimate`, Sonitra reads `io.corpus_root` and `io.dataset` from your config to find the paths.
 
-`sonitra benchmark` writes its results JSONL, `summary.json`, and a `config.yaml` snapshot of the resolved config it ran with to `work_dir` (see [Configuration → Benchmark output](configuration.md#benchmark-output)). To re-generate an existing benchmark's output in place (e.g. after a `sonitra`/config upgrade, so `config.yaml` and per-row `overrides` get (re)populated), re-run the same command with the same `--workdir`:
+`sonitra benchmark` saves three items in `work_dir` (see [Configuration → Benchmark output](configuration.md#benchmark-output)). It saves the results file in JSONL format, a `summary.json` file, and a `config.yaml` copy of the exact config it used. If you want to rebuild the output for a run you already did, for example after you updated Sonitra or your config, run the same command again with the same `--workdir`. This fills in `config.yaml` and per-row `overrides` again.
 
 ```bash
 sonitra benchmark --config config/benchmark/old_recording/vintage_scenarios.yaml \
   --dataset maestro-v3 --workdir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT
 ```
 
-`scripts/export_regression_table.py --work-dir DIR [--metadata-csv FILE --metadata-join-column NAME]` turns a benchmark's results JSONL into a per-file regression-ready CSV, optionally joined with a downloaded dataset's metadata (see `docs/datasets.md`).
+`scripts/export_regression_table.py --work-dir DIR [--metadata-csv FILE --metadata-join-column NAME]` turns a benchmark results file into a per-file CSV table. You can use that CSV for further analysis. You can also join it with dataset metadata (see `docs/datasets.md`).
 
-`scripts/run_mixed_effects_analysis.py --work-dir DIR [--input FILE] [--output-dir DIR] [--ref-level NAME] [--rscript PATH] [--covariate COL] [--covariate-transform NAME] [--covariate-divisor N] [--interact-with-condition] [--dry-run]` fits a beta mixed-effects model to that exported table, writing the results to `regression_analysis/` beside it. Requires R with `glmmTMB` (see [Statistical analysis](statistical-analysis.md)).
+`scripts/run_mixed_effects_analysis.py --work-dir DIR [--input FILE] [--output-dir DIR] [--ref-level NAME] [--rscript PATH] [--covariate COL] [--covariate-transform NAME] [--covariate-divisor N] [--interact-with-condition] [--dry-run]` fits a beta mixed-effects model to that table. A mixed-effects model is a form of statistics that separates the effect of each test condition from the natural difficulty of each piece. Results go in `regression_analysis/` next to the table. You need R with `glmmTMB` installed (see [Statistical analysis](statistical-analysis.md)).
 
 ---
 [← Back to README](../README.md)

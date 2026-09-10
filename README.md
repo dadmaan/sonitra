@@ -2,7 +2,7 @@
 
 > Independent benchmarking for AI music transcription systems.
 
-Sonitra is a research toolkit for benchmarking automatic music transcription (AMT) systems. It does not train models. The core loop renders symbolic scores to audio, optionally separates stems and applies audio effects, transcribes that audio back to symbolic form with one or more AMT backends, and scores the result against the ground-truth score.
+Sonitra is a research toolkit for testing automatic music transcription (AMT) systems. AMT turns audio into written notes. Sonitra does not train models. It follows a simple loop. It turns score files into audio. It can split sounds and add effects. It transcribes that audio back into notes with one or more AMT tools. Then it scores the result against the true score. MIDI is the digital score format Sonitra starts from.
 
 ```
 MIDI → audio synthesis → transcription → evaluation vs. reference
@@ -10,15 +10,17 @@ MIDI → audio synthesis → transcription → evaluation vs. reference
 
 ## Requirements
 
+You need these before you start:
+
 - Python >= 3.11
 - [uv](https://docs.astral.sh/uv/) (recommended package manager)
-- [fluidsynth](https://www.fluidsynth.org/) CLI (optional, for SoundFont-based synthesis — see platform notes below)
-- A VST3 plugin (optional, for synthesis and effects)
-- Docker (optional, alternative to a local Python install — see [Docker](#docker) below)
+- [fluidsynth](https://www.fluidsynth.org/) CLI (optional, a free tool that turns MIDI into audio using a SoundFont file, see platform notes below)
+- A VST3 plugin (optional, a virtual instrument or effect for sound creation and audio effects)
+- Docker (optional, a way to run Sonitra without a local Python install, see [Docker](#docker) below)
 
 ## Installation
 
-[uv](https://docs.astral.sh/uv/) is the recommended way to install Sonitra: it resolves dependencies from the checked-in `uv.lock`, so installs are reproducible. A pip fallback is noted at the end of this section.
+[uv](https://docs.astral.sh/uv/) is the best way to install Sonitra. It reads the checked-in `uv.lock`, so you get the same versions each time. A pip fallback is at the end of this section.
 
 ### Linux
 
@@ -63,15 +65,15 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 uv sync --extra dev
 ```
 
-> **Windows note:** DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) are not parallel-safe. Sonitra automatically enforces `max_workers=1` when a DawDreamer backend is active.
+> **Windows note:** DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) cannot run in parallel. DawDreamer is the tool Sonitra uses to play sounds. Faust is its built-in simple tone maker. VST means a virtual instrument plugin. Sonitra sets `max_workers=1` for you when a DawDreamer backend is active. This setting limits work to one task at a time.
 
-> **WSL2 note:** If your repo lives on the Windows filesystem (e.g., a devcontainer mount), `uv sync` may fail with an I/O error when installing packages with deeply nested file trees (TensorFlow, CUDA wheels). Avoid this by cloning on the Linux filesystem (e.g., `~/projects/sonitra`), or redirect the venv: `UV_PROJECT_ENVIRONMENT=~/.venvs/sonitra uv sync --extra dev`.
+> **WSL2 note:** WSL2 lets you run Linux inside Windows. If your repo lives on the Windows side (for example, a devcontainer mount), `uv sync` may fail with an I/O error. It happens when installing packages with very deep file trees (TensorFlow, CUDA wheels). Avoid this by cloning on the Linux side (for example `~/projects/sonitra`). Or point the env elsewhere: `UV_PROJECT_ENVIRONMENT=~/.venvs/sonitra uv sync --extra dev`.
 
 > **pip fallback:** `pip install -e ".[dev]"` still works if you prefer not to use uv.
 
 ### Docker
 
-Run Sonitra without installing Python or system dependencies locally. All commands run from the repository root:
+You can run Sonitra without installing Python or system tools on your machine. Run all commands from the repo root, the top folder:
 
 ```bash
 cp env.example .env
@@ -84,18 +86,18 @@ docker compose -f docker/docker-compose.yml --profile cpu run --rm sonitra \
 docker compose -f docker/docker-compose.yml --profile cpu up --build
 ```
 
-The REST API is then available at `http://localhost:8000`. A profile (`cpu` or `gpu`) is always required. See **[docs/docker.md](docs/docker.md)** for GPU passthrough, running CLI commands via Compose, and the volume/environment reference.
+The REST API is then at `http://localhost:8000`. A REST API lets your programs talk to Sonitra over the web. You must always pass a profile, `cpu` or `gpu`. See [docs/docker.md](docs/docker.md) for GPU use, CLI commands through Compose, and the volume and setting reference.
 
 ### Running commands
 
-`uv run` invokes any command inside the managed venv without activating it:
+`uv run` runs any command inside the managed env with no need to turn it on first:
 
 ```bash
 uv run sonitra --version
 uv run pytest
 ```
 
-Or activate the venv once and use commands directly:
+Or turn on the env once and use commands on their own:
 
 ```bash
 source .venv/bin/activate   # Linux / macOS / WSL
@@ -103,19 +105,21 @@ source .venv/bin/activate   # Linux / macOS / WSL
 sonitra --version
 ```
 
-### GPU (optional — Linux x86_64 only)
+### GPU (optional, Linux x86_64 only)
 
-GPU inference for Basic Pitch requires the NVIDIA CUDA runtime libraries alongside TensorFlow.
+Use this for faster Basic Pitch transcription. Basic Pitch is Spotify's free tool that turns audio into notes. It needs NVIDIA CUDA support files plus TensorFlow.
 
 ```bash
 uv sync --extra gpu
 ```
 
-This installs the 11 `nvidia-*` CUDA runtime wheels, pinned to the versions TensorFlow 2.15 declares in its `and-cuda` extras. TensorFlow itself arrives as a core dependency via Basic Pitch, so the `[gpu]` extra adds only the CUDA libraries. (Not `tensorflow[and-cuda]` directly — that meta-extra depends on `tensorrt-libs`, which is only available on NVIDIA's private PyPI index.)
+This installs the 11 `nvidia-*` CUDA support wheels, pinned to the versions TensorFlow 2.15 asks for in its `and-cuda` extras. TensorFlow itself comes as a core need through Basic Pitch, so the `[gpu]` extra adds only the CUDA files. Sonitra does not use `tensorflow[and-cuda]` on its own, because that group needs `tensorrt-libs`, which lives only on NVIDIA's private package index.
 
-Enable GPU inference by setting `device: GPU:0` in the `transcription.transcribers` section of your config (default: `cpu`). For GPU passthrough inside Docker, see [docs/docker.md](docs/docker.md).
+To use the graphics card, set `device: GPU:0` in the `transcription.transcribers` part of your config. The default is `cpu`. For GPU use inside Docker, see [docs/docker.md](docs/docker.md).
 
 ## Datasets
+
+Use the download script to fetch test MIDI files. MIDI means digital scores:
 
 ```bash
 python scripts/download_datasets.py maestro-v3-midi  # ~1,276 piano MIDI files, ~57 MB
@@ -123,11 +127,11 @@ python scripts/download_datasets.py                  # interactive picker (rich 
 python scripts/download_datasets.py --all --jobs 4   # download everything, 4 at a time
 ```
 
-Files land under `corpus/{dataset}/midi/`. See **[docs/datasets.md](docs/datasets.md)** for the full list of supported datasets and script options.
+Files land under `corpus/{dataset}/midi/`. See [docs/datasets.md](docs/datasets.md) for the full list of sets and script options.
 
 ## MIDI input files
 
-Sonitra uses a dataset-first corpus layout: place your MIDI files under `corpus/{dataset}/midi/`.
+Put your MIDI files under `corpus/{dataset}/midi/`. This is the dataset-first layout:
 
 ```
 corpus/
@@ -139,7 +143,7 @@ corpus/
         another.mid
 ```
 
-Both `.mid` and `.midi` extensions are recognised; discovery is recursive at any depth. Set `io.corpus_root` and `io.dataset` in your config and all artifact paths (audio, transcriptions, evaluation results) are derived automatically:
+Sonitra finds both `.mid` and `.midi` endings. It searches all subfolders at any depth. Set `io.corpus_root` and `io.dataset` in your config. Sonitra then works out all output paths for you, such as audio, transcriptions, and scores:
 
 ```yaml
 io:
@@ -148,9 +152,11 @@ io:
   output_format: wav
 ```
 
-For VST3 instrument/preset setup and the SoundFont fallback, see **[docs/plugins.md](docs/plugins.md)**.
+For VST3 instrument and preset setup and the SoundFont fallback, see [docs/plugins.md](docs/plugins.md). VST3 is a common plugin format. A SoundFont is a file of sampled sounds.
 
 ## Quick start
+
+Run these steps to do your first full test. Render means turn scores into audio. Transcribe means turn audio back into notes. Evaluate means score the notes:
 
 ```bash
 # 0. Download a dataset (stdlib-only, no venv required)
@@ -173,27 +179,29 @@ sonitra evaluate   --config config/examples/pedalboard_baseline.yaml
 sonitra benchmark  --config config/examples/pedalboard_baseline.yaml
 ```
 
-Full flag reference (explicit path overrides, `--workers`, `--jobs`, etc.) is in **[docs/cli.md](docs/cli.md)**.
+See [docs/cli.md](docs/cli.md) for the full flag list, such as explicit path flags, `--workers`, and `--jobs`.
 
 ## Configuration
 
-`config/source.yaml` is the fully-annotated reference config documenting every parameter. Generate a minimal starter with `sonitra init --config config.yaml`. The config is a Pydantic model with `extra="forbid"` — unknown keys are hard errors.
+`config/source.yaml` is the full sample config. It explains every setting. Make a small starter with `sonitra init --config config.yaml`. Sonitra checks the config with Pydantic, a Python validation tool. It uses `extra="forbid"`, which means unknown keys stop the run with an error.
 
-See **[docs/configuration.md](docs/configuration.md)** for the full section reference, synth-backend/effects-chain tables, and transcription-backend options.
+See [docs/configuration.md](docs/configuration.md) for the full section guide, synth and effects tables, and transcription options.
 
 ## Evaluation metrics
 
-Note-level, frame-level, and expressive-performance metrics (mir_eval-compatible matching, implemented in NumPy/SciPy), plus an optional audio-level DTW metric. See **[docs/evaluation.md](docs/evaluation.md)** for the full metric family table.
+Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table.
 
 ## Statistical analysis
 
-`python scripts/run_mixed_effects_analysis.py --work-dir DIR` fits a mixed-effects regression to a benchmark run, separating each condition's effect on transcription accuracy from the difficulty of the individual pieces. Requires R with `glmmTMB`; see **[docs/statistical-analysis.md](docs/statistical-analysis.md)**.
+`python scripts/run_mixed_effects_analysis.py --work-dir DIR` fits a mixed-effects regression to a benchmark run. This form of statistics pulls apart each test setup's effect from how hard each piece was. You need R with `glmmTMB`. R is a stats language. See [docs/statistical-analysis.md](docs/statistical-analysis.md).
 
 ## Python API and REST API
 
-Sonitra can be driven programmatically (`run_pipeline`) or via a FastAPI server (`sonitra serve --port 8000`). See **[docs/python-api.md](docs/python-api.md)** and **[docs/rest-api.md](docs/rest-api.md)**.
+You can drive Sonitra from Python with `run_pipeline`. Or you can run a web server with `sonitra serve --port 8000`. The server uses FastAPI, a Python web tool. See [docs/python-api.md](docs/python-api.md) and [docs/rest-api.md](docs/rest-api.md).
 
 ## Testing
+
+Run the test suite with:
 
 ```bash
 pytest                              # run all tests
@@ -202,14 +210,14 @@ pytest -m "not skip_if_no_vst"      # skip tests that require a VST plugin path
 pytest -m integration               # only end-to-end VST tests
 ```
 
-Set `VST_PATH` or `VST3_PATH` in your environment to enable VST-dependent tests.
+Set `VST_PATH` or `VST3_PATH` in your env to turn on tests that need a VST plugin path. VST is a virtual instrument format.
 
 ## Author
 
-**Shayan Dadman** — [dadman.shayan@gmail.com](mailto:dadman.shayan@gmail.com)
+**Shayan Dadman**: [dadman.shayan@gmail.com](mailto:dadman.shayan@gmail.com)
 
 ## License
 
 Sonitra is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE) (`AGPL-3.0-or-later`).
 
-Third-party dependencies are distributed under their own terms, including GPLv3 components (`pedalboard`, `dawdreamer`). Datasets downloaded by `scripts/download_datasets.py` carry their own licences (e.g. MAESTRO is CC BY-NC-SA 4.0) and are not covered by this licence.
+Third-party tools ship under their own terms, including GPLv3 parts (`pedalboard`, `dawdreamer`). GPLv3 is a free-software licence. Sets fetched by `scripts/download_datasets.py` carry their own licences. For example, MAESTRO is CC BY-NC-SA 4.0, which means free use for non-commercial sharing with credit. These sets are not covered by Sonitra's licence.

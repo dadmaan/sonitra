@@ -1,8 +1,8 @@
 # Statistical analysis
 
-`scripts/run_mixed_effects_analysis.py` fits a mixed-effects regression to a benchmark run.
+`scripts/run_mixed_effects_analysis.py` fits a mixed-effects regression to a benchmark run. A mixed-effects model is a form of statistics that splits results into fixed parts you test and random parts you adjust for.
 
-A plain per-condition mean confounds the condition's effect with whatever mix of pieces happened to be in the corpus. This model separates them.
+A plain per-condition mean mixes two things. It mixes how good a test setup is with how hard its pieces were. This model pulls them apart.
 
 | | |
 |---|---|
@@ -11,15 +11,19 @@ A plain per-condition mean confounds the condition's effect with whatever mix of
 | Random intercepts | `song`, `composer` |
 | Family | Beta, logit link (F1 is a proportion, bounded to `(0, 1)`) |
 
+Here response means the score you predict, in this case note-onset F1. F1 is a score from 0 to 1 that blends missed notes and extra notes. Fixed effects are the factors you test, such as test setup, piece length, and year. Random intercepts are baselines the model gives to each song and composer to allow for easy and hard pieces. Beta with a logit link is the model type Sonitra uses because F1 is a share between 0 and 1.
+
 ```
 note.onset_f1 ~ condition + duration + performance_year + (1 | song) + (1 | composer)
 ```
 
-The fit runs in **R** (`glmmTMB`), driven by the Python script. A beta GLMM with crossed random effects has no equivalent in the Python statistics stack, so the model lives in `scripts/mixed_effects_analysis.R`.
+Read the line above as: predict note-onset F1 from condition, duration, and performance year, plus a separate baseline for each song and each composer.
+
+The fit runs in R (`glmmTMB`), started by the Python script. A beta GLMM with crossed random effects has no match in Python's stats tools. GLMM means generalised linear mixed model. Crossed means songs and composers vary on their own. So the model lives in `scripts/mixed_effects_analysis.R`.
 
 ## Requirements
 
-R with the `glmmTMB` and `jsonlite` packages.
+You need R with the `glmmTMB` and `jsonlite` packages. R is a language for statistics. `glmmTMB` fits the model. `jsonlite` reads JSON files.
 
 ```bash
 # Debian / Ubuntu — prebuilt, compiles nothing
@@ -32,15 +36,15 @@ micromamba install -c conda-forge r-base r-glmmtmb r-jsonlite "r-tmb=1.9.19"
 brew install r && Rscript -e 'install.packages(c("glmmTMB","jsonlite"), repos="https://cloud.r-project.org")'
 ```
 
-> **Pin `TMB` to the version `glmmTMB` was built against.** A mismatch produces a `glmmTMB was built with TMB package version X` warning and can segfault mid-fit. Distribution packages (`r-cran-glmmtmb`) are already matched; conda-forge needs the explicit `r-tmb` pin shown above.
+> Keep `TMB` matched to `glmmTMB`. TMB is the math engine behind `glmmTMB`. If the versions differ, you see a `glmmTMB was built with TMB package version X` warning and the fit can crash. Linux system packages (`r-cran-glmmtmb`) already match. Conda-forge needs the explicit `r-tmb` pin shown above.
 
-The script finds `Rscript` on `PATH`, or via `$SONITRA_RSCRIPT`, or via `--rscript`. If R or a package is missing it exits with the install commands rather than a stack trace.
+The script finds `Rscript` on your `PATH`, which is the list of folders your system searches for programs. It also checks `$SONITRA_RSCRIPT` and `--rscript`, in that order. If R or a package is missing, it prints the install commands instead of a long error.
 
-The Docker images install R by default — see [docker.md](docker.md).
+The Docker images include R by default (see [docker.md](docker.md)).
 
 ## Preparing the input
 
-The model needs composer, duration, and performance year (`performance_year`, from `meta.year`), which live in the dataset's metadata rather than in the benchmark results. So export the regression table **with** `--metadata-csv`:
+The model needs composer, duration, and performance year (`performance_year`, from `meta.year`). These live in the dataset notes, not in the benchmark results. So export the table with `--metadata-csv`:
 
 ```bash
 # 1. Run the benchmark
@@ -55,13 +59,13 @@ python scripts/export_regression_table.py \
   --output corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT/regression_table_with_metadata.csv
 ```
 
-Without `--metadata-csv` the table has no `meta.*` columns and the script stops with an explanation. See [datasets.md](datasets.md#joining-dataset-metadata-into-a-benchmark-export) for the join.
+Without `--metadata-csv` the table has no `meta.*` columns and the script stops with an explanation. See [datasets.md](datasets.md#joining-dataset-metadata-into-a-benchmark-export) for how the join works.
 
 ### Composition year (optional enrichment)
 
-`meta.year` is MAESTRO's competition year (2004–2018). It indexes the recording batch, not the music. `misc/MAESTRO_comp_year.txt` carries an AI-compiled composition (finalization) year per work. Use it when the question is about the age of the music rather than the recording session. It spans 1612–2006 across 60 composers. 27 of 60 composers have works in more than one composition year; for the remaining 33 it is a composer-level constant, so the main effect is estimated largely between composers — effective N is nearer 60 than 8932.
+`meta.year` is MAESTRO's contest year, from 2004 to 2018. It marks the recording batch, not when the music was written. `misc/MAESTRO_comp_year.txt` holds an AI-compiled year when each work was finished. Use it when your question is about the age of the music, not the recording date. It spans 1612-2006 across 60 composers. 27 of 60 composers have works in more than one composition year. For the other 33 it never changes within a composer, so the main result mostly compares composers. Your true sample is closer to 60 than 8932.
 
-Enrich the metadata first, then export against the enriched file. The export flags are unchanged:
+Enrich the metadata first, then export against the enriched file. The export flags stay the same:
 
 ```bash
 python scripts/enrich_metadata.py \
@@ -78,7 +82,7 @@ python scripts/export_regression_table.py \
   --output corpus/maestro-v3/benchmark/vintage_scenarios_MIDI/regression_table_with_metadata_comp_year.csv
 ```
 
-The regression table gains `meta.composition_year`. The script writes `<output>.provenance.json` (input SHA-256s, argv, coverage) alongside the enriched CSV. Annotation quoting is disabled by default (the comp-year file has unbalanced quotes); `--require-full-coverage` exits non-zero on any unmatched row.
+The regression table gains `meta.composition_year`. The script writes `<output>.provenance.json` next to the enriched CSV. That file logs input checksums, the exact command, and coverage. The annotation file uses `|` as a separator. Quoting is off by default because the comp-year file has unbalanced quotes. `--require-full-coverage` stops with an error if any row finds no match.
 
 ## Running it
 
@@ -104,11 +108,11 @@ python scripts/run_mixed_effects_analysis.py --input path/to/table.csv
 | `--interact-with-condition` | Also fit `condition * <covariate>` on top of the main-effect model |
 | `--dry-run` | Report the design and stop, without fitting |
 
-`--dry-run` is the cheap way to confirm the table is what you think it is before committing to a fit:
+`--dry-run` is the cheap way to check the table before a long fit. It reports the design and stops.
 
 ## Composition year as a model term
 
-The covariate interface is generic and dataset-agnostic — composition year is the first use. The CSV column stays `meta.composition_year`; the R-side variable strips a leading `meta.`, so `meta.composition_year` becomes `composition_year` in the formula. Competition year stays in the model as `performance_year` (from `meta.year`): the two are not collinear (r = -0.149).
+The covariate flags work for any dataset (composition year is just the first use). A covariate is an extra column you add to the model. The CSV column stays `meta.composition_year`. In R it becomes `composition_year` because Sonitra strips a leading `meta.`. Contest year stays in the model as `performance_year` (from `meta.year`). The two years hardly track each other (r = -0.149), so you can use both.
 
 ```bash
 python scripts/run_mixed_effects_analysis.py \
@@ -123,13 +127,13 @@ python scripts/run_mixed_effects_analysis.py \
 | `--covariate-divisor N` | `100` | Fixed divisor for `center-scale` |
 | `--interact-with-condition` | off | Also fit `condition * <covariate>` |
 
-`center-scale` is a fixed divisor, not an SD. The covariate is centred on its fitted-sample mean and divided by `--covariate-divisor` (default 100, so a composition-year estimate reads per century). A fixed divisor keeps estimates comparable across reruns and filtered subsets, where an SD would drift.
+`center-scale` uses a fixed divisor, not a standard deviation. The covariate is centred on its fitted-sample mean and divided by `--covariate-divisor`. The default is 100, so a composition-year result reads per century. A fixed divisor keeps results comparable across reruns and filtered sets. A standard deviation would shift each time.
 
-The script fits a nested set — `base` -> `<covariate>` -> `<covariate>_x_condition` (the last only with `--interact-with-condition`) — on a single complete-case subset over the largest model's variables, so logLik/AIC/LRT are comparable and the recorded centre matches the data actually fitted. Every model is fitted with raised optimizer limits (`iter.max`/`eval.max` 10000); the comparison is a direct LRT chain, not a parsed `anova()` frame.
+The script fits a nested set (`base` -> `<covariate>` -> `<covariate>_x_condition`, the last only with `--interact-with-condition`) on one shared subset with full data for the largest model. Shared means logLik, AIC, and LRT stay comparable. LRT means likelihood-ratio test, a check of whether a larger model fits clearly better. AIC means Akaike information criterion, a score where lower is better. The saved centre matches the rows actually fitted. Every model runs with raised optimizer limits (`iter.max` and `eval.max` set to 10000). The comparison is a direct LRT chain, not a parsed `anova()` table.
 
-On MAESTRO (8932 rows), once converged the `condition x composition_year` interaction is the result: LRT vs base `Chisq 215.30, 6 df, p < 2e-16`. The main effect alone is marginal (`beta = -0.00082/yr, p = 0.025`; base -> main `Chisq ~= 4.68, 1 df, p ~= 0.031`; main -> interaction `Chisq` in the low hundreds, `6 df`, `p < 2e-16`). Convergence matters here: the interaction model does not converge under glmmTMB's default control (AIC `-59344.33`) and reaches `conv: 0` with the raised limits plus `/100` scaling (AIC `-59410.55`, 66 units apart).
+On MAESTRO (8932 rows), once converged the `condition x composition_year` interaction is the result: LRT vs base `Chisq 215.30, 6 df, p < 2e-16`. Chisq is the test score, df is degrees of freedom (here the number of extra terms), and p is the chance the gap is noise. The main effect alone is small (`beta = -0.00082/yr, p = 0.025`; base -> main `Chisq ~= 4.68, 1 df, p ~= 0.031`; main -> interaction `Chisq` in the low hundreds, `6 df`, `p < 2e-16`). Convergence matters here. The interaction model does not converge with glmmTMB's defaults (AIC `-59344.33`). It reaches `conv: 0`, which means success, with the raised limits plus `/100` scaling (AIC `-59410.55`, 66 units apart).
 
-With a covariate the output gains two things; without one it is unchanged. Flat top-level artifacts always describe the largest model fitted:
+Without a covariate the output is unchanged. With one it gains two items. Flat top-level files always describe the largest model fitted:
 
 | File | Contents |
 |---|---|
@@ -139,7 +143,7 @@ With a covariate the output gains two things; without one it is unchanged. Flat 
 
 ## Output
 
-Results land in `regression_analysis/`, beside the input CSV:
+Results go in `regression_analysis/`, next to the input CSV:
 
 | File | Contents |
 |---|---|
@@ -150,16 +154,16 @@ Results land in `regression_analysis/`, beside the input CSV:
 | `model_meta.json` | Convergence status, AIC/BIC/logLik, variance components, R and package versions, input SHA-256, exact command |
 | `fit.R` | Byte-identical copy of the R script that produced these numbers |
 
-Between `model_meta.json` and `fit.R`, a result is reproducible without the surrounding repository state: you can tell exactly which input, which model, and which package versions produced any given number.
+Between `model_meta.json` and `fit.R`, you can trace any number back to its source. You see the exact input, model, and package versions with no need for the rest of the repo.
 
 ## Things the script warns about
 
-It inspects the table before fitting and flags what the model would otherwise absorb silently:
+The script checks the table before fitting and flags what the model would else hide:
 
-- **More than one transcriber.** The model has no transcriber term, so rows from different systems collapse into a single intercept. Filter the table per transcriber first.
-- **Rows with `status != "succeeded"`.** Fitted alongside the rest unless you remove them.
-- **Missing values** in a model column — R drops those rows; the count is reported.
-- **`note.onset_f1` at exactly 0 or 1.** The beta family is defined on the *open* interval, so glmmTMB will fail. Happens with sparse or degenerate transcriptions.
+- More than one transcriber. A transcriber is a tool that turns audio into notes. The model has no transcriber term, so rows from different tools blend into one baseline. Filter the table to one transcriber first.
+- Rows with `status != "succeeded"`. Sonitra fits them with the rest unless you remove them.
+- Missing values in a model column. R drops those rows. The script reports the count.
+- `note.onset_f1` at exactly 0 or 1. The beta family only allows values strictly between 0 and 1, so glmmTMB will fail. This happens with thin or broken transcriptions.
 
 
 ---
