@@ -60,6 +60,9 @@ def _assert_valid_source(dd: ModuleType, source: dict) -> None:
         "musicnet",
         "e-gmd-midi",
         "e-gmd-full",
+        "guitarset-mic",
+        "guitarset-mix",
+        "guitarset-full",
     ],
 )
 def test_every_registry_entry_has_valid_sources(dd: ModuleType, key: str) -> None:
@@ -93,6 +96,45 @@ def test_bsed_extract_map_has_midi_and_recordings_targets(dd: ModuleType) -> Non
     assert "recordings" in targets
     # recordings must not collide with the pipeline's own rendered-audio dir name
     assert "audio" not in targets
+
+
+def test_guitarset_variants_share_corpus_subdir_and_targets(dd: ModuleType) -> None:
+    keys = ["guitarset-mic", "guitarset-mix", "guitarset-full"]
+    for key in keys:
+        spec = dd.DATASETS[key]
+        assert spec["corpus_subdir"] == "guitarset"
+        targets = {target for source in spec["sources"] for _, _, target in source["extract_map"]}
+        assert targets == {"annotations", "recordings"}
+        # recordings must not collide with the pipeline's own rendered-audio dir name,
+        # and midi/ is populated by the JAMS converter (1.2), not the downloader
+        assert "audio" not in targets
+        assert "midi" not in targets
+        assert any(source["url"].endswith("annotation.zip") for source in spec["sources"])
+    union_targets = {
+        target
+        for key in keys
+        for source in dd.DATASETS[key]["sources"]
+        for _, _, target in source["extract_map"]
+    }
+    assert union_targets == {"annotations", "recordings"}
+
+
+def test_guitarset_full_combines_both_audio_variants_in_one_run(dd: ModuleType) -> None:
+    # One-run equivalent of -mic + -mix: annotation fetched once, both audios.
+    spec = dd.DATASETS["guitarset-full"]
+    assert len(spec["sources"]) == 3
+    urls = [source["url"] for source in spec["sources"]]
+    assert sum(url.endswith("annotation.zip") for url in urls) == 1
+    assert any(url.endswith("audio_mono-mic.zip") for url in urls)
+    assert any(url.endswith("audio_mono-pickup_mix.zip") for url in urls)
+    assert dd._dataset_size_mb(spec) == 38 + 627 + 652
+
+
+def test_guitarset_next_steps_hint_names_converter_once(dd: ModuleType) -> None:
+    hint = dd._guitarset_next_steps()
+    assert "scripts/guitarset_jams_to_midi.py --dry-run" in hint
+    assert "scripts/guitarset_jams_to_midi.py" in hint
+    assert "config/benchmark/guitarset_test.yaml" in hint
 
 
 def test_musicnet_has_three_sources_including_a_bare_file(dd: ModuleType) -> None:
@@ -1133,7 +1175,11 @@ def test_download_one_force_resets_state_and_redownloads(
     assert n_files == 2
     assert error is None
     assert not stale_partial.exists()
-    assert dd._marker_path(output_dir, "fixture", 0).exists()
+    # A fully downloaded dataset leaves nothing behind in .downloads/;
+    # presence is then derived from the populated corpus dirs.
+    assert not dd._marker_path(output_dir, "fixture", 0).exists()
+    assert not dd._partial_path(output_dir, "fixture", 0, spec["sources"][0]).exists()
+    assert dd._is_already_present("fixture", spec, output_dir) is True
     assert (output_dir / "fixture" / "midi" / "x.mid").read_bytes() == b"midi-bytes"
 
 
@@ -1147,6 +1193,83 @@ def test_download_one_skips_when_markers_present(dd: ModuleType, tmp_path: Path)
     assert status == "skip"
     assert n_files == 0
     assert error is None
+    # Stale completion bookkeeping is cleared even on skip.
+    assert not dd._marker_path(output_dir, "fixture", 0).exists()
+
+
+def test_download_one_clears_markers_and_partials_on_success(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture_zip = tmp_path / "fixture_source.zip"
+    _make_fixture_zip(fixture_zip)
+    zip_bytes = fixture_zip.read_bytes()
+    spec = _fixture_zip_spec()
+    output_dir = tmp_path / "corpus"
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)  # part of _download_file's contract
+        dest.write_bytes(zip_bytes)
+        return len(zip_bytes)
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    status, n_files, error = dd._download_one("fixture", spec, output_dir)
+
+    assert status == "done"
+    assert n_files == 2
+    assert error is None
+    assert not dd._marker_path(output_dir, "fixture", 0).exists()
+    assert not dd._partial_path(output_dir, "fixture", 0, spec["sources"][0]).exists()
+    # Presence now comes from the populated corpus dirs, not the markers.
+    assert dd._is_already_present("fixture", spec, output_dir) is True
+
+
+def test_download_one_failure_keeps_partial_progress_for_resume(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture_zip = tmp_path / "fixture_source.zip"
+    _make_fixture_zip(fixture_zip)
+    zip_bytes = fixture_zip.read_bytes()
+    spec = {
+        "name": "Two-source Fixture",
+        "corpus_subdir": "fixture",
+        "sources": [
+            {
+                "url": "https://example.invalid/a.zip",
+                "kind": "zip",
+                "extract_map": [("Root/A/", None, "midi")],
+                "size_mb": 1,
+            },
+            {
+                "url": "https://example.invalid/b.zip",
+                "kind": "zip",
+                "extract_map": [("Root/B/", None, "recordings")],
+                "size_mb": 1,
+            },
+        ],
+    }
+    output_dir = tmp_path / "corpus"
+
+    def flaky_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)  # part of _download_file's contract
+        if index == 1:
+            dest.write_bytes(b"partial-bytes")
+            raise RuntimeError("boom")
+        dest.write_bytes(zip_bytes)
+        return len(zip_bytes)
+
+    monkeypatch.setattr(dd, "_download_file", flaky_download_file)
+
+    status, n_files, error = dd._download_one("fixture", spec, output_dir)
+
+    assert status == "error"
+    assert error == "boom"
+    # The completed source's marker and the failed source's partial survive
+    # for resume; nothing is cleared while work remains.
+    assert dd._marker_path(output_dir, "fixture", 0).exists()
+    assert not dd._marker_path(output_dir, "fixture", 1).exists()
+    partial_1 = dd._partial_path(output_dir, "fixture", 1, spec["sources"][1])
+    assert partial_1.read_bytes() == b"partial-bytes"
 
 
 # ── preflight (disk space) ───────────────────────────────────────────────────

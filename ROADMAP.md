@@ -23,8 +23,8 @@ MIDI → audio synthesis → stem separation → transcription → evaluation vs
 
 ## Additional datasets and instruments
 
-**Status:** Piano, orchestral, chamber/orchestral, and drum corpora available; further
-expansion not yet started.
+**Status:** Piano, orchestral, chamber/orchestral, drum, and guitar corpora
+available; further expansion not yet started.
 
 `scripts/download_datasets.py` currently supports MAESTRO V3.0.0 (piano — `-midi`,
 `-wav`, `-full` variants), BSED (orchestral — Beethoven symphony excerpts, MIDI + real
@@ -33,10 +33,17 @@ label CSVs), and the Expanded Groove MIDI Dataset (drums — `-midi`/`-full`; do
 since transcription/evaluation here target pitched instruments, not drum-hit
 classification). It also offers an interactive dataset picker (rich table) and parallel
 downloads via `--jobs N`. Each entry can source from multiple URLs/archive formats
-(zip and tar.gz) and route members to `midi/`, `recordings/`, or `metadata/` by
+(zip and tar.gz) and route members to `midi/`, `recordings/`, `metadata/`, or
+`annotations/` (GuitarSet JAMS) by
 extension/prefix rules. MAPS was evaluated but dropped — it's gated behind a
 registration form with no scriptable direct-download URL, incompatible with this
-script's unattended-download model. Planned expansion covers more instruments,
+script's unattended-download model. GuitarSet (acoustic guitar — `guitarset-mic` /
+`guitarset-mix` mono variants, or `guitarset-full` for both at once, JAMS
+annotations converted once to MIDI via
+`scripts/guitarset_jams_to_midi.py`) is available; its 6-channel hex-pickup
+stems (`hex-pickup_original` / `_debleeded`) are deferred — `read_audio`
+returns all channels and `write_audio` will not downmix, so multi-channel
+input needs render-path work first. Planned expansion covers more instruments,
 multi-instrument datasets (e.g. Slakh2100), and automated download support for them.
 
 ## Additional transcription backends

@@ -128,12 +128,14 @@ python scripts/export_regression_table.py --work-dir <benchmark-dir> \
 
 Annotation parsing defaults to quoting-disabled (QUOTE_NONE semantics, like R `quote=""`) because the comp-year file has unbalanced quotes; the base metadata stays RFC4180 (`--annotations-quotechar '"'` opts an annotation file into RFC4180). Join keys are stripped tuples, never pasted strings; first row wins on duplicate keys (identical vs conflicting counted separately); unmatched rows get blank cells; `<output>.provenance.json` records input sha256s, argv, coverage, and duplicate-key counts. `--require-full-coverage` turns partial coverage into a non-zero exit; `--output` never clobbers `--metadata`.
 
+`scripts/guitarset_jams_to_midi.py` converts GuitarSet JAMS annotations to MIDI references plus a metadata CSV: reads `corpus/guitarset/annotations/*.jams`, writes `corpus/guitarset/midi/*.mid` (360 unsuffixed stems) plus `corpus/guitarset/metadata/guitarset.csv` and a `<csv>.provenance.json` audit trail (`python scripts/guitarset_jams_to_midi.py --dry-run` to inspect counts first). Merges the six per-string `note_midi` blocks (selected by `data_source`, never position), tolerates both JAMS `data` layouts, rounds float pitch to semitones, constant `--velocity` (default 100), counts skipped notes and unisons (`--dedupe-unisons` opt-in), output-never-clobbers-input guard as in `enrich_metadata.py`.
+
 ### Config directory (`config/`)
 
 `config/source.yaml` is the fully-annotated reference config documenting every parameter (not a runnable pipeline config). Runnable preset configs are split across two subdirectories — these are not test fixtures (those live in `tests/fixtures/`):
 
 - `config/examples/` — 18 preset configs used by `scripts/run_transcribe_eval.py` and the roundtrip tests: `pedalboard_baseline`, `pedalboard_no_effects`, `pedalboard_no_effects_parallel`, `pedalboard_parallel`, `pedalboard_all_effects`, `pedalboard_extreme_reverb`, `pedalboard_heavy_compression`, `pedalboard_chorus_delay`, `pedalboard_distortion_gain`, `pedalboard_vital`, `dawdreamer_soundfont`, `dawdreamer_faust`, `dawdreamer_vital`, `dawdreamer_vital_pedalboard`, `dawdreamer_vital_goodies`, `dawdreamer_vital_goodies_pedalboard`, `dawdreamer_vital_delayed_flight`, `dawdreamer_vital_delayed_flight_pedalboard`.
-- `config/benchmark/` — 6 parametric study configs plus a `README.md`: `reverb_sweep`, `compression_sweep`, `distortion_sweep`, `effects_combinations`, `synthesis_backends`, `benchmark_test` (smoke test).
+- `config/benchmark/` — 7 parametric study configs plus a `README.md`: `reverb_sweep`, `compression_sweep`, `distortion_sweep`, `effects_combinations`, `synthesis_backends`, `benchmark_test` (smoke test), `guitarset_test` (guitar smoke test, audio-input mode). `config/benchmark/paper_experiments/` holds paper-run studies (`piano_only`, `guitar_only`).
 
 ### GPU support
 

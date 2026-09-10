@@ -25,6 +25,9 @@ to --jobs of them concurrently.
 Interrupted downloads resume automatically on the next run: partial files are
 kept under <output-dir>/.downloads/ and re-used via HTTP Range requests. Pass
 --force to discard partial state and re-download/re-extract from scratch.
+Once a dataset is fully downloaded its markers/partials are removed again, so
+.downloads/ only ever holds in-progress or failed state — a complete dataset
+leaves nothing behind there.
 """
 
 from __future__ import annotations
@@ -257,6 +260,114 @@ DATASETS: Dict[str, Dict] = {
                     ("", METADATA_PATTERNS, "metadata"),
                 ],
                 "size_mb": 92_160,  # ~90 GB
+            },
+        ],
+    },
+    "guitarset-mic": {
+        "name": "GuitarSet (mono-mic recordings + JAMS annotations)",
+        "description": (
+            "360 acoustic-guitar excerpts with mono-mic recordings + JAMS "
+            "note-level ground truth (convert to MIDI via "
+            "scripts/guitarset_jams_to_midi.py). Pair with guitarset-mix "
+            "(pickup-mix variant) for the mic-vs-pickup factor, or fetch "
+            "guitarset-full for both variants at once; 6-channel "
+            "hex-pickup stems deferred, see ROADMAP.md. "
+            "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
+        ),
+        "corpus_subdir": "guitarset",
+        "sources": [
+            {
+                "url": "https://zenodo.org/records/3371780/files/annotation.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".jams"}), "annotations"),
+                ],
+                # 39132574 bytes, md5 b39b78e63d3446f2e54ddb7a54df9b10 (Zenodo API 3371780, verified).
+                "size_mb": 38,
+            },
+            {
+                "url": "https://zenodo.org/records/3371780/files/audio_mono-mic.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".wav"}), "recordings"),
+                ],
+                # 656927981 bytes, md5 275966d6610ac34999b58426beb119c3 (Zenodo API 3371780, verified).
+                "size_mb": 627,
+            },
+        ],
+    },
+    "guitarset-mix": {
+        "name": "GuitarSet (pickup-mix recordings + JAMS annotations)",
+        "description": (
+            "360 acoustic-guitar excerpts with pickup-mix recordings + JAMS "
+            "note-level ground truth (convert to MIDI via "
+            "scripts/guitarset_jams_to_midi.py). Pair with guitarset-mic "
+            "(mono-mic variant) for the mic-vs-pickup factor, or fetch "
+            "guitarset-full for both variants at once; 6-channel "
+            "hex-pickup stems deferred, see ROADMAP.md. "
+            "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
+        ),
+        "corpus_subdir": "guitarset",
+        "sources": [
+            {
+                "url": "https://zenodo.org/records/3371780/files/annotation.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".jams"}), "annotations"),
+                ],
+                # 39132574 bytes, md5 b39b78e63d3446f2e54ddb7a54df9b10 (Zenodo API 3371780, verified).
+                "size_mb": 38,
+            },
+            {
+                "url": "https://zenodo.org/records/3371780/files/audio_mono-pickup_mix.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".wav"}), "recordings"),
+                ],
+                # 683145360 bytes, md5 aecce79f425a44e2055e46f680e10f6a (Zenodo API 3371780, verified).
+                "size_mb": 652,
+            },
+        ],
+    },
+    "guitarset-full": {
+        "name": "GuitarSet (mic + pickup-mix recordings + JAMS annotations)",
+        "description": (
+            "All 360 acoustic-guitar excerpts in both recording variants "
+            "(720 mono WAVs: reference-mic + pickup-mix) + JAMS note-level "
+            "ground truth (convert once to MIDI via "
+            "scripts/guitarset_jams_to_midi.py). One-run equivalent of "
+            "guitarset-mic + guitarset-mix sharing corpus/guitarset/; "
+            "6-channel hex-pickup stems deferred, see ROADMAP.md. "
+            "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
+        ),
+        "corpus_subdir": "guitarset",
+        "sources": [
+            {
+                "url": "https://zenodo.org/records/3371780/files/annotation.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".jams"}), "annotations"),
+                ],
+                # 39132574 bytes, md5 b39b78e63d3446f2e54ddb7a54df9b10 (Zenodo API 3371780, verified).
+                "size_mb": 38,
+            },
+            {
+                "url": "https://zenodo.org/records/3371780/files/audio_mono-mic.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".wav"}), "recordings"),
+                ],
+                # 656927981 bytes, md5 275966d6610ac34999b58426beb119c3 (Zenodo API 3371780, verified).
+                "size_mb": 627,
+            },
+            {
+                "url": "https://zenodo.org/records/3371780/files/audio_mono-pickup_mix.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".wav"}), "recordings"),
+                ],
+                # 683145360 bytes, md5 aecce79f425a44e2055e46f680e10f6a (Zenodo API 3371780, verified).
+                "size_mb": 652,
             },
         ],
     },
@@ -593,6 +704,29 @@ def _reset_download_state(output_dir: Path, key: str, spec: Dict) -> None:
                 pass  # best-effort: parallel jobs may share the subdir
 
 
+def _clear_completion_state(output_dir: Path, key: str, spec: Dict) -> None:
+    """Remove a dataset's own markers and download partials after full success.
+
+    Once every source of ``key`` is downloaded and extracted, the markers and
+    partials have served their purpose (resume bookkeeping) and are deleted so
+    ``.downloads/`` only ever holds in-progress or failed state — presence is
+    then derived from the actual corpus dirs via ``_is_already_present``'s
+    legacy non-empty check. Partial progress is never touched: this runs only
+    when all of the key's sources are complete, so an interrupted multi-source
+    dataset keeps its per-source markers and resumes where it stopped.
+
+    Deliberately key-scoped (unlike ``_reset_download_state``'s shared-subdir
+    ``*.part`` sweep): with parallel jobs, datasets sharing a corpus_subdir
+    (e.g. the maestro variants, the guitarset keys) may be extracting into the
+    same tree, and sweeping shared dirs here could delete a sibling job's
+    in-flight ``.part`` file.
+    """
+    for index in range(len(spec["sources"])):
+        _marker_path(output_dir, key, index).unlink(missing_ok=True)
+    for index, source in enumerate(spec["sources"]):
+        _partial_path(output_dir, key, index, source).unlink(missing_ok=True)
+
+
 def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
     """Download and extract every source of one dataset (plain stdlib path).
 
@@ -922,12 +1056,16 @@ def _download_one(
     of ``"skip"`` (already present), ``"done"``, or ``"error"``. When
     ``display`` is given the dataset's progress is rendered into its slot row.
     With ``force`` the dataset's markers/partials are reset first so it is
-    re-downloaded and re-extracted from scratch.
+    re-downloaded and re-extracted from scratch. On ``"done"`` — and on
+    ``"skip"`` via already-complete markers — the key's markers/partials are
+    cleared (see ``_clear_completion_state``), so a fully downloaded dataset
+    leaves nothing behind in ``.downloads/``.
     """
     name: str = spec["name"]
     if force:
         _reset_download_state(output_dir, key, spec)
     elif _is_already_present(key, spec, output_dir):
+        _clear_completion_state(output_dir, key, spec)
         if display is not None:
             display.finish_task(task_id, name, "skip")
         return "skip", 0, None
@@ -945,6 +1083,7 @@ def _download_one(
         if display is not None:
             display.finish_task(task_id, name, "error", error=str(exc))
         return "error", 0, str(exc)
+    _clear_completion_state(output_dir, key, spec)
     if display is not None:
         display.finish_task(task_id, name, "done")
     return "done", n_files, None
@@ -1158,6 +1297,25 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _guitarset_next_steps() -> str:
+    """Next-step commands after a GuitarSet download completes.
+
+    GuitarSet ground truth ships as JAMS, so the downloader deliberately
+    routes nothing to ``midi/`` (stdlib-only contract: the converter needs
+    the project env via ``sonitra.midi_writer``, which the downloader must
+    not import). One converter run populates ``midi/`` for every recording
+    variant already on disk — run it once whether one key or ``guitarset-full``
+    was fetched.
+    """
+    return (
+        "Next steps for GuitarSet (JAMS ground truth needs one conversion):\n"
+        "  python scripts/guitarset_jams_to_midi.py --dry-run\n"
+        "  python scripts/guitarset_jams_to_midi.py\n"
+        "  sonitra benchmark --config config/benchmark/guitarset_test.yaml "
+        "--dataset guitarset --limit 2"
+    )
+
+
 def _can_interact() -> bool:
     """True when the interactive picker can run: rich installed + a real TTY."""
     return _HAS_RICH and sys.stdin.isatty() and sys.stdout.isatty()
@@ -1297,6 +1455,11 @@ def main() -> int:
         else:
             print("Interrupted — partial results kept", file=sys.stderr)
         return 130
+
+    if not any_failure and any(key.startswith("guitarset") for key in selected):
+        # Printed here (after the rich Live has exited) so it never corrupts
+        # the live display; plain and rich paths share this single site.
+        print(_guitarset_next_steps())
 
     return 1 if any_failure else 0
 

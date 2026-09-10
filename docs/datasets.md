@@ -27,12 +27,32 @@ Currently supported:
 | `musicnet` | [MusicNet](https://zenodo.org/records/5120004) — CC BY 4.0 | 330 classical recordings + reference MIDI + per-note label CSVs + track metadata | ~11 GB |
 | `e-gmd-midi` | [Expanded Groove MIDI Dataset](https://magenta.tensorflow.org/datasets/e-gmd) — CC BY 4.0 | 45,537 drum performances (MIDI) + metadata, no audio | ~103 MB |
 | `e-gmd-full` | Expanded Groove MIDI Dataset — CC BY 4.0 | MIDI + recordings + metadata | ~90 GB |
+| `guitarset-mic` | [GuitarSet](https://zenodo.org/records/3371780) (Xi et al., ISMIR 2018) — CC BY 4.0 | 360 mono-mic recordings + JAMS annotations (requires conversion to MIDI, see below) | ~665 MB |
+| `guitarset-mix` | GuitarSet (Xi et al., ISMIR 2018) — CC BY 4.0 | 360 pickup-mix recordings + JAMS annotations (requires conversion; shares `corpus/guitarset/` with `-mic`) | ~690 MB |
+| `guitarset-full` | GuitarSet (Xi et al., ISMIR 2018) — CC BY 4.0 | Both recording variants (720 WAVs) + JAMS annotations in one run (requires conversion; one-run equivalent of `-mic` + `-mix`) | ~1.3 GB |
 
 E-GMD is a drum-performance dataset — download-only for now, since Sonitra's transcription/evaluation backends target pitched instruments rather than drum-hit classification. [MAPS](https://adasp.telecom-paris.fr/resources/2010-07-08-maps-database/) is not scripted: it's gated behind a registration form with no direct download URL, so it isn't a fit for this script's unattended download model.
 
 Downloaded files land under `corpus/{dataset}/midi/` following the dataset-first layout (e.g. `corpus/maestro-v3/midi/2004/…`). Datasets that also ship real audio (e.g. `bsed`, `maestro-v3-full`/`-wav`, `musicnet`, `e-gmd-full`) additionally populate `corpus/{dataset}/recordings/` — deliberately not `audio/`, which is reserved for the pipeline's own rendered output (`corpus/{dataset}/audio/<config_name>/`). Datasets with descriptive/track-level metadata (CSV, JSON, README, LICENSE) populate `corpus/{dataset}/metadata/`. Additional datasets and instrument types are planned for future releases.
 
 Note: if you downloaded `maestro-v3` with a version of this script prior to the `-midi`/`-wav`/`-full` split, its metadata files (`maestro-v3.0.0.csv`/`.json`, `README`, `LICENSE`) landed inside `midi/` rather than `metadata/`. Re-running `maestro-v3-midi` will treat `metadata/` as missing and re-fetch the (small) MIDI zip; the old files under `midi/` are unaffected and can be moved into `metadata/` by hand if desired.
+
+### GuitarSet (real guitar audio, JAMS ground truth)
+
+[GuitarSet](https://zenodo.org/records/3371780) (Xi et al., ISMIR 2018) — CC BY 4.0 — is 360 real acoustic-guitar excerpts (~30 s each, ~3 h) with note-level ground truth. It is the first guitar corpus in this script and the first whose ground truth arrives as JAMS rather than MIDI. The three keys share one corpus tree (`corpus_subdir: "guitarset"`, the same pattern as the three `maestro-v3-*` variants): fetch `guitarset-full` for both variants in one run (720 recordings in one `recordings/` dir — the mic-vs-pickup-mix factor, `_mic` vs `_mix` filename suffixes), or fetch either of `guitarset-mic` / `guitarset-mix` alone for a usable single-variant dataset. The 6-channel hex-pickup stems are deferred (see `ROADMAP.md`).
+
+Ground truth requires a mandatory conversion step — the downloader deliberately routes nothing to `midi/` (it stays stdlib-only; the converter needs the project env). On every successful GuitarSet download the script prints the next steps; the conversion itself runs once no matter which key was fetched:
+
+```bash
+python scripts/download_datasets.py guitarset-full   # JAMS → corpus/guitarset/annotations/, both audios → corpus/guitarset/recordings/
+python scripts/guitarset_jams_to_midi.py --dry-run  # inspect counts first
+python scripts/guitarset_jams_to_midi.py            # annotations/ → midi/ (360 unsuffixed stems) + metadata/guitarset.csv
+sonitra benchmark --config config/benchmark/guitarset_test.yaml --dataset guitarset --limit 2
+```
+
+`scripts/guitarset_jams_to_midi.py` (stdlib-only plus `sonitra.midi_writer`) merges the six per-string `note_midi` blocks into one note list per excerpt (`pitch = round(value)`, constant velocity 100 — GuitarSet has no dynamics), writes `corpus/guitarset/midi/*.mid` plus `corpus/guitarset/metadata/guitarset.csv` (one row per excerpt, join column `midi_filename`) and a `<csv>.provenance.json` audit trail. `annotations/` is a new corpus target subdir (the same one `ROADMAP.md` proposes for BSED's alignment files).
+
+GuitarSet is benchmark-only by design: `sonitra evaluate` / `scripts/run_transcribe_eval.py` pair by relative path and cannot match the suffixed audio stems (`*_mic`/`*_mix`) to their unsuffixed references — use `sonitra benchmark`, whose token-prefix pairing handles the suffix. See `.local/notes/TODO/guitarset.md` for the full caveat list (constant velocity, absent `dtw.*`, unison false negatives, semitone quantization, MIDI-mode `bpm != 120` warning, upstream errata).
 
 ### Joining dataset metadata into a benchmark export
 

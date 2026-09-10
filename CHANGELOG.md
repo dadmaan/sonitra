@@ -134,9 +134,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `piano_only.yaml` (moved from `config/benchmark/20260814_experiment/`,
   header stripped, `save_audio` now `false`) and new `guitar_only.yaml`
   (amp/cabinet/slapback/room chain); both run in audio-input mode
+- `scripts/download_datasets.py`: new `guitarset-mic` / `guitarset-mix`
+  registry entries — 360 GuitarSet acoustic-guitar excerpts each (Xi et al.,
+  ISMIR 2018; Zenodo 3371780; CC BY 4.0), sharing
+  `corpus_subdir: "guitarset"` so either key alone yields a usable dataset
+  and both together give 720 recordings in one `recordings/` dir (the
+  mic-vs-pickup-mix factor). Each entry fetches `annotation.zip` plus its
+  own audio zip, routing `.jams` to the new `annotations/` target and `.wav`
+  to `recordings/` (deliberately nothing to `midi/`, which the converter
+  populates); 6-channel hex-pickup stems deferred (see `ROADMAP.md`).
+  Covered by `tests/test_download_datasets.py` and documented in
+  `docs/datasets.md`
+- `scripts/download_datasets.py`: new `guitarset-full` registry entry — the
+  one-run equivalent of `guitarset-mic` + `guitarset-mix` (annotation.zip
+  once + both audio zips, 3 sources, ~1.3 GB → 360 JAMS + 720 WAVs sharing
+  `corpus/guitarset/`). Every successful GuitarSet download now prints the
+  mandatory next steps (`guitarset_jams_to_midi.py --dry-run`, then convert,
+  then `guitarset_test.yaml` benchmark) via `_guitarset_next_steps()` —
+  printed from `main()` after the rich Live exits so both plain and rich
+  paths share one site. Auto-running the converter was deliberately not done:
+  the downloader is stdlib-only by contract (usable before the project env
+  exists) while the converter needs `sonitra.midi_writer`, and `midi/` must
+  stay a converter-owned signal for `_is_already_present`. Covered by
+  `tests/test_download_datasets.py` and documented in `docs/datasets.md`
+- `scripts/guitarset_jams_to_midi.py`: new converter turning GuitarSet JAMS
+  ground truth into MIDI references — reads
+  `corpus/guitarset/annotations/*.jams`, writes 360 unsuffixed
+  `corpus/guitarset/midi/*.mid` plus `metadata/guitarset.csv` (join column
+  `midi_filename`) and a `<csv>.provenance.json` audit trail. Merges the six
+  per-string `note_midi` blocks selected by `data_source` (never position),
+  tolerates both JAMS `data` layouts, rounds float pitch to semitones,
+  constant `--velocity` (default 100), guards pitch to 0–127 and skips
+  non-positive durations (both counted), reports unison counts with opt-in
+  `--dedupe-unisons`, tempo 120 BPM, `--dry-run` / `--overwrite` and
+  output-never-clobbers-input guard mirroring `enrich_metadata.py`. Covered
+  by `tests/test_guitarset_jams_to_midi.py` and documented in
+  `docs/datasets.md` and `.local/notes/TODO/guitarset.md`
+- `config/benchmark/guitarset_test.yaml`: GuitarSet smoke test (4
+  conditions: baseline + `no_reverb` + two `wet_level` sweep values),
+  copied from `benchmark_test.yaml` with `input_type: audio`,
+  `io.dataset: guitarset`, inert `fluidsynth.soundfont_path: null`, and
+  `dtw.enabled: false` (DTW is already skipped in audio mode per
+  `benchmark/runner.py:757`, so `true` would only log a warning). Run with
+  `sonitra benchmark --config config/benchmark/guitarset_test.yaml --dataset
+  guitarset --limit 2`; listed in `config/benchmark/README.md`
+- `scripts/export_regression_table.py`: new `recording`
+  (`Path(source_path).stem`) and `source_path` columns in `build_rows`,
+  emitted only when `record.source_path` is not None, with both added to
+  `_IDENTITY_COLUMNS` — so two audio-mode records sharing one `midi_path`
+  (e.g. GuitarSet `_mic` / `_mix`) produce distinguishable rows while
+  MIDI-mode exports (no `source_path`) are byte-identical to today's. The
+  metadata join stays keyed on `song`, so one excerpt row joins to both of
+  its recordings. Covered by `tests/test_export_regression_table.py`
 
 ### Changed
 
+- `scripts/download_datasets.py`: completion bookkeeping in
+  `<output-dir>/.downloads/` is now transient — once a dataset's every source
+  is downloaded and extracted, its `.ok` markers and `.part` files are removed
+  (`_clear_completion_state`, key-scoped so parallel jobs sharing a
+  `corpus_subdir` can't race), leaving presence to the populated corpus dirs.
+  Partial progress is untouched, so an interrupted multi-source download still
+  resumes where it stopped. A complete dataset therefore leaves nothing behind
+  in `.downloads/`. Covered by `tests/test_download_datasets.py`
 - Agent guidance moved from `CLAUDE.md` to `AGENT.md` (`CLAUDE.md` is now a
   one-line pointer); wording generalised from Claude Code to coding agents
 - `scripts/run_mixed_effects_analysis.py`: default input table renamed from

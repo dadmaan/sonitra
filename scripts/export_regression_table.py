@@ -35,7 +35,7 @@ from sonitra.benchmark.results import BenchmarkRecord, load_records  # noqa: E40
 
 _EFFECT_PATH_RE = re.compile(r"^pedalboard\.effects\.(\d+)\.(.+)$")
 
-_IDENTITY_COLUMNS = ["condition", "transcriber", "song", "midi_path", "status"]
+_IDENTITY_COLUMNS = ["condition", "transcriber", "song", "recording", "midi_path", "source_path", "status"]
 
 
 def load_effect_types(config_path: Path) -> dict[int, str]:
@@ -124,6 +124,9 @@ def build_rows(
             "midi_path": record.midi_path,
             "status": record.status,
         }
+        if record.source_path is not None:
+            row["recording"] = Path(record.source_path).stem
+            row["source_path"] = record.source_path
         for metric_name, value in record.metrics.items():
             row[metric_name] = "" if isinstance(value, float) and math.isnan(value) else value
         for override_key, override_value in record.overrides.items():

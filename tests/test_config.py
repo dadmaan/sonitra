@@ -269,7 +269,7 @@ def test_basic_pitch_config_still_forbids_unknown_keys() -> None:
 def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
     config_dir = Path(__file__).parent.parent / "config"
     runnable = sorted(p for p in config_dir.rglob("*.yaml") if p.name != "source.yaml")
-    assert len(runnable) == 28
+    assert len(runnable) == 31
 
     for path in runnable:
         cfg = load_config(path)

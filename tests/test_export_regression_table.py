@@ -383,3 +383,117 @@ def test_main_end_to_end_with_metadata_join(
 
     stderr = capsys.readouterr().err
     assert "1/2 songs had no metadata match" in stderr
+
+
+def test_build_rows_includes_recording_and_source_path_when_present(ert: ModuleType) -> None:
+    record = _make_record(
+        ert,
+        midi_path="corpus/guitarset/midi/00_BN1-129-Eb_comp.mid",
+        source_path="corpus/guitarset/recordings/00_BN1-129-Eb_comp_mic.wav",
+        metrics={"note.onset_f1": 0.9},
+    )
+
+    rows = ert.build_rows([record], effect_types={})
+
+    row = rows[0]
+    assert row["song"] == "00_BN1-129-Eb_comp"
+    assert row["recording"] == "00_BN1-129-Eb_comp_mic"
+    assert row["source_path"] == "corpus/guitarset/recordings/00_BN1-129-Eb_comp_mic.wav"
+
+
+def test_build_rows_omits_recording_and_source_path_when_none(ert: ModuleType) -> None:
+    record = _make_record(ert, source_path=None, metrics={"note.onset_f1": 0.9})
+
+    rows = ert.build_rows([record], effect_types={})
+
+    row = rows[0]
+    assert "recording" not in row
+    assert "source_path" not in row
+
+
+def test_write_csv_omits_recording_columns_for_midi_mode(ert: ModuleType, tmp_path: Path) -> None:
+    record = _make_record(ert, source_path=None)
+    rows = ert.build_rows([record], effect_types={})
+    out_path = tmp_path / "regression_table.csv"
+
+    ert.write_csv(rows, out_path)
+
+    with out_path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        assert reader.fieldnames is not None
+        assert "recording" not in reader.fieldnames
+        assert "source_path" not in reader.fieldnames
+
+
+def test_write_csv_includes_recording_columns_in_identity_order(
+    ert: ModuleType, tmp_path: Path
+) -> None:
+    record = _make_record(
+        ert,
+        midi_path="corpus/guitarset/midi/00_BN1-129-Eb_comp.mid",
+        source_path="corpus/guitarset/recordings/00_BN1-129-Eb_comp_mic.wav",
+    )
+    rows = ert.build_rows([record], effect_types={})
+    out_path = tmp_path / "regression_table.csv"
+
+    ert.write_csv(rows, out_path)
+
+    with out_path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        assert reader.fieldnames is not None
+        identity = [column for column in reader.fieldnames if column in ert._IDENTITY_COLUMNS]
+        assert identity == [
+            "condition",
+            "transcriber",
+            "song",
+            "recording",
+            "midi_path",
+            "source_path",
+            "status",
+        ]
+
+
+def test_build_rows_distinguishes_recordings_sharing_midi_path(ert: ModuleType) -> None:
+    midi_path = "corpus/guitarset/midi/00_BN1-129-Eb_comp.mid"
+    mic = _make_record(
+        ert,
+        midi_path=midi_path,
+        source_path="corpus/guitarset/recordings/00_BN1-129-Eb_comp_mic.wav",
+    )
+    mix = _make_record(
+        ert,
+        midi_path=midi_path,
+        source_path="corpus/guitarset/recordings/00_BN1-129-Eb_comp_mix.wav",
+    )
+
+    rows = ert.build_rows([mic, mix], effect_types={})
+
+    assert len(rows) == 2
+    assert rows[0]["song"] == rows[1]["song"] == "00_BN1-129-Eb_comp"
+    assert rows[0]["midi_path"] == rows[1]["midi_path"] == midi_path
+    assert rows[0]["recording"] == "00_BN1-129-Eb_comp_mic"
+    assert rows[1]["recording"] == "00_BN1-129-Eb_comp_mix"
+    assert rows[0]["recording"] != rows[1]["recording"]
+    assert rows[0]["source_path"] != rows[1]["source_path"]
+
+
+def test_build_rows_metadata_join_keys_on_song_for_both_recordings(ert: ModuleType) -> None:
+    midi_path = "corpus/guitarset/midi/00_BN1-129-Eb_comp.mid"
+    mic = _make_record(
+        ert,
+        midi_path=midi_path,
+        source_path="corpus/guitarset/recordings/00_BN1-129-Eb_comp_mic.wav",
+    )
+    mix = _make_record(
+        ert,
+        midi_path=midi_path,
+        source_path="corpus/guitarset/recordings/00_BN1-129-Eb_comp_mix.wav",
+    )
+    metadata = {"00_BN1-129-Eb_comp": {"midi_filename": "00_BN1-129-Eb_comp.mid", "style": "BN"}}
+
+    rows = ert.build_rows([mic, mix], effect_types={}, metadata=metadata)
+
+    assert len(rows) == 2
+    for row in rows:
+        assert row["meta.midi_filename"] == "00_BN1-129-Eb_comp.mid"
+        assert row["meta.style"] == "BN"

@@ -208,7 +208,7 @@ flowchart TB
     subgraph scripts["Scripts"]
         direction TB
         batch["run_transcribe_eval.py (render → transcribe → evaluate per config)"]
-        dl["download_datasets.py (corpora → midi/ + recordings/)"]
+        dl["download_datasets.py (corpora → midi/ + recordings/ + annotations/)"]
     end
 ```
 
