@@ -35,8 +35,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import json
 import os
 import queue
+import re
 import shutil
 import sys
 import tarfile
@@ -100,6 +102,8 @@ REPO: Path = Path(__file__).resolve().parent.parent
 METADATA_PATTERNS: FrozenSet[str] = frozenset(
     {".csv", ".json", ".txt", "readme", "license"}
 )
+
+_RETRY_SLEEPS: Tuple[int, int, int] = (3, 10, 30)
 
 DATASETS: Dict[str, Dict] = {
     "maestro-v3-midi": {
@@ -371,6 +375,71 @@ DATASETS: Dict[str, Dict] = {
             },
         ],
     },
+    # GAPS: HF ships 401 metadata rows + 3 unlisted orphans = 404 recordings;
+    # published GAPS is the 300 with non-empty split; we deliberately fetch/keep all;
+    # split and f-measure reach benchmark export as meta.* columns for downstream filtering.
+    "gaps": {
+        "name": "GAPS (Guitar-Aligned Performance Scores) v1.1",
+        "description": (
+            "404 classical-guitar recordings (48 kHz/16-bit/stereo WAV, 14 h, 200+ "
+            "performers) with aligned MIDI + MusicXML + syncpoints + metadata; all "
+            "404 files kept, official split not applied (filter via "
+            "meta.split/meta.f-measure downstream). "
+            "CC BY-NC-SA 4.0, research use, cite Riley et al. ISMIR 2024."
+        ),
+        "note": "all 404 files; official split not applied",
+        "corpus_subdir": "gaps",
+        "sources": [
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "audio",
+                "patterns": frozenset({".wav"}),
+                "target_subdir": "recordings",
+                # verified 16193781962 bytes via HF tree API at pinned revision.
+                "size_mb": 15444,
+            },
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "midi",
+                "patterns": frozenset({".mid", ".midi"}),
+                "target_subdir": "midi",
+                # verified 2303537 bytes via HF tree API at pinned revision.
+                "size_mb": 3,
+            },
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "musicxml",
+                "patterns": frozenset({".xml"}),
+                "target_subdir": "annotations/musicxml",
+                # verified 242157326 bytes via HF tree API at pinned revision.
+                "size_mb": 231,
+            },
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "syncpoints",
+                "patterns": frozenset({".json"}),
+                "target_subdir": "annotations/syncpoints",
+                # verified 854812 bytes via HF tree API at pinned revision.
+                "size_mb": 1,
+            },
+            {
+                "url": "https://huggingface.co/datasets/xavriley/GAPS/resolve/b4c89a33a639c7ae903e74102dfbb3e147e1417f/gaps_metadata_with_splits.csv",
+                "kind": "file",
+                "target_subdir": "metadata",
+                "filename": "gaps_metadata_with_splits.csv",
+                # verified 601780 bytes via HF tree API at pinned revision.
+                "size_mb": 1,
+            },
+        ],
+    },
 }
 
 
@@ -384,6 +453,8 @@ def _all_target_subdirs(spec: Dict) -> List[str]:
     subdirs: set = set()
     for source in spec["sources"]:
         if source["kind"] == "file":
+            subdirs.add(source["target_subdir"])
+        elif source["kind"] == "hf_tree":
             subdirs.add(source["target_subdir"])
         else:
             subdirs.update(target for _, _, target in source["extract_map"])
@@ -441,7 +512,14 @@ def _write_marker(output_dir: Path, key: str, index: int, source: Dict) -> None:
     """Record that a source's download AND extraction fully succeeded."""
     marker = _marker_path(output_dir, key, index)
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(source["url"] + "\n")
+    url = source.get("url")
+    if url:
+        marker.write_text(url + "\n")
+    else:
+        marker.write_text(
+            f"hf_tree:{source.get('repo', '')}@{source.get('revision', '')}"
+            f"/{source.get('subdir', '')}\n"
+        )
 
 
 def _partial_path(output_dir: Path, key: str, index: int, source: Dict) -> Path:
@@ -482,7 +560,9 @@ def _print_list(output_dir: Path) -> None:
     print("-" * 120)
     for key, spec in DATASETS.items():
         target = output_dir / spec["corpus_subdir"]
-        print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}")
+        note = spec.get("note", "")
+        suffix = f" [{note}]" if note else ""
+        print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}{suffix}")
 
 
 def _parse_content_range_total(value: Optional[str]) -> int:
@@ -606,10 +686,178 @@ def _download_file(
         except (urllib.error.URLError, http.client.IncompleteRead, TimeoutError) as exc:
             last_error = exc
         if attempt < 3:
-            time.sleep((3, 10, 30)[attempt])
+            time.sleep(_RETRY_SLEEPS[attempt])
     raise RuntimeError(
         f"download of {name} failed after 4 attempts: {last_error}"
     ) from last_error
+
+
+def _parse_link_next(link_header: Optional[str]) -> Optional[str]:
+    """Extract the ``rel="next"`` URL from an HTTP Link header, if present.
+
+    Hugging Face sends ``rel="next"``, but RFC 8288 also permits ``rel=next``
+    and ``rel='next'``. All three are accepted: failing to match would
+    silently truncate a listing to its first page, and a short corpus that
+    still fills its target dir reads as complete to ``_is_already_present``.
+    ``[^,]*`` keeps each match inside one comma-separated link value.
+    """
+    if not link_header:
+        return None
+    pattern = r"""<([^>]+)>\s*;\s*[^,]*\brel\s*=\s*(?:"next"|'next'|next\b)"""
+    for match in re.finditer(pattern, link_header):
+        return match.group(1)
+    return None
+
+
+def _hf_list_tree(repo: str, revision: str, subdir: str) -> List[Tuple[str, int]]:
+    """List files in one Hugging Face dataset subdirectory via the tree API.
+
+    Returns ``[(path, size), ...]`` for entries with ``type == "file"``;
+    ``type == "directory"`` entries are ignored (defensive — the listing is
+    non-recursive, so none should appear). Follows ``Link: <...>; rel="next"``
+    pagination until the header is absent. Transient errors are retried with
+    ``_RETRY_SLEEPS`` backoff.
+    """
+    base_url = (
+        f"https://huggingface.co/api/datasets/{repo}/tree/{revision}/{subdir}?limit=1000"
+    )
+    url: Optional[str] = base_url
+    results: List[Tuple[str, int]] = []
+    headers: Dict[str, str] = {"User-Agent": "Sonitra-Dataset-Downloader/1.0"}
+    while url is not None:
+        last_error: Optional[BaseException] = None
+        payload = None
+        link_header: Optional[str] = None
+        for attempt in range(4):
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    status: int = resp.status
+                    if status != 200:
+                        raise RuntimeError(f"unexpected HTTP status {status} for {url}")
+                    chunks: List[bytes] = []
+                    while True:
+                        chunk = resp.read(262144)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    raw = b"".join(chunks)
+                    payload = json.loads(raw.decode("utf-8"))
+                    try:
+                        link_header = resp.headers.get("Link")
+                    except AttributeError:
+                        link_header = None
+                    break
+            except urllib.error.HTTPError as exc:
+                if exc.code in (408, 429) or exc.code >= 500:
+                    last_error = exc
+                else:
+                    raise RuntimeError(
+                        f"HTTP {exc.code} {exc.reason} for {url}"
+                    ) from exc
+            except (
+                urllib.error.URLError,
+                http.client.IncompleteRead,
+                TimeoutError,
+            ) as exc:
+                last_error = exc
+            if attempt < 3:
+                time.sleep(_RETRY_SLEEPS[attempt])
+        if payload is None:
+            raise RuntimeError(
+                f"listing of {repo}/{subdir}@{revision} failed after 4 attempts: "
+                f"{last_error}"
+            ) from last_error
+        for entry in payload:
+            if entry.get("type") != "file":
+                continue
+            path = entry.get("path")
+            if not path:
+                continue
+            try:
+                size = int(entry.get("size") or 0)
+            except (ValueError, TypeError):
+                size = 0
+            results.append((path, size))
+        url = _parse_link_next(link_header)
+    return results
+
+
+def _download_hf_tree(
+    source: Dict,
+    dataset_dir: Path,
+    *,
+    output_dir: Path,
+    key: str,
+    index: int,
+    force: bool = False,
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> int:
+    """Download one ``hf_tree`` source (many small files) into ``target_subdir``.
+
+    For each listed file passing ``patterns`` (via ``_matches_patterns``),
+    ``dest = dataset_dir / target_subdir / Path(path).name`` (flattened). Skip
+    when ``dest`` exists with matching size unless ``force``; skipped files
+    still count toward the returned total and advance progress. Otherwise
+    download to ``dest.with_name(dest.name + ".part")`` via ``_download_file``
+    (retries + Range resume free), then ``os.replace`` into place. ``progress``
+    receives cumulative ``(done_within_source, total_within_source)`` so rich
+    callers can add their ``bytes_before`` offset one level up.
+    """
+    repo: str = source["repo"]
+    revision: str = source["revision"]
+    subdir: str = source["subdir"]
+    target_subdir: str = source["target_subdir"]
+    patterns: Optional[FrozenSet[str]] = source.get("patterns")
+    listing = _hf_list_tree(repo, revision, subdir)
+    filtered: List[Tuple[str, int]] = [
+        (path, size)
+        for path, size in listing
+        if _matches_patterns(Path(path).name, patterns)
+    ]
+    total: int = sum(size for _, size in filtered)
+    done: int = 0
+    count: int = 0
+    for path, size in filtered:
+        dest: Path = dataset_dir / target_subdir / Path(path).name
+        if not force and dest.exists() and dest.stat().st_size == size:
+            done += size
+            count += 1
+            if progress is not None:
+                progress(done, total)
+            continue
+        part: Path = dest.with_name(dest.name + ".part")
+        file_url: str = (
+            f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{path}"
+        )
+        name: str = f"{repo}/{subdir}/{Path(path).name}"
+        file_progress: Optional[Callable[[int, int], None]] = None
+        if progress is not None:
+            def _file_progress(
+                downloaded: int,
+                file_total: int,
+                _done: int = done,
+                _total: int = total,
+            ) -> None:
+                assert progress is not None
+                progress(_done + downloaded, _total)
+
+            file_progress = _file_progress
+        _download_file(
+            file_url,
+            part,
+            name=name,
+            output_dir=output_dir,
+            key=key,
+            index=index,
+            progress=file_progress,
+        )
+        os.replace(part, dest)
+        done += size
+        count += 1
+        if progress is not None:
+            progress(done, total)
+    return count
 
 
 def _extract_archive(
@@ -694,6 +942,8 @@ def _reset_download_state(output_dir: Path, key: str, spec: Dict) -> None:
     for index in range(len(spec["sources"])):
         _marker_path(output_dir, key, index).unlink(missing_ok=True)
     for index, source in enumerate(spec["sources"]):
+        if source.get("kind") == "hf_tree":
+            continue
         _partial_path(output_dir, key, index, source).unlink(missing_ok=True)
     for subdir in _all_target_subdirs(spec):
         target_dir: Path = output_dir / spec["corpus_subdir"] / subdir
@@ -724,10 +974,12 @@ def _clear_completion_state(output_dir: Path, key: str, spec: Dict) -> None:
     for index in range(len(spec["sources"])):
         _marker_path(output_dir, key, index).unlink(missing_ok=True)
     for index, source in enumerate(spec["sources"]):
+        if source.get("kind") == "hf_tree":
+            continue
         _partial_path(output_dir, key, index, source).unlink(missing_ok=True)
 
 
-def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
+def _download_and_extract(key: str, spec: Dict, output_dir: Path, *, force: bool = False) -> int:
     """Download and extract every source of one dataset (plain stdlib path).
 
     Returns the total file count across all of the dataset's sources. Each
@@ -739,7 +991,10 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
     files_extracted: int = 0
 
     for index, source in enumerate(spec["sources"]):
-        display_name = f"{spec['name']} ({Path(source['url']).name})"
+        if source["kind"] == "hf_tree":
+            display_name = f"{spec['name']} ({source['repo']}/{source['subdir']})"
+        else:
+            display_name = f"{spec['name']} ({Path(source['url']).name})"
 
         def progress(downloaded: int, total: int) -> None:
             if total > 0:
@@ -771,6 +1026,17 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
             print()  # newline after the progress line
             os.replace(part, dest)
             files_extracted += 1
+        elif source["kind"] == "hf_tree":
+            files_extracted += _download_hf_tree(
+                source,
+                dataset_dir,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                force=force,
+                progress=progress,
+            )
+            print()  # newline after the progress line
         else:
             part = _partial_path(output_dir, key, index, source)
             _download_file(
@@ -843,6 +1109,7 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
     table.add_column("size", justify="right")
     table.add_column("target")
     table.add_column("status")
+    table.add_column("notes", style="dim", overflow="fold")
     for index, (key, spec) in enumerate(DATASETS.items(), start=1):
         target = output_dir / spec["corpus_subdir"]
         badge = "present" if _is_already_present(key, spec, output_dir) else "missing"
@@ -853,6 +1120,7 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
             f"{_dataset_size_mb(spec):,} MB",
             str(target),
             f"[green]present[/green]" if badge == "present" else "[yellow]missing[/yellow]",
+            spec.get("note", ""),
         )
     console.print(table)
 
@@ -1075,10 +1343,10 @@ def _download_one(
                 task_id, name, _dataset_size_mb(spec) * 1_048_576
             )
             n_files: int = _download_and_extract_rich(
-                key, spec, output_dir, display, task_id
+                key, spec, output_dir, display, task_id, force=force
             )
         else:
-            n_files = _download_and_extract(key, spec, output_dir)
+            n_files = _download_and_extract(key, spec, output_dir, force=force)
     except Exception as exc:  # noqa: BLE001 - per-dataset failure isolation
         if display is not None:
             display.finish_task(task_id, name, "error", error=str(exc))
@@ -1090,7 +1358,13 @@ def _download_one(
 
 
 def _download_and_extract_rich(
-    key: str, spec: Dict, output_dir: Path, display: "_DownloadDisplay", task_id: int
+    key: str,
+    spec: Dict,
+    output_dir: Path,
+    display: "_DownloadDisplay",
+    task_id: int,
+    *,
+    force: bool = False,
 ) -> int:
     """Rich path: download every source into the display's slot row, then extract.
 
@@ -1105,7 +1379,10 @@ def _download_and_extract_rich(
     files_extracted: int = 0
 
     for index, source in enumerate(spec["sources"]):
-        display_name = f"{spec['name']} ({Path(source['url']).name})"
+        if source["kind"] == "hf_tree":
+            display_name = f"{spec['name']} ({source['repo']}/{source['subdir']})"
+        else:
+            display_name = f"{spec['name']} ({Path(source['url']).name})"
 
         def progress(downloaded: int, total: int) -> None:
             if total > 0:
@@ -1129,6 +1406,16 @@ def _download_and_extract_rich(
             )
             os.replace(part, dest)
             files_extracted += 1
+        elif source["kind"] == "hf_tree":
+            files_extracted += _download_hf_tree(
+                source,
+                dataset_dir,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                force=force,
+                progress=progress,
+            )
         else:
             part = _partial_path(output_dir, key, index, source)
             _download_file(

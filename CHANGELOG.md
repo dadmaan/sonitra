@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- GAPS (Guitar-Aligned Performance Scores v1.1; Riley et al., ISMIR 2024)
+  dataset support for the `sonitra benchmark` path:
+  `python scripts/download_datasets.py gaps` fetches 404 long-form
+  classical-guitar recordings (~14 h, 48 kHz/16-bit/stereo WAV) plus aligned
+  MIDI, MusicXML, syncpoints, and the metadata CSV (~15.3 GB) into
+  `corpus/gaps/{recordings,midi,annotations/musicxml,annotations/syncpoints,metadata}/`,
+  and `config/benchmark/gaps_test.yaml` runs a four-condition smoke test over
+  them. No conversion step: GAPS ships note-level ground truth as `.mid`
+  already aligned to the audio timeline, at sounding (not written) pitch, with
+  stems identical to the audio. All 404 recordings are kept unfiltered —
+  the published split (300 files) and the `f-measure >= 0.75` rule (also 300)
+  overlap in only 250, and `f-measure` conflates bad alignment with hard
+  audio, so filtering on it would delete the most acoustically adverse
+  recordings; `meta.split` and `meta.f-measure` reach a benchmark export for
+  downstream filtering. See `.local/notes/TODO/gaps.md` for the interpretation
+  caveats (notated offsets, ~0.90 ceiling that cancels in baseline deltas,
+  constant velocity 100, absent `dtw.*`, three unpaired upstream orphans).
+- `hf_tree` source kind in `scripts/download_datasets.py`, for
+  Hugging-Face-hosted datasets that ship as loose files with no downloadable
+  archive (GAPS is 1,617 such files). `_hf_list_tree(repo, revision, subdir)`
+  pages the HF tree API following `Link: …; rel="next"`, and
+  `_download_hf_tree` fetches each listed file passing `patterns` into
+  `target_subdir/<basename>` via the existing `_download_file` (retries +
+  `Range` resume) with `.part` + `os.replace`. Resume is size-based: a file
+  already on disk at the listed size is skipped, still counting toward
+  progress, so an interrupted fetch re-costs only what it had not finished;
+  `--force` bypasses the skip. Revisions pin to a commit SHA, never `main`,
+  so an upstream release cannot silently change a published benchmark.
+  Registry specs gained an optional `note` field, rendered in a `notes`
+  column in the rich table and appended to the `--list` description. The
+  script stays standard-library-only — no `huggingface_hub` dependency.
+  Covered by new tests in `tests/test_download_datasets.py`; documented in
+  `docs/datasets.md`, `config/benchmark/README.md`, `ROADMAP.md`, and
+  `AGENT.md`
 - `fluidsynth.program` config (GM 0–127, default `null`): `null` inherits
   the source MIDI's program when the file carries exactly one distinct
   `program_change`, a number forces that program and overrides the file,
