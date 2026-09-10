@@ -26,8 +26,29 @@ def write_midi(
     *,
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     tempo_bpm: float = 120.0,
+    program: int | None = None,
 ) -> Path:
-    """Write midi_reader-style note dicts to a single-track MIDI file."""
+    """Write midi_reader-style note dicts to a single-track MIDI file.
+
+    Args:
+        notes: Note dicts with ``pitch``, ``velocity``, ``start_sec`` and
+            ``duration_sec``.
+        path: Output ``.mid`` path; parent directories are created.
+        ticks_per_beat: MIDI resolution.
+        tempo_bpm: Tempo meta message; note times are absolute seconds and
+            are converted to ticks against it.
+        program: GM program (0-127) written as a ``program_change`` on
+            channel 0 before the first note, selecting the playback timbre
+            in a General MIDI player. ``None`` (the default) writes no
+            program change, leaving the player on its GM default of
+            program 0, Acoustic Grand Piano.
+
+    Raises:
+        ValueError: If *program* is outside 0-127.
+    """
+    if program is not None and not 0 <= int(program) <= 127:
+        raise ValueError(f"program must be in 0..127, got {program}")
+
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -36,6 +57,8 @@ def write_midi(
     track = mido.MidiTrack()
     midi.tracks.append(track)
     track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=0))
+    if program is not None:
+        track.append(mido.Message("program_change", channel=0, program=int(program), time=0))
 
     events: list[tuple[float, int, mido.Message]] = []
     for note in notes:

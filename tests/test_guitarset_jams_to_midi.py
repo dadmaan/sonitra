@@ -647,3 +647,69 @@ def test_summary_to_stdout_and_per_file_records_to_stderr(
     captured = capsys.readouterr()
     assert "wrote" in captured.out.lower()
     assert "00_BN1-129-Eb_comp" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# GM program (playback timbre)
+# ---------------------------------------------------------------------------
+
+
+def _program_changes(midi_path: Path) -> List[Any]:
+    import mido
+
+    midi = mido.MidiFile(midi_path)
+    return [m for track in midi.tracks for m in track if m.type == "program_change"]
+
+
+def test_nylon_guitar_program_written_by_default(
+    gjm: ModuleType, tmp_path: Path
+) -> None:
+    ann, midi_dir, csv_path = _paths(tmp_path)
+    _make_jams(ann, interleave_contours=False)
+
+    assert _run(gjm, ann, midi_dir, csv_path) == 0
+
+    changes = _program_changes(midi_dir / "00_BN1-129-Eb_comp.mid")
+    assert [m.program for m in changes] == [gjm._DEFAULT_GM_PROGRAM]
+    assert gjm._DEFAULT_GM_PROGRAM == 24  # Acoustic Guitar (nylon)
+    # Notes are untouched by the program change.
+    notes = parse_midi(midi_dir / "00_BN1-129-Eb_comp.mid")
+    assert sorted(n["pitch"] for n in notes) == [60, 64]
+
+
+def test_program_flag_overrides_default(gjm: ModuleType, tmp_path: Path) -> None:
+    ann, midi_dir, csv_path = _paths(tmp_path)
+    _make_jams(ann, interleave_contours=False)
+
+    assert _run(gjm, ann, midi_dir, csv_path, "--program", "27") == 0
+
+    changes = _program_changes(midi_dir / "00_BN1-129-Eb_comp.mid")
+    assert [m.program for m in changes] == [27]
+    prov = _provenance(csv_path)
+    assert prov["program"] == 27
+
+
+def test_no_program_flag_omits_program_change(
+    gjm: ModuleType, tmp_path: Path
+) -> None:
+    ann, midi_dir, csv_path = _paths(tmp_path)
+    _make_jams(ann, interleave_contours=False)
+
+    assert _run(gjm, ann, midi_dir, csv_path, "--no-program") == 0
+
+    assert _program_changes(midi_dir / "00_BN1-129-Eb_comp.mid") == []
+    prov = _provenance(csv_path)
+    assert prov["program"] is None
+
+
+@pytest.mark.parametrize("program", ["-1", "128"])
+def test_out_of_range_program_rejected(
+    gjm: ModuleType, tmp_path: Path, program: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ann, midi_dir, csv_path = _paths(tmp_path)
+    _make_jams(ann, interleave_contours=False)
+
+    assert _run(gjm, ann, midi_dir, csv_path, "--program", program) == 1
+
+    assert "program" in capsys.readouterr().err
+    assert not (midi_dir / "00_BN1-129-Eb_comp.mid").exists()

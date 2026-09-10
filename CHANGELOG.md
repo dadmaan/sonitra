@@ -186,6 +186,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MIDI-mode exports (no `source_path`) are byte-identical to today's. The
   metadata join stays keyed on `song`, so one excerpt row joins to both of
   its recordings. Covered by `tests/test_export_regression_table.py`
+- `src/sonitra/midi_writer.py`: `write_midi` gains an optional `program`
+  (0–127) written as a `program_change` on channel 0 before the first note;
+  `None` (default) keeps the previous note-only output. Out-of-range values
+  raise `ValueError`. `scripts/guitarset_jams_to_midi.py` writes GM 24
+  (Acoustic Guitar nylon, matching GuitarSet's instrument) by default so
+  players no longer fall back to piano — playback timbre only,
+  `parse_midi`/metrics ignore it; `--program N` overrides, `--no-program`
+  restores note-only files, out-of-range `--program` exits non-zero, and the
+  resolved value is recorded in `<csv>.provenance.json`. Covered by
+  `tests/test_midi_writer.py` and `tests/test_guitarset_jams_to_midi.py`
 
 ### Changed
 

@@ -32,6 +32,12 @@ Conversion semantics (ported from ``marl/GuitarSet`` ``interpreter.py``):
   ground truth.
 - Tempo is written as 120 BPM; timings are absolute seconds and
   ``parse_midi`` reads them back unscaled.
+- A GM ``program_change`` (default 24, Acoustic Guitar (nylon) -- GuitarSet
+  was recorded on a nylon-string guitar) is written on channel 0 before the
+  first note, so General MIDI players do not fall back to their default of
+  program 0, Acoustic Grand Piano. Purely cosmetic: ``parse_midi`` ignores
+  program, so no metric sees it. ``--no-program`` restores the bare
+  note-only files.
 
 Filenames encode ``{player}_{style}{progression}-{tempo}-{key}_{comp|solo}``
 (e.g. ``00_BN1-129-Eb_comp``); style codes map to full names as in mirdata
@@ -41,6 +47,7 @@ kept raw.
 Usage:
     python scripts/guitarset_jams_to_midi.py --dry-run
     python scripts/guitarset_jams_to_midi.py --velocity 100
+    python scripts/guitarset_jams_to_midi.py --program 27 --overwrite
     python scripts/guitarset_jams_to_midi.py --dedupe-unisons --overwrite
 """
 
@@ -68,6 +75,11 @@ _UNISON_ONSET_TOLERANCE_SEC = 0.05
 #: Tempo written into every output MIDI. Timings are absolute seconds;
 #: ``parse_midi`` reads them back unscaled, so this only labels the file.
 _TEMPO_BPM = 120.0
+
+#: GM program written into every output MIDI: 24 is Acoustic Guitar (nylon),
+#: matching GuitarSet's nylon-string guitar. Playback timbre only -- the
+#: evaluator reads notes, never program.
+_DEFAULT_GM_PROGRAM = 24
 
 #: Style-code mapping mirroring mirdata's GuitarSet ``_STYLE_DICT``.
 _STYLE_DICT = {
@@ -331,6 +343,7 @@ def convert_file(
     midi_path: Path,
     velocity: int,
     dedupe: bool,
+    program: Optional[int] = _DEFAULT_GM_PROGRAM,
 ) -> Dict[str, Any]:
     """Convert one JAMS file to MIDI, returning its provenance record.
 
@@ -361,7 +374,7 @@ def convert_file(
         }
         for note in notes
     ]
-    write_midi(midi_notes, midi_path, tempo_bpm=_TEMPO_BPM)
+    write_midi(midi_notes, midi_path, tempo_bpm=_TEMPO_BPM, program=program)
 
     try:
         file_fields = parse_filename(stem)
@@ -483,6 +496,17 @@ def _parse_args(argv: List[str] | None) -> argparse.Namespace:
         "default: 100).",
     )
     parser.add_argument(
+        "--program", default=_DEFAULT_GM_PROGRAM, type=int,
+        help=f"GM program (0-127) written as a program_change on channel 0 so "
+        f"players do not default to piano (default: {_DEFAULT_GM_PROGRAM}, "
+        f"Acoustic Guitar (nylon)). Playback timbre only; no metric reads it.",
+    )
+    parser.add_argument(
+        "--no-program", action="store_true",
+        help="Write no program_change at all (note-only files, as before "
+        "--program existed). Overrides --program.",
+    )
+    parser.add_argument(
         "--dedupe-unisons", action="store_true",
         help="Remove unison duplicates (keep earliest onset per pitch group "
         "within tolerance). Off by default: deleting reference notes inflates "
@@ -541,6 +565,14 @@ def main(argv: List[str] | None = None) -> int:
         )
         return 1
 
+    if not 0 <= args.program <= 127:
+        print(
+            f"error: --program must be in 0..127, got {args.program}",
+            file=sys.stderr,
+        )
+        return 1
+    program: Optional[int] = None if args.no_program else args.program
+
     if not annotations_dir.is_dir():
         print(
             f"error: annotations directory not found: {annotations_dir}",
@@ -596,7 +628,9 @@ def main(argv: List[str] | None = None) -> int:
             records.append(record)
             continue
         try:
-            record = convert_file(jams_path, midi_path, args.velocity, args.dedupe_unisons)
+            record = convert_file(
+                jams_path, midi_path, args.velocity, args.dedupe_unisons, program
+            )
         except (OSError, ValueError) as exc:
             n_errors += 1
             print(f"error: {stem}: failed ({exc})", file=sys.stderr)
@@ -665,6 +699,7 @@ def main(argv: List[str] | None = None) -> int:
             "output_metadata": str(metadata_path),
             "argv": effective_argv,
             "velocity": args.velocity,
+            "program": program,
             "dedupe_unisons": args.dedupe_unisons,
             "overwrite": args.overwrite,
             "dry_run": args.dry_run,

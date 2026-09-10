@@ -182,3 +182,48 @@ def test_write_transcription_outputs_sidecar_failure_does_not_raise(
     write_transcription_outputs(result, tmp_path / "out.mid")
 
     assert (tmp_path / "out.mid").exists()
+
+
+# ── GM program selection ──────────────────────────────────────────────
+
+def test_no_program_change_by_default(tmp_path: Path) -> None:
+    import mido
+
+    notes = [{"pitch": 60, "velocity": 100, "start_sec": 0.0, "duration_sec": 1.0}]
+    output = write_midi(notes, tmp_path / "out.mid")
+
+    midi = mido.MidiFile(output)
+    assert not [m for m in midi.tracks[0] if m.type == "program_change"]
+
+
+def test_program_change_precedes_first_note(tmp_path: Path) -> None:
+    import mido
+
+    notes = [
+        {"pitch": 60, "velocity": 100, "start_sec": 0.5, "duration_sec": 1.0},
+        {"pitch": 64, "velocity": 90, "start_sec": 0.0, "duration_sec": 1.0},
+    ]
+    output = write_midi(notes, tmp_path / "out.mid", program=24)
+
+    midi = mido.MidiFile(output)
+    messages = list(midi.tracks[0])
+    program_index = next(
+        i for i, m in enumerate(messages) if m.type == "program_change"
+    )
+    first_note_index = next(i for i, m in enumerate(messages) if m.type == "note_on")
+    assert program_index < first_note_index
+    program = messages[program_index]
+    assert program.program == 24
+    assert program.channel == 0
+    assert program.time == 0
+    # The note stream is unchanged by the added program change.
+    rebuilt = parse_midi(output)
+    assert sorted(n["pitch"] for n in rebuilt) == [60, 64]
+    assert min(n["start_sec"] for n in rebuilt) == pytest.approx(0.0, abs=0.005)
+
+
+@pytest.mark.parametrize("program", [-1, 128])
+def test_out_of_range_program_rejected(tmp_path: Path, program: int) -> None:
+    notes = [{"pitch": 60, "velocity": 100, "start_sec": 0.0, "duration_sec": 1.0}]
+    with pytest.raises(ValueError, match="program"):
+        write_midi(notes, tmp_path / "out.mid", program=program)
