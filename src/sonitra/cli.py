@@ -111,8 +111,8 @@ def render(
         "--dataset",
         "-d",
         help=(
-            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
-            "outputs to corpus/{subdir}/{dataset}/{config}/"
+            "Dataset name (overrides io.dataset); reads inputs from and writes "
+            "outputs under corpus/{dataset}/"
         ),
     ),
     limit: Optional[int] = typer.Option(
@@ -218,8 +218,8 @@ def transcribe(
         "--dataset",
         "-d",
         help=(
-            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
-            "outputs to corpus/{subdir}/{dataset}/{config}/"
+            "Dataset name (overrides io.dataset); reads inputs from and writes "
+            "outputs under corpus/{dataset}/"
         ),
     ),
     limit: Optional[int] = typer.Option(
@@ -373,8 +373,8 @@ def evaluate(
         "--dataset",
         "-d",
         help=(
-            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
-            "outputs to corpus/{subdir}/{dataset}/{config}/"
+            "Dataset name (overrides io.dataset); reads inputs from and writes "
+            "outputs under corpus/{dataset}/"
         ),
     ),
     limit: Optional[int] = typer.Option(
@@ -570,8 +570,8 @@ def benchmark(
         "--dataset",
         "-d",
         help=(
-            "Dataset name; scopes corpus paths to corpus/midi/{dataset}/ and "
-            "outputs to corpus/{subdir}/{dataset}/{config}/"
+            "Dataset name (overrides io.dataset); reads inputs from and writes "
+            "outputs under corpus/{dataset}/"
         ),
     ),
     limit: Optional[int] = typer.Option(
