@@ -9,7 +9,7 @@
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
-  input_type: audio
+  input_type: midi
   bpm: 120
   # Documentary only — inert in audio mode: AudioSource returns the file's own
   # rate and the chain runs at that rate (see pipeline.py). Set to match the corpus.
@@ -43,9 +43,7 @@ dawdreamer:
   clear_midi_between_renders: true
 
 fluidsynth:
-  # Inert in audio mode — backend-field validators are skipped when
-  # input_type is audio.
-  soundfont_path: null
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
 
 pedalboard:
   instrument:

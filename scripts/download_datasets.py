@@ -10,6 +10,7 @@ behavior.
 
 Usage:
     python scripts/download_datasets.py --list
+    python scripts/download_datasets.py --notes
     python scripts/download_datasets.py maestro-v3-midi
     python scripts/download_datasets.py bsed
     python scripts/download_datasets.py --all
@@ -20,7 +21,8 @@ Usage:
 
 Interactive mode: run with no dataset name and no --all on a terminal with
 `rich` installed, pick any number of datasets from the table, and download up
-to --jobs of them concurrently.
+to --jobs of them concurrently. Type `n` at the prompt to switch to the notes
+page (each dataset's instrument, contents, and intended task); Enter returns.
 
 Interrupted downloads resume automatically on the next run: partial files are
 kept under <output-dir>/.downloads/ and re-used via HTTP Range requests. Pass
@@ -77,8 +79,11 @@ REPO: Path = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 # Dataset registry
 # ---------------------------------------------------------------------------
-# To add a new dataset: copy one entry below and fill in the fields. Each
-# dataset is one or more `sources` fetched into the same `corpus_subdir`:
+# To add a new dataset: copy one entry below and fill in the fields. `note`
+# (shown by --notes and the picker's notes page) says the instrument, what
+# the set holds, and the task it was made for; keys sharing a corpus_subdir
+# share one note. Each dataset is one or more `sources` fetched into the same
+# `corpus_subdir`:
 #
 #   {"url": ..., "kind": "zip" | "targz", "extract_map": [...], "size_mb": N}
 #   {"url": ..., "kind": "file", "target_subdir": "metadata", "filename": "x.csv", "size_mb": N}
@@ -112,6 +117,11 @@ DATASETS: Dict[str, Dict] = {
             "1,276 piano MIDI files + metadata, no audio. Standard AMT benchmark "
             "(Hawthorne et al., ICLR 2019). CC BY-NC-SA 4.0 (noncommercial)."
         ),
+        "note": (
+            "Solo piano. 199 h of competition performances, recorded as MIDI "
+            "by the piano itself and aligned to the audio within about 3 ms. "
+            "Made for piano transcription and generation."
+        ),
         "corpus_subdir": "maestro-v3",
         "sources": [
             {
@@ -134,6 +144,11 @@ DATASETS: Dict[str, Dict] = {
             "full zip as maestro-v3-full and discards the MIDI members. "
             "CC BY-NC-SA 4.0 (noncommercial)."
         ),
+        "note": (
+            "Solo piano. 199 h of competition performances, recorded as MIDI "
+            "by the piano itself and aligned to the audio within about 3 ms. "
+            "Made for piano transcription and generation."
+        ),
         "corpus_subdir": "maestro-v3",
         "sources": [
             {
@@ -154,6 +169,11 @@ DATASETS: Dict[str, Dict] = {
             "Standard AMT benchmark (Hawthorne et al., ICLR 2019); ~120 GB — most "
             "workflows only need maestro-v3-midi (~57 MB). "
             "CC BY-NC-SA 4.0 (noncommercial)."
+        ),
+        "note": (
+            "Solo piano. 199 h of competition performances, recorded as MIDI "
+            "by the piano itself and aligned to the audio within about 3 ms. "
+            "Made for piano transcription and generation."
         ),
         "corpus_subdir": "maestro-v3",
         "sources": [
@@ -178,6 +198,11 @@ DATASETS: Dict[str, Dict] = {
             "are also on Zenodo but not fetched by this script — see ROADMAP.md. "
             "CC BY-NC-SA 4.0 (noncommercial). Berendes et al., TISMIR 2026."
         ),
+        "note": (
+            "Orchestra. 20 Beethoven symphony excerpts, each with 4 concert "
+            "recordings and 1 synthetic version. Made to test orchestral "
+            "transcription; also suits score-to-audio alignment."
+        ),
         "corpus_subdir": "bsed",
         "sources": [
             {
@@ -197,6 +222,11 @@ DATASETS: Dict[str, Dict] = {
             "330 classical recordings (wav) with reference MIDI + per-note label "
             "CSVs + track metadata. Multi-instrument chamber/orchestral AMT "
             "benchmark (Thickstun et al., ICLR 2017). CC BY 4.0."
+        ),
+        "note": (
+            "Classical chamber music. 34 h by 10 composers for 11 instruments, "
+            "with note labels from scores aligned to the audio automatically. "
+            "Made for detecting which notes play at each moment."
         ),
         "corpus_subdir": "musicnet",
         "sources": [
@@ -227,10 +257,16 @@ DATASETS: Dict[str, Dict] = {
     "e-gmd-midi": {
         "name": "Expanded Groove MIDI Dataset (MIDI only)",
         "description": (
-            "45,537 drum performances (MIDI) + metadata, no audio. Drum-transcription "
+            "1,059 drum performances, each replayed through 43 kits: 45,537 "
+            "MIDI files + metadata, no audio. Drum-transcription "
             "AMT benchmark (Callender et al., ISMIR 2020); note this repo's "
             "transcription/evaluation backends target pitched instruments, not "
             "drum-hit classification — download-only for now. CC BY 4.0."
+        ),
+        "note": (
+            "Drum kit. 444 h: 1,059 human drum performances, each replayed "
+            "through 43 kits with electronic and acoustic sounds. Made for drum "
+            "transcription, which Sonitra can't score yet."
         ),
         "corpus_subdir": "e-gmd",
         "sources": [
@@ -248,10 +284,16 @@ DATASETS: Dict[str, Dict] = {
     "e-gmd-full": {
         "name": "Expanded Groove MIDI Dataset (MIDI + recordings)",
         "description": (
-            "45,537 drum performances (MIDI + audio) + metadata. Drum-transcription "
+            "1,059 drum performances, each replayed through 43 kits: 45,537 "
+            "MIDI + audio pairs + metadata. Drum-transcription "
             "AMT benchmark (Callender et al., ISMIR 2020); ~90 GB — note this repo's "
             "transcription/evaluation backends target pitched instruments, not "
             "drum-hit classification — download-only for now. CC BY 4.0."
+        ),
+        "note": (
+            "Drum kit. 444 h: 1,059 human drum performances, each replayed "
+            "through 43 kits with electronic and acoustic sounds. Made for drum "
+            "transcription, which Sonitra can't score yet."
         ),
         "corpus_subdir": "e-gmd",
         "sources": [
@@ -277,6 +319,11 @@ DATASETS: Dict[str, Dict] = {
             "guitarset-full for both variants at once; 6-channel "
             "hex-pickup stems deferred, see ROADMAP.md. "
             "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
+        ),
+        "note": (
+            "Acoustic guitar. 360 clips of about 30 s by 6 players in 5 styles, "
+            "as backing chords and solos. A per-string pickup gives labels down "
+            "to string and fret. Made for guitar transcription."
         ),
         "corpus_subdir": "guitarset",
         "sources": [
@@ -311,6 +358,11 @@ DATASETS: Dict[str, Dict] = {
             "hex-pickup stems deferred, see ROADMAP.md. "
             "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
         ),
+        "note": (
+            "Acoustic guitar. 360 clips of about 30 s by 6 players in 5 styles, "
+            "as backing chords and solos. A per-string pickup gives labels down "
+            "to string and fret. Made for guitar transcription."
+        ),
         "corpus_subdir": "guitarset",
         "sources": [
             {
@@ -343,6 +395,11 @@ DATASETS: Dict[str, Dict] = {
             "guitarset-mic + guitarset-mix sharing corpus/guitarset/; "
             "6-channel hex-pickup stems deferred, see ROADMAP.md. "
             "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
+        ),
+        "note": (
+            "Acoustic guitar. 360 clips of about 30 s by 6 players in 5 styles, "
+            "as backing chords and solos. A per-string pickup gives labels down "
+            "to string and fret. Made for guitar transcription."
         ),
         "corpus_subdir": "guitarset",
         "sources": [
@@ -378,16 +435,65 @@ DATASETS: Dict[str, Dict] = {
     # GAPS: HF ships 401 metadata rows + 3 unlisted orphans = 404 recordings;
     # published GAPS is the 300 with non-empty split; we deliberately fetch/keep all;
     # split and f-measure reach benchmark export as meta.* columns for downstream filtering.
-    "gaps": {
-        "name": "GAPS (Guitar-Aligned Performance Scores) v1.1",
+    #
+    # gaps-midi's sources are verbatim copies of gaps-full's midi + metadata
+    # sources (same pinned revision), sharing corpus/gaps/. gaps-full run after
+    # gaps-midi re-uses the MIDI already on disk: _download_hf_tree skips each
+    # file present at its listed size and fetches any missing or truncated one.
+    "gaps-midi": {
+        "name": "GAPS (Guitar-Aligned Performance Scores) v1.1 (MIDI only)",
         "description": (
-            "404 classical-guitar recordings (48 kHz/16-bit/stereo WAV, 14 h, 200+ "
-            "performers) with aligned MIDI + MusicXML + syncpoints + metadata; all "
-            "404 files kept, official split not applied (filter via "
-            "meta.split/meta.f-measure downstream). "
+            "404 classical-guitar MIDI references aligned to the recordings "
+            "+ metadata, no audio (~3 MB) — enough for MIDI-input (render → "
+            "transcribe) runs; fetch gaps-full for the ~15.3 GB of real "
+            "recordings audio-input runs need. All 404 files kept, official "
+            "split not applied (filter via meta.split/meta.f-measure downstream). "
             "CC BY-NC-SA 4.0, research use, cite Riley et al. ISMIR 2024."
         ),
-        "note": "all 404 files; official split not applied",
+        "note": (
+            "Classical guitar. About 23 h of solo performances by over 200 "
+            "players in varied recording conditions, each aligned note by note "
+            "to its score. Made for guitar transcription on real-world audio. "
+            "All 404 files kept; official split not applied."
+        ),
+        "corpus_subdir": "gaps",
+        "sources": [
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "midi",
+                "patterns": frozenset({".mid", ".midi"}),
+                "target_subdir": "midi",
+                # verified 2303537 bytes via HF tree API at pinned revision.
+                "size_mb": 3,
+            },
+            {
+                "url": "https://huggingface.co/datasets/xavriley/GAPS/resolve/b4c89a33a639c7ae903e74102dfbb3e147e1417f/gaps_metadata_with_splits.csv",
+                "kind": "file",
+                "target_subdir": "metadata",
+                "filename": "gaps_metadata_with_splits.csv",
+                # verified 601780 bytes via HF tree API at pinned revision.
+                "size_mb": 1,
+            },
+        ],
+    },
+    "gaps-full": {
+        "name": "GAPS (Guitar-Aligned Performance Scores) v1.1 (MIDI + recordings)",
+        "description": (
+            "404 classical-guitar recordings (48 kHz/16-bit/stereo WAV, ~23 h, 200+ "
+            "performers) with aligned MIDI + MusicXML + syncpoints + metadata; "
+            "~15.3 GB — MIDI-input runs only need gaps-midi (~3 MB), whose MIDI "
+            "this re-uses if already on disk. All 404 files kept, official split "
+            "not applied (filter via meta.split/meta.f-measure downstream). "
+            "CC BY-NC-SA 4.0, research use, cite Riley et al. ISMIR 2024."
+        ),
+        "note": (
+            "Classical guitar. About 23 h of solo performances by over 200 "
+            "players in varied recording conditions, each aligned note by note "
+            "to its score. Made for guitar transcription on real-world audio. "
+            "All 404 files kept; official split not applied."
+        ),
         "corpus_subdir": "gaps",
         "sources": [
             {
@@ -560,9 +666,42 @@ def _print_list(output_dir: Path) -> None:
     print("-" * 120)
     for key, spec in DATASETS.items():
         target = output_dir / spec["corpus_subdir"]
-        note = spec.get("note", "")
-        suffix = f" [{note}]" if note else ""
-        print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}{suffix}")
+        print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}")
+
+
+def _note_groups() -> List[Tuple[str, str, str]]:
+    """One ``(numbers, dataset, note)`` row per dataset, in registry order.
+
+    Keys sharing a ``corpus_subdir`` are variants of one dataset with one
+    note, so they collapse into a single row. ``numbers`` are the keys'
+    1-based picker numbers (``"1-3"`` when adjacent, else ``"1,3"``);
+    ``dataset`` is the first key's name without its trailing ``(variant)``.
+    """
+    specs: List[Dict] = list(DATASETS.values())
+    groups: Dict[str, List[int]] = {}
+    for index, spec in enumerate(specs, start=1):
+        groups.setdefault(spec["corpus_subdir"], []).append(index)
+    rows: List[Tuple[str, str, str]] = []
+    for indices in groups.values():
+        spec = specs[indices[0] - 1]
+        if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
+            numbers = f"{indices[0]}-{indices[-1]}"
+        else:
+            numbers = ",".join(str(index) for index in indices)
+        name = re.sub(r"\s*\([^()]*\)$", "", spec["name"])
+        rows.append((numbers, name, spec.get("note", "")))
+    return rows
+
+
+def _print_notes() -> None:
+    """Plain --notes output: each dataset's name, then its note indented below."""
+    rows = _note_groups()
+    col = max(len(numbers) for numbers, _, _ in rows) + 2
+    print(f"{'#':<{col}}Dataset")
+    print("-" * 120)
+    for numbers, name, note in rows:
+        print(f"{numbers:<{col}}{name}")
+        print(f"{'':<{col}}{note}")
 
 
 def _parse_content_range_total(value: Optional[str]) -> int:
@@ -792,6 +931,7 @@ def _download_hf_tree(
     index: int,
     force: bool = False,
     progress: Optional[Callable[[int, int], None]] = None,
+    report: Optional[Callable[[int, int], None]] = None,
 ) -> int:
     """Download one ``hf_tree`` source (many small files) into ``target_subdir``.
 
@@ -802,7 +942,12 @@ def _download_hf_tree(
     download to ``dest.with_name(dest.name + ".part")`` via ``_download_file``
     (retries + Range resume free), then ``os.replace`` into place. ``progress``
     receives cumulative ``(done_within_source, total_within_source)`` so rich
-    callers can add their ``bytes_before`` offset one level up.
+    callers can add their ``bytes_before`` offset one level up. ``report``, if
+    given, is called once at the end with ``(skipped, downloaded)`` file counts.
+
+    The skip is key-independent: files another key sharing the corpus_subdir
+    already fetched (e.g. gaps-midi's MIDI, when gaps-full runs) are re-used,
+    which is sound only because such keys pin the same revision.
     """
     repo: str = source["repo"]
     revision: str = source["revision"]
@@ -818,11 +963,13 @@ def _download_hf_tree(
     total: int = sum(size for _, size in filtered)
     done: int = 0
     count: int = 0
+    skipped: int = 0
     for path, size in filtered:
         dest: Path = dataset_dir / target_subdir / Path(path).name
         if not force and dest.exists() and dest.stat().st_size == size:
             done += size
             count += 1
+            skipped += 1
             if progress is not None:
                 progress(done, total)
             continue
@@ -857,7 +1004,26 @@ def _download_hf_tree(
         count += 1
         if progress is not None:
             progress(done, total)
+    if report is not None:
+        report(skipped, count - skipped)
     return count
+
+
+def _hf_tree_reporter(key: str, source: Dict) -> Callable[[int, int], None]:
+    """``report`` callback printing one skip/download summary line per source.
+
+    Makes the per-file skip visible, e.g. ``[gaps-full] midi: 404 already
+    present, 0 downloaded`` after gaps-midi fetched the MIDI earlier. Under the
+    rich display the line goes through Live's stdout redirect, above the bars.
+    """
+
+    def report(skipped: int, downloaded: int) -> None:
+        print(
+            f"[{key}] {source['subdir']}: {skipped} already present, "
+            f"{downloaded} downloaded"
+        )
+
+    return report
 
 
 def _extract_archive(
@@ -1027,6 +1193,8 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path, *, force: bool
             os.replace(part, dest)
             files_extracted += 1
         elif source["kind"] == "hf_tree":
+            # Deferred so the summary prints after the \r progress line ends.
+            summary: List[Tuple[int, int]] = []
             files_extracted += _download_hf_tree(
                 source,
                 dataset_dir,
@@ -1035,8 +1203,10 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path, *, force: bool
                 index=index,
                 force=force,
                 progress=progress,
+                report=lambda skipped, downloaded: summary.append((skipped, downloaded)),
             )
             print()  # newline after the progress line
+            _hf_tree_reporter(key, source)(*summary[0])
         else:
             part = _partial_path(output_dir, key, index, source)
             _download_file(
@@ -1109,7 +1279,6 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
     table.add_column("size", justify="right")
     table.add_column("target")
     table.add_column("status")
-    table.add_column("notes", style="dim", overflow="fold")
     for index, (key, spec) in enumerate(DATASETS.items(), start=1):
         target = output_dir / spec["corpus_subdir"]
         badge = "present" if _is_already_present(key, spec, output_dir) else "missing"
@@ -1120,15 +1289,34 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
             f"{_dataset_size_mb(spec):,} MB",
             str(target),
             f"[green]present[/green]" if badge == "present" else "[yellow]missing[/yellow]",
-            spec.get("note", ""),
         )
     console.print(table)
+
+
+def _print_notes_table(console: "_RichConsole") -> None:
+    """Render one note row per dataset (--notes and the picker's notes page share it)."""
+    table = _RichTable(title="Dataset notes", title_style="bold")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("dataset")
+    table.add_column("notes", overflow="fold")
+    for numbers, name, note in _note_groups():
+        table.add_row(numbers, name, note)
+    console.print(table)
+
+
+def _show_notes_page(console: "_RichConsole") -> None:
+    """Swap the picker table for the notes table until Enter; EOFError propagates."""
+    console.clear()
+    _print_notes_table(console)
+    _RichPrompt.ask("Press Enter to go back", default="", show_default=False)
+    console.clear()
 
 
 def _interactive_select(output_dir: Path) -> Optional[List[str]]:
     """Show the picker table and prompt for a comma-separated multi-select.
 
-    Returns the selected dataset keys, or ``None`` when the user quits
+    ``"n"`` switches to the notes page and Enter returns from it. Returns the
+    selected dataset keys, or ``None`` when the user quits
     (``"q"``/empty input/EOF).
     """
     console = _RichConsole()
@@ -1137,8 +1325,12 @@ def _interactive_select(output_dir: Path) -> Optional[List[str]]:
         _print_table(console, output_dir)
         try:
             response = _RichPrompt.ask(
-                "Select datasets (comma-separated numbers, 'all', or 'q' to quit)"
+                "Select datasets (comma-separated numbers, 'all', 'n' for notes, "
+                "or 'q' to quit)"
             )
+            if response.strip().lower() == "n":
+                _show_notes_page(console)
+                continue
         except EOFError:
             return None
         try:
@@ -1415,6 +1607,7 @@ def _download_and_extract_rich(
                 index=index,
                 force=force,
                 progress=progress,
+                report=_hf_tree_reporter(key, source),
             )
         else:
             part = _partial_path(output_dir, key, index, source)
@@ -1621,6 +1814,7 @@ def _parse_args() -> argparse.Namespace:
             [
                 "Examples:",
                 "  python scripts/download_datasets.py --list",
+                "  python scripts/download_datasets.py --notes",
                 "  python scripts/download_datasets.py maestro-v3-midi",
                 "  python scripts/download_datasets.py bsed",
                 "  python scripts/download_datasets.py --all",
@@ -1646,6 +1840,14 @@ def _parse_args() -> argparse.Namespace:
         "--list",
         action="store_true",
         help="Print available datasets and exit.",
+    )
+    parser.add_argument(
+        "--notes",
+        action="store_true",
+        help=(
+            "Print each dataset's instrument, contents, and intended task, "
+            "then exit."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -1684,11 +1886,23 @@ def main() -> int:
         else REPO / "corpus"
     )
 
-    if args.list:
-        if _use_rich_output():
-            _print_table(_RichConsole(), output_dir)
-        else:
-            _print_list(output_dir)
+    if args.list or args.notes:
+        console = _RichConsole() if _use_rich_output() else None
+        if args.list:
+            hint = "Run with --notes to see each dataset's instrument, contents, and intended task."
+            if console is not None:
+                _print_table(console, output_dir)
+                if not args.notes:
+                    console.print(f"[dim]{hint}[/dim]")
+            else:
+                _print_list(output_dir)
+                if not args.notes:
+                    print(hint)
+        if args.notes:
+            if console is not None:
+                _print_notes_table(console)
+            else:
+                _print_notes()
         return 0
 
     if args.dataset is None and not args.all:
