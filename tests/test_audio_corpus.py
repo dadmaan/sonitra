@@ -172,6 +172,18 @@ def test_pair_ambiguous_match_stops_at_first_multi_candidate_k(
     assert len(warnings) == 1
 
 
+def test_pair_reports_ambiguous_candidates_separately_from_no_match() -> None:
+    audio_paths = _p("BSED-07_X.wav", "XYZ-99_Unknown.wav")
+    midi_paths = _p("BSED-07_X_extra2.mid", "BSED-07_X_extra1.mid")
+
+    result = pair_audio_to_reference(audio_paths, midi_paths)
+
+    assert result.unpaired_audio == _p("BSED-07_X.wav", "XYZ-99_Unknown.wav")
+    assert result.ambiguous == {
+        Path("BSED-07_X.wav"): _p("BSED-07_X_extra1.mid", "BSED-07_X_extra2.mid")
+    }
+
+
 def test_pair_is_deterministic() -> None:
     audio_paths = _p(
         "BSED-01_1_Beethoven_Op021-01_Karajan1963.wav",
