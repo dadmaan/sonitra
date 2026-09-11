@@ -1,15 +1,4 @@
-"""Phase 7 — gated end-to-end integration tests for audio-input mode.
-
-Exercises the audio-mode building blocks (``make_source``-backed
-``run_pipeline``, a transcriber, and ``evaluate_notes``) wired together
-directly, as an end user would, rather than through ``run_benchmark`` (which
-already has its own dedicated coverage in ``tests/test_benchmark_audio.py``).
-
-Marker note (PLAN.md §3 Phase 7): audio-mode tests need no
-``skip_if_no_vst``/``integration`` marker -- no VST is involved anywhere in
-this file. Only ``test_audio_mode_roundtrip_with_basic_pitch`` carries
-``slow``, since it invokes the real basic-pitch/TensorFlow backend.
-"""
+"""End-to-end tests for audio-input mode: render, transcribe, evaluate."""
 
 from __future__ import annotations
 

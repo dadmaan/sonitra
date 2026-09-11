@@ -1,29 +1,8 @@
-"""Fit the SONITRA condition-effect mixed model on a benchmark regression table.
+"""Fit the condition-effect beta mixed model on a benchmark regression table.
 
-Runs the beta mixed model from ``misc/SONITRA-mixed-effects-regresion-model.R``::
-
-    note.onset_f1 ~ condition + duration + performance_year + (1 | song) + (1 | composer)
-    family = beta_family(link = "logit")
-
-against a table produced by ``scripts/export_regression_table.py`` (with
-``--metadata-csv``, since the model needs the composer/duration/performance-year columns),
-and writes the results into a ``regression_analysis/`` directory **next to the
-input CSV**.
-
-The fit itself happens in R via ``scripts/mixed_effects_analysis.R``,
-which this script invokes as a subprocess. This script owns input validation,
-provenance, and reporting; the R script owns the statistics.
-
-Usage:
-    uv run python scripts/run_mixed_effects_analysis.py \\
-        --input corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT/regression_table_with_metadata.csv
-
-    # or point at the benchmark directory and let it find the table
-    uv run python scripts/run_mixed_effects_analysis.py \\
-        --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT
-
-R must be on PATH (or given via --rscript / $SONITRA_RSCRIPT) with the glmmTMB
-and jsonlite packages installed.
+Model: ``note.onset_f1 ~ condition + duration + performance_year + (1 | song) +
+(1 | composer)`` with a logit-link beta family, fitted in R (glmmTMB). Results
+are written to ``regression_analysis/`` next to the input CSV.
 """
 
 from __future__ import annotations

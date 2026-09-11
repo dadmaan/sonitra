@@ -1,33 +1,9 @@
-"""Check a dataset folder before a benchmark run, and fix recording names safely.
+"""Check a dataset folder for problems before a benchmark run.
 
-Looks at ``<corpus-root>/<dataset>/`` the way ``sonitra benchmark`` will and
-reports what would go wrong: recordings that pair with no MIDI file or with
-more than one (using ``sonitra.corpus.pair_audio_to_reference`` itself, so the
-report can never disagree with the benchmark), MIDI names that can never pair,
-MIDI files whose first tempo differs from the render tempo (they render at the
-wrong speed in MIDI-input mode), several instrument programs, drum-channel
-notes, empty or unreadable MIDI, files Sonitra ignores, recordings left in
-``audio/``, and symlinked folders the file search skips.
-
-Input type defaults to ``audio`` when ``recordings/`` holds audio and ``midi``
-otherwise; ``--input-type`` overrides it. Exit code 1 means at least one error
-(something that makes files drop out of the run or score wrong); warnings and
-notes alone exit 0.
-
-Recordings that miss their MIDI file only by letter case or separators
-(spaces, hyphens, dots) get a *safe rename*: one that the pairing code confirms
-lands on exactly one MIDI file and collides with nothing. Nothing is renamed
-unless you ask: ``--plan FILE`` writes the renames to a CSV for review, and
-``--apply FILE`` checks every row first, renames only if all rows are valid,
-and writes ``<plan>.undo.csv`` (itself a plan, so ``--apply`` on it reverts).
-Only recordings are ever renamed, never MIDI files, because metadata joins key
-on MIDI file names. Near misses get a "did you mean" hint instead.
-
-Usage:
-    python scripts/check_dataset.py --dataset my-dataset
-    python scripts/check_dataset.py --dataset my-dataset --plan renames.csv
-    python scripts/check_dataset.py --dataset my-dataset --apply renames.csv
-    python scripts/check_dataset.py --dataset my-dataset --input-type midi --bpm 120
+Reports recordings that pair with no MIDI file or several, unreadable or unusual
+MIDI, and ignored files; exits 1 on any error. Recordings whose names differ
+from their MIDI file only by case or separators can be renamed safely via
+``--plan`` / ``--apply``.
 """
 
 from __future__ import annotations
@@ -50,8 +26,6 @@ from sonitra.midi_reader import parse_midi
 
 #: Findings shown per group before "... and N more" (``--verbose`` shows all).
 _SHOWN_PER_GROUP = 10
-#: Relative tempo difference below which a file counts as matching the render tempo.
-_TEMPO_TOLERANCE = 1e-3
 _DRUM_CHANNEL = 9
 _SEPARATORS = re.compile(r"[\s_.\-]+")
 _PLAN_COLUMNS = ("recording", "new_name", "pairs_with", "reason")
@@ -72,10 +46,6 @@ _GROUPS: Dict[str, Tuple[str, str]] = {
     "name-clash": (
         "1 MIDI file can never pair, because another MIDI name is its name plus _ and more",
         "{n} MIDI files can never pair, because another MIDI name is theirs plus _ and more",
-    ),
-    "tempo": (
-        "1 MIDI file does not start at the render tempo, so it renders at the wrong speed",
-        "{n} MIDI files do not start at the render tempo, so they render at the wrong speed",
     ),
     "programs": ("1 MIDI file uses several instrument programs", "{n} MIDI files use several instrument programs"),
     "drums": (
@@ -129,7 +99,6 @@ class Report:
     dataset_dir: Path
     input_type: str
     input_type_reason: str
-    bpm: float
     midi_files: List[Path]
     recordings: List[Path]
     pairing: Optional[PairingResult]
@@ -151,15 +120,11 @@ def _rel(path: Path, base: Path) -> str:
         return str(path)
 
 
-def _fmt_bpm(bpm: float) -> str:
-    return f"{round(bpm, 2):g}"
-
-
 def _norm_tokens(stem: str) -> Tuple[str, ...]:
     return tuple(token.casefold() for token in _SEPARATORS.split(stem) if token)
 
 
-def _check_midi_contents(midi_files: Sequence[Path], input_type: str, bpm: float) -> List[Finding]:
+def _check_midi_contents(midi_files: Sequence[Path], input_type: str) -> List[Finding]:
     findings: List[Finding] = []
     for path in midi_files:
         try:
@@ -175,29 +140,17 @@ def _check_midi_contents(midi_files: Sequence[Path], input_type: str, bpm: float
             continue
         if not meta["notes"]:
             findings.append(Finding("error", "no-notes", path))
-        if input_type == "midi":
-            native = float(meta["bpm"])
-            if native > 0 and abs(native / bpm - 1.0) > _TEMPO_TOLERANCE:
-                findings.append(
-                    Finding(
-                        "error",
-                        "tempo",
-                        path,
-                        f"first tempo {_fmt_bpm(native)} BPM, so it renders at {bpm / native:.2f}x "
-                        f"the speed of its reference (render tempo {_fmt_bpm(bpm)} BPM)",
-                    )
+        if input_type == "midi" and len(meta["programs"]) > 1:
+            programs = ", ".join(str(p) for p in meta["programs"])
+            findings.append(
+                Finding(
+                    "warning",
+                    "programs",
+                    path,
+                    f"programs {programs}; FluidSynth plays the SoundFont default unless "
+                    "fluidsynth.program is set",
                 )
-            if len(meta["programs"]) > 1:
-                programs = ", ".join(str(p) for p in meta["programs"])
-                findings.append(
-                    Finding(
-                        "warning",
-                        "programs",
-                        path,
-                        f"programs {programs}; FluidSynth plays the SoundFont default unless "
-                        "fluidsynth.program is set",
-                    )
-                )
+            )
         if drum_notes:
             findings.append(Finding("warning", "drums", path, f"{drum_notes} drum-channel notes"))
     return findings
@@ -310,7 +263,7 @@ def _propose_renames(
     return renames, suggestions
 
 
-def check_dataset(dataset_dir: Path, *, input_type: Optional[str] = None, bpm: float = 120.0) -> Report:
+def check_dataset(dataset_dir: Path, *, input_type: Optional[str] = None) -> Report:
     """Check *dataset_dir* (``<corpus-root>/<dataset>``) the way ``sonitra benchmark`` reads it."""
     midi_dir = dataset_dir / "midi"
     recordings_dir = dataset_dir / "recordings"
@@ -364,7 +317,7 @@ def check_dataset(dataset_dir: Path, *, input_type: Optional[str] = None, bpm: f
                 findings.append(Finding("warning", "ignored", path))
 
     findings.extend(_check_midi_names(midi_files, dataset_dir, input_type))
-    findings.extend(_check_midi_contents(midi_files, input_type, bpm))
+    findings.extend(_check_midi_contents(midi_files, input_type))
 
     if audio_dir.is_dir():
         # Top level only: Sonitra's own renders live in audio/<config>/ subfolders.
@@ -379,7 +332,6 @@ def check_dataset(dataset_dir: Path, *, input_type: Optional[str] = None, bpm: f
         dataset_dir=dataset_dir,
         input_type=input_type,
         input_type_reason=reason,
-        bpm=bpm,
         midi_files=midi_files,
         recordings=recordings,
         pairing=pairing,
@@ -398,8 +350,6 @@ def format_report(report: Report, *, verbose: bool = False) -> str:
     if report.input_type == "audio":
         n = len(report.recordings)
         counts += f". recordings/: {n} recording{'s' if n != 1 else ''}"
-    else:
-        counts += f". Render tempo: {_fmt_bpm(report.bpm)} BPM (--bpm changes it)"
     lines.append(counts + ".")
     if report.pairing is not None and report.recordings:
         paired, total = len(report.pairing.mapping), len(report.recordings)
@@ -560,7 +510,13 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Usage:" + __doc__.split("Usage:", 1)[1],
+        epilog=(
+            "Usage:\n"
+            "    python scripts/check_dataset.py --dataset my-dataset\n"
+            "    python scripts/check_dataset.py --dataset my-dataset --plan renames.csv\n"
+            "    python scripts/check_dataset.py --dataset my-dataset --apply renames.csv\n"
+            "    python scripts/check_dataset.py --dataset my-dataset --input-type midi\n"
+        ),
     )
     parser.add_argument("--dataset", required=True, help="Dataset folder name under --corpus-root.")
     parser.add_argument("--corpus-root", type=Path, default=Path("corpus"), help="Default: corpus")
@@ -568,9 +524,6 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         "--input-type",
         choices=("midi", "audio"),
         help="Check a MIDI-input or audio-input run. Default: audio when recordings/ has audio.",
-    )
-    parser.add_argument(
-        "--bpm", type=float, default=120.0, help="render_pipeline.bpm of your config (MIDI-input mode). Default: 120"
     )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--plan", type=Path, help="Write the safe renames to this CSV for review.")
@@ -604,7 +557,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             print()
 
-        report = check_dataset(dataset_dir, input_type=args.input_type, bpm=args.bpm)
+        report = check_dataset(dataset_dir, input_type=args.input_type)
         print(format_report(report, verbose=args.verbose))
 
         n = len(report.renames)

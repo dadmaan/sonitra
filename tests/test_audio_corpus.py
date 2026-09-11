@@ -9,6 +9,7 @@ from sonitra.config import IOSection, PipelineConfig, resolve_corpus_paths
 from sonitra.corpus import (
     discover_audio_files,
     discover_midi_files,
+    match_token_prefix,
     pair_audio_to_reference,
 )
 
@@ -197,6 +198,108 @@ def test_pair_is_deterministic() -> None:
     assert result1.mapping == result2.mapping
     assert result1.unpaired_audio == result2.unpaired_audio
     assert result1.unpaired_midi == result2.unpaired_midi
+
+
+# ---------------------------------------------------------------------------
+# match_token_prefix (pure extracted helper — Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_match_token_prefix_musicnet_single_id_joins() -> None:
+    """MusicNet prefix invariant: 1727_schubert_op114_2 matches 1727 at k=1."""
+    candidates = {Path("1727"): ["1727"], Path("1728"): ["1728"]}
+    query = "1727_schubert_op114_2".split("_")
+
+    match, cands_at_stop, k = match_token_prefix(query, candidates)
+
+    assert match == Path("1727")
+    assert cands_at_stop == [Path("1727")]
+    assert k == 1
+
+
+def test_match_token_prefix_unique_match_returns_k() -> None:
+    candidates = {Path("BSED-01_Beethoven_Op021-01.mid"): ["BSED-01", "Beethoven", "Op021-01"]}
+    query = "BSED-01_1_Beethoven_Op021-01_Karajan1963".split("_")
+    # k_start = min(5,3)=3 -> at k=3: ["BSED-01","Beethoven","Op021-01"] == first 3 of query? query[:3]=["BSED-01","1","Beethoven"] -> no -> 0, k=2 -> ["BSED-01","Beethoven"] vs ["BSED-01","1"] -> no -> 0, k=1 -> ["BSED-01"] matches -> unique
+    match, cands, k = match_token_prefix(query, candidates)
+    assert match == Path("BSED-01_Beethoven_Op021-01.mid")
+    assert k == 1
+
+
+def test_match_token_prefix_ambiguous_returns_candidates_and_k() -> None:
+    candidates = {
+        Path("BSED-07_X_extra1.mid"): ["BSED-07", "X", "extra1"],
+        Path("BSED-07_X_extra2.mid"): ["BSED-07", "X", "extra2"],
+    }
+    query = "BSED-07_X".split("_")
+
+    match, cands, k = match_token_prefix(query, candidates)
+
+    assert match is None
+    assert cands == sorted([Path("BSED-07_X_extra1.mid"), Path("BSED-07_X_extra2.mid")], key=str)
+    assert k == 2
+
+
+def test_match_token_prefix_no_match_returns_empty_and_zero() -> None:
+    candidates = {Path("BSED-01_Beethoven_Op021-01.mid"): ["BSED-01", "Beethoven", "Op021-01"]}
+    query = "XYZ-99_Unknown_Piece".split("_")
+
+    match, cands, k = match_token_prefix(query, candidates)
+
+    assert match is None
+    assert cands == []
+    assert k == 0
+
+
+def test_match_token_prefix_descends_through_zero_to_unique() -> None:
+    """Same as test_pair_descends_through_zero_match_levels but via pure helper."""
+    candidates = {
+        Path("BSED-01_Beethoven_Op021-01.mid"): ["BSED-01", "Beethoven", "Op021-01"],
+        Path("BSED-02_Mozart_K331.mid"): ["BSED-02", "Mozart", "K331"],
+        Path("BSED-99_Random_Decoy_Extra_Tokens.mid"): ["BSED-99", "Random", "Decoy", "Extra", "Tokens"],
+    }
+    query = "BSED-01_1_Beethoven_Op021-01_Karajan1963".split("_")
+
+    match, cands, k = match_token_prefix(query, candidates)
+
+    assert match == Path("BSED-01_Beethoven_Op021-01.mid")
+    assert k == 1
+
+
+def test_match_token_prefix_empty_candidates() -> None:
+    match, cands, k = match_token_prefix(["1727"], {})
+
+    assert match is None
+    assert cands == []
+    assert k == 0
+
+
+def test_match_token_prefix_case_sensitive() -> None:
+    candidates = {
+        Path("BSED-01_beethoven.mid"): ["BSED-01", "beethoven"],
+        Path("BSED-01_other.mid"): ["BSED-01", "other"],
+    }
+    query = "BSED-01_Beethoven".split("_")
+
+    match, cands, k = match_token_prefix(query, candidates)
+
+    # k=2 would be ["BSED-01","Beethoven"] vs ["BSED-01","beethoven"] -> no -> 0
+    # k=1 -> both share ["BSED-01"] -> ambiguous
+    assert match is None
+    assert len(cands) == 2
+    assert k == 1
+
+
+def test_match_token_prefix_with_string_keys_for_metadata() -> None:
+    """Export re-uses the same helper with str keys (metadata stems)."""
+    candidates = {"1727": ["1727"], "1728": ["1728"]}
+    query = "1727_schubert_op114_2".split("_")
+
+    match, cands, k = match_token_prefix(query, candidates)
+
+    assert match == "1727"
+    assert cands == ["1727"]
+    assert k == 1
 
 
 # ---------------------------------------------------------------------------

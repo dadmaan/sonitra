@@ -1,10 +1,4 @@
-"""Tests for scripts/guitarset_jams_to_midi.py.
-
-JAMS documents are built inline by the local ``_make_jams`` helper (the
-per-file-helper convention used in ``test_export_regression_table.py``), so
-each test can vary the JAMS shape: list vs dict-of-arrays ``data`` layouts,
-interleaved namespaces, float pitches, skipped notes, and unisons.
-"""
+"""Tests for the GuitarSet JAMS-to-MIDI converter."""
 
 from __future__ import annotations
 

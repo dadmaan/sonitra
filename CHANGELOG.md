@@ -261,40 +261,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   layout, switching to audio-input mode (`render_pipeline.input_type: audio`,
   `evaluation.dtw.enabled: false`), the file-naming rule the token-prefix
   pairing needs (with tested good/bad names), and a pre-run checklist
-  (120 BPM first tempo, one GM program, no drum tracks, unique names, no
-  nested symlinked folders). Linked from `README.md`, `docs/datasets.md`, and
-  `docs/configuration.md`. The MIDI-mode tempo mismatch it warns about (render
-  stretched by `native_bpm / render_pipeline.bpm`, reference not) is logged in
-  `ROADMAP.md` as a planned fix
+  (one GM program, no drum tracks, unique names, no nested symlinked folders).
+  Linked from `README.md`, `docs/datasets.md`, and `docs/configuration.md`
 - `scripts/check_dataset.py`: pre-run check for a custom dataset folder.
   Reports recordings that pair with no MIDI file or several (via
   `sonitra.corpus.pair_audio_to_reference` itself), MIDI names that can never
-  pair, MIDI files whose first tempo differs from the render tempo, several
-  programs, drum-channel notes, empty/unreadable MIDI, ignored file endings,
-  recordings left in `audio/`, and skipped nested symlinks; exits 1 on any
-  error. Proposes renames only for case/separator mismatches that the pairing
-  code confirms, writes them to a reviewable CSV (`--plan`), and applies them
-  all-or-nothing with an undo plan (`--apply`). Covered by
+  pair, several programs, drum-channel notes, empty/unreadable MIDI, ignored
+  file endings, recordings left in `audio/`, and skipped nested symlinks; exits
+  1 on any error. Proposes renames only for case/separator mismatches that the
+  pairing code confirms, writes them to a reviewable CSV (`--plan`), and applies
+  them all-or-nothing with an undo plan (`--apply`). Covered by
   `tests/test_check_dataset.py`
 - `sonitra.corpus.PairingResult.ambiguous`: maps each ambiguously matched
   recording to its candidate MIDI files (previously only the log said which
   unpaired files were ambiguous). Covered by `tests/test_audio_corpus.py`
+- `musicnet-midi` and `musicnet-full` registry split (replacing the single `musicnet` key): `musicnet-midi` fetches 330 score-time MIDI + `musicnet_metadata.csv` (~4 MB) into `midi/` + `metadata/` for MIDI-input runs; `musicnet-full` fetches those plus `musicnet.tar.gz` (recordings + per-note label CSVs) into `recordings/` + `annotations/labels/` + `annotations/score_midi/` + `metadata/` (~10.6 GB) for audio-input runs; both share `corpus/musicnet/` (picker 5–6) and `superseded_by: ["musicnet-full"]` makes `musicnet-full` presence imply `musicnet-midi`; verified sizes/md5; `next_steps` points to `scripts/musicnet_labels_to_midi.py` + `config/benchmark/musicnet_test.yaml`; covered by `tests/test_download_datasets.py` and documented in `docs/datasets.md`, `config/benchmark/README.md`, `ROADMAP.md`, `AGENT.md`
+- `scripts/musicnet_labels_to_midi.py`: converter from MusicNet label CSVs to aligned MIDI — reads `annotations/labels/**/*.csv` (`*_labels/<id>.csv`, 320 train + 10 test), writes one `midi/<id>.mid` per id (sample-exact `ticks_per_beat = sample_rate // 2`, 120 BPM, 1 tick = 1 sample; `round(t*sr)==sample`) plus `metadata/musicnet.csv` (`midi_filename`, `id`, `split`, every `musicnet_metadata.csv` column, `score_midi_filename`, counts `n_notes`/`n_programs`/`programs`/`labels_end_sec`/`unisons_detected`/`same_channel_overlaps`) and `<csv>.provenance.json`; `program = instrument − 1`, constant `--velocity` (100), flags `--no-program`/`--dedupe-unisons`/`--overwrite`/`--dry-run`/`--replace-score-midi` (takes over `midi/`, moves/deletes score tree into `annotations/score_midi/`), validates even `sample_rate ≤ 65534`, counts `invalid_value`/`non_positive_duration`/`out_of_range_pitch`/`invalid_instrument`, fail-soft per file; covered by `tests/test_musicnet_labels_to_midi.py` and `tests/test_midi_writer.py`
+- `src/sonitra/midi_writer.py`: `write_multi_program_midi(notes, path, *, ticks_per_beat=480, tempo_bpm=120.0, write_programs=True)` — each distinct `program` gets its own channel in ascending program order skipping ch 9, `program_change` at t=0, >15 programs raises `ValueError`; factored via `_collect_note_events` so `write_midi` stays byte-identical (golden sha256 test added); `src/sonitra/unisons.py` (`count_unisons`, `dedupe_unisons`, `_UNISON_ONSET_TOLERANCE_SEC = 0.05`) is the pitch-only unison definition moved from `scripts/guitarset_jams_to_midi.py` (that script re-exports the names, incl. `_UNISON_ONSET_TOLERANCE_SEC`); covered by `tests/test_midi_writer.py` and `tests/test_guitarset_jams_to_midi.py`
+- `scripts/download_datasets.py`: `superseded_by` relation (`maestro-v3-midi`/`wav` → `-full`, `e-gmd-midi` → `-full`, `guitarset-mic`/`mix` → `-full`, `gaps-midi` → `-full`, `musicnet-midi` → `-full`), `_resolve_selection()` prunes `--all`/picker before preflight/display (`[skip] <key> — superseded by <full> (also selected)`), registry-driven `next_steps`, per-download-key `_Coordinator` locks with `*.<source_id>.part` temp names, failure memo, cancel event, run-scoped `--force`, `_bytes_needed()` dedup and satisfied-skip, file-level skip for every kind (`hf_tree`/`file`/`zip`/`targz`), `[stale]` warning, `_source_id`/`_download_key` sharing; legacy `.downloads/<key>.*.ok`/`.part` treated as incomplete and adopted; covered by `tests/test_download_datasets.py`
+- `scripts/export_regression_table.py`: new `--metadata-match {exact,token-prefix}` (default `exact`) using `sonitra.corpus.match_token_prefix` (exact first, then unique token-prefix) cached per song; `token-prefix` needed for MusicNet score MIDI (`1727_schubert_op114_2` → `1727`); unmatched warning suggests `token-prefix` in `exact` mode; `build_rows` and unmatched count share one `_resolve_song_metadata_keys` map; `sonitra.corpus.match_token_prefix(query_tokens, candidates) -> (match|None, candidates_at_stop, k)` extracted from `pair_audio_to_reference`; covered by `tests/test_export_regression_table.py` and `tests/test_audio_corpus.py`
+- `config/benchmark/musicnet_test.yaml`: MusicNet smoke test (4 conditions: baseline + `no_reverb` + two `wet_level` sweeps), `io.dataset: musicnet`, `input_type: midi`, `sample_rate: 44100` (works on score MIDI (`musicnet-midi`) or converted MIDI; `input_type: audio` needs converter first; 7 corrupt upstream files are skipped); listed in `config/benchmark/README.md`
 
 ### Changed
 
+- **BREAKING:** `musicnet` → `musicnet-full` with no alias (as `maestro-v3` in v0.3.0); label CSVs moved from `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/*_labels/`; score MIDI for `-full` moved from `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/`; `musicnet-midi` (new, `superseded_by: ["musicnet-full"]`) puts the score MIDI in `midi/` so existing configs work without the 11 GB download. Migration: move `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/` and `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/` (or let `scripts/musicnet_labels_to_midi.py --replace-score-midi` do the second move). Otherwise `musicnet-full`'s legacy presence check (every target dir non-empty) fails and it re-downloads ~10.6 GB; file-level skip-by-size saves the writes, not the download. `midi/` is now converter-owned for `musicnet-full` (as for GuitarSet)
+- **BREAKING:** download records replace per-key `.downloads/<key>.*.ok` markers: `<corpus_subdir>/.sources/<source_id>.json` (`version`, `source_id`, `origin`, `files` map) with `satisfied`/`stale`/`none` states (memoized), file-level skip for every kind, `superseded_by` presence, and run-scoped `--force`; separate concurrent processes on one output dir remain unsupported. Legacy markers/partials are treated as incomplete and `*.part` is adopted; `.downloads/` now holds only in-progress partials (a complete dataset still leaves nothing behind, as before)
+- **BREAKING:** `render_pipeline.bpm` meaning change: now host tempo only (DawDreamer `set_bpm` for tempo-synced plugins and FluidSynth's temporary-MIDI tick grid, which at `bpm: 1` has a 125 ms grid); notes follow each MIDI file's own tempo map. See Fixed below for re-render warning; configs stay valid (default 120) and `config/source.yaml` comment corrected (omitting the key gives 120, not “derived from MIDI”)
 - `README.md`, `ROADMAP.md`, and `docs/` (except `docs/abstract.md`):
   rewritten in plain language and polished for human tone — shorter
   active sentences, jargon defined at first use, AI-writing patterns
   removed. No commands, flags, paths, config keys, or metric definitions
   changed
-- `scripts/download_datasets.py`: completion bookkeeping in
-  `<output-dir>/.downloads/` is now transient — once a dataset's every source
-  is downloaded and extracted, its `.ok` markers and `.part` files are removed
-  (`_clear_completion_state`, key-scoped so parallel jobs sharing a
-  `corpus_subdir` can't race), leaving presence to the populated corpus dirs.
-  Partial progress is untouched, so an interrupted multi-source download still
-  resumes where it stopped. A complete dataset therefore leaves nothing behind
-  in `.downloads/`. Covered by `tests/test_download_datasets.py`
 - Agent guidance moved from `CLAUDE.md` to `AGENT.md` (`CLAUDE.md` is now a
   one-line pointer); wording generalised from Claude Code to coding agents
 - `scripts/run_mixed_effects_analysis.py`: default input table renamed from
@@ -315,6 +312,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MIDI-input rendering now follows each file's own tempo map instead of
+  stretching notes by `first_tempo / render_pipeline.bpm`. `MidiSource.load`
+  passes notes exactly as `parse_midi` returns them; `render_pipeline.bpm`
+  is now the host tempo only (DawDreamer `set_bpm` for tempo-synced plugins
+  and FluidSynth's temporary-MIDI tick grid, which at `bpm: 1` has a 125 ms
+  grid). Results change for any non-120 BPM file: `corpus/test` `piano2`
+  (80 BPM), `piano3` (150 BPM), `piano4` (110 BPM), `tests/fixtures/test_polyphonic.mid`
+  (90 BPM), MusicNet (300 of 323 score MIDIs are not at 120 BPM, 291 change
+  tempo mid-file), and E-GMD. MAESTRO, BSED, GAPS and GuitarSet are all at
+  120 BPM and are unaffected. Users must **re-render** existing audio: with
+  `io`/`render_pipeline.overwrite: false` (`config/source.yaml:33`) the
+  pipeline would otherwise reuse warped renders silently (`pipeline.py:92, :276`).
+  The DTW metric stays consistent, because it compares the render with a
+  re-synthesis of a transcription of that same render
 - `sonitra render|transcribe|evaluate|benchmark --help`: the `--dataset` help
   text named the pre-dataset-first layout (`corpus/midi/{dataset}/`, outputs
   under `corpus/{subdir}/{dataset}/`); it now says inputs and outputs live
@@ -325,6 +336,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[error] <name>: <message>` to stderr during the run, with a final
   done/skipped/failed tally after the display exits), and rich's Live no
   longer redirects stderr so messages also reach `2>` redirects
+- `scripts/export_regression_table.py` / `sonitra.corpus`: metadata join now supports `--metadata-match token-prefix` (exact first, then unique token-prefix via `match_token_prefix`, same logic as audio-to-MIDI pairing) so MusicNet score MIDI stems (`1727_schubert_op114_2`) correctly join to `musicnet_metadata.csv` ids (`1727`); `exact` mode now suggests `token-prefix` when unmatched; the previous `load_metadata_join` keying on `Path(id).stem` never matched for MusicNet and is now fixed; `match_token_prefix` is extracted as a pure function (`sonitra.corpus`) for reuse without duplicating the descending-`k` loop; `pair_audio_to_reference` behavior, logging, and tests are unchanged. Covered by `tests/test_export_regression_table.py` and `tests/test_audio_corpus.py`
+- `scripts/download_datasets.py`: parallel downloads are now race-free (per-download-key locks in `_Coordinator` with one-lock-at-a-time no-deadlock guarantee, distinct `*.<source_id>.part` temp names so concurrent writers never share a temp and `os.replace` is atomic, failure memo, cancel event stopping queue workers and chunk loop); shared-source file-level skip now applies to every kind (`hf_tree`/`file`/`zip`/`targz` members already on disk at size are not rewritten, with `[key] label: N already present, M downloaded/extracted` summary), `superseded_by` pruning and record-based presence fix the `guitarset-full` after `guitarset-mic` missing-mix bug for new corpora (legacy corpora without records keep the coarse every-target-dir-non-empty fallback, documented; `--force` the superseding key), `MAESTRO --all` no longer fetches the 120 GB zip twice, and `--force` partial sweep no longer deletes sibling jobs' in-flight files; existing signatures (`_extract_archive`, `_download_hf_tree`, `_download_file`, `_download_one`, `_run_rich`/`_run_plain`, `_check_disk_space` preflight via `_bytes_needed`) stay compat for tests. Covered by `tests/test_download_datasets.py`
 
 ## [0.3.0] - 2026-08-14
 

@@ -1,25 +1,8 @@
 #!/usr/bin/env python3
-"""
-Render, transcribe and evaluate all configs in config/ against the corpus.
+"""Render, transcribe and evaluate every preset config against a corpus dataset.
 
-For each config:
-  1. sonitra render      -> corpus/{dataset}/audio/<config>/*.wav
-  2. sonitra transcribe  -> corpus/{dataset}/transcription/<config>/<backend>/*.mid
-  3. sonitra evaluate    -> corpus/{dataset}/eval_results/<config>.jsonl
-
-After all configs:
-  corpus/{dataset}/eval_results/summary.jsonl   -- one line per config, mean of per-file metrics
-  corpus/{dataset}/eval_results/summary.csv     -- same data as summary.jsonl, CSV format
-  corpus/{dataset}/eval_results/all_results.csv -- flat table: one row per (config, file)
-
-Usage:
-    python scripts/run_transcribe_eval.py
-    python scripts/run_transcribe_eval.py --dataset maestro-v3
-    python scripts/run_transcribe_eval.py --dataset test --skip-render
-    python scripts/run_transcribe_eval.py --dataset maestro-v3 --limit 10
-    python scripts/run_transcribe_eval.py --dataset maestro-v3 --limit 10 --seed 42
-    python scripts/run_transcribe_eval.py --config pedalboard_baseline
-    python scripts/run_transcribe_eval.py --config pedalboard_baseline pedalboard_no_effects
+Writes per-config results and cross-config summaries to
+``corpus/<dataset>/eval_results/``.
 """
 
 from __future__ import annotations

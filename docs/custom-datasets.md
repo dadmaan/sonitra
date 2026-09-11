@@ -68,9 +68,9 @@ Before a full run, check your files with `scripts/check_dataset.py`. It reads yo
 python scripts/check_dataset.py --dataset my-dataset
 ```
 
-Unlike the download script, this one needs the project environment, since it imports Sonitra. Add `--corpus-root DIR` if your data lives outside `./corpus`. It checks an audio-input run when `recordings/` holds audio, or a MIDI-input run otherwise; `--input-type midi` or `--input-type audio` overrides that. Add `--bpm N` to match your config's `render_pipeline.bpm` (default 120), since the tempo check compares MIDI files against that value.
+Unlike the download script, this one needs the project environment, since it imports Sonitra. Add `--corpus-root DIR` if your data lives outside `./corpus`. It checks an audio-input run when `recordings/` holds audio, or a MIDI-input run otherwise; `--input-type midi` or `--input-type audio` overrides that.
 
-The report groups results into errors, warnings, and notes, with up to 10 examples per group (`--verbose` lists them all). Errors cover unmatched or ambiguous recordings, clashing MIDI names, off-tempo or unreadable MIDI files, and missing MIDI or recordings. Warnings cover multiple instrument programs, drum-channel notes, files in `recordings/` with an ending Sonitra does not read, audio files left in `audio/`, and symlinked folders inside `midi/` or `recordings/`. Notes list MIDI files that no recording pairs with. The script exits with code 1 if it found any error, so you can run it before a long benchmark and stop early.
+The report groups results into errors, warnings, and notes, with up to 10 examples per group (`--verbose` lists them all). Errors cover unmatched or ambiguous recordings, clashing MIDI names, unreadable MIDI files, and missing MIDI or recordings. Warnings cover multiple instrument programs, drum-channel notes, files in `recordings/` with an ending Sonitra does not read, audio files left in `audio/`, and symlinked folders inside `midi/` or `recordings/`. Notes list MIDI files that no recording pairs with. The script exits with code 1 if it found any error, so you can run it before a long benchmark and stop early.
 
 When a recording misses its MIDI file only by letter case or a separator such as a space, hyphen, or dot, the checker proposes a new name. For example, `Song1 - take1.wav` next to `song1.mid` becomes `song1_take1.wav`. It only proposes a rename when the new name matches exactly one MIDI file and no other file already has it; for a near miss such as the typo in `sogn1.wav` it only prints a "did you mean" hint. Renaming is two steps:
 
@@ -85,7 +85,6 @@ python scripts/check_dataset.py --dataset my-dataset --apply renames.csv
 
 The checker above catches most of these for you, but it helps to know them anyway.
 
-- Check the tempo of your MIDI files. When Sonitra renders MIDI, it plays each file at `render_pipeline.bpm` (120 by default) but scores against the file's own timing. A file whose first tempo is not 120 BPM therefore renders faster or slower than its reference, and its scores come out wrong. For example, a 90 BPM file whose notes end at 5.33 s renders to 4.00 s of audio. Save your files at 120 BPM, or, if they all share one tempo, set `render_pipeline.bpm` to it. This affects MIDI-only runs, not recordings, and a fix is planned (see [ROADMAP.md](../ROADMAP.md)). The built-in datasets are all written at 120 BPM.
 - If a MIDI file uses more than one instrument program, set `fluidsynth.program` (0 to 127) in your config. Otherwise the FluidSynth backend plays it with the SoundFont's default sound, usually piano.
 - Remove drum tracks from your MIDI files. Sonitra's transcription and scoring target pitched instruments, so drum-channel notes get treated as ordinary pitched notes.
 - Give every MIDI file a unique name, even across subfolders.

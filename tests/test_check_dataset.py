@@ -187,33 +187,26 @@ def test_midi_with_no_recording_is_a_note(cd: ModuleType, tmp_path: Path) -> Non
 # --- MIDI contents ------------------------------------------------------------------
 
 
-def test_tempo_other_than_render_bpm_is_an_error_in_midi_mode(
+def test_off_tempo_midi_yields_no_finding_in_midi_mode(
     cd: ModuleType, tmp_path: Path
 ) -> None:
     root = _dataset(tmp_path, {"slow.mid": {"bpm": 90}, "ok.mid": {}})
 
     report = cd.check_dataset(root)
 
-    (tempo,) = _codes(report)["tempo"]
-    assert Path(tempo.path).name == "slow.mid"
-    assert tempo.level == "error"
-    assert "90" in tempo.detail and "1.33" in tempo.detail
+    assert "tempo" not in _codes(report)
+    # off-tempo files must not be reported as errors or warnings
+    assert all(f.code != "tempo" for f in report.findings)
 
 
-def test_tempo_check_follows_the_bpm_option(cd: ModuleType, tmp_path: Path) -> None:
+def test_bpm_flag_no_longer_accepted(cd: ModuleType, tmp_path: Path) -> None:
+    # --bpm was removed: parser must reject it
+    with pytest.raises(SystemExit):
+        cd.main(["--dataset", "mine", "--bpm", "120", "--corpus-root", str(tmp_path / "corpus")])
+    # programmatic bpm kwarg was also removed
     root = _dataset(tmp_path, {"slow.mid": {"bpm": 90}})
-
-    report = cd.check_dataset(root, bpm=90)
-
-    assert "tempo" not in _codes(report)
-
-
-def test_tempo_is_not_checked_in_audio_mode(cd: ModuleType, tmp_path: Path) -> None:
-    root = _dataset(tmp_path, {"slow.mid": {"bpm": 90}}, ["slow.wav"])
-
-    report = cd.check_dataset(root)
-
-    assert "tempo" not in _codes(report)
+    with pytest.raises(TypeError):
+        cd.check_dataset(root, bpm=90)  # type: ignore[call-arg]
 
 
 def test_several_programs_warn_in_midi_mode_only(cd: ModuleType, tmp_path: Path) -> None:

@@ -1,1 +1,1 @@
-"""FastAPI integration for the midi renderer."""
+"""REST API for submitting and monitoring render jobs."""

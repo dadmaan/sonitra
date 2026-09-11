@@ -22,7 +22,6 @@ from sonitra.quality_gate import check_quality
 from sonitra.renderer import render_notes_faust, render_notes_vst
 from sonitra.source import (  # noqa: F401 - re-exported for backward-compat imports
     _compute_duration,
-    _scale_note_timings,
     make_source,
 )
 from sonitra.storage import derive_output_path, write_audio, write_wav

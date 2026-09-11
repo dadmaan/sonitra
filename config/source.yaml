@@ -25,7 +25,7 @@ render_pipeline:
     #                            of midi/), paired to a reference MIDI by filename
     #                            token prefix; audio-level DTW (evaluation.dtw) is
     #                            automatically skipped in this mode — see below
-    bpm: 120 # playback tempo during rendering; comment out to use default (derived from MIDI)
+    bpm: 120 # host tempo for tempo-synced plugins and FluidSynth's tick grid (notes follow the MIDI file's own tempo map; bpm never moves notes)
     sample_rate: 44100 # Hz; 44100 or 48000 recommended
     bit_depth: 24 # 16 or 24
     channels: 2 # 1 = mono, 2 = stereo
