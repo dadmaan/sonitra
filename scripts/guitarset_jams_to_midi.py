@@ -1,54 +1,8 @@
-"""Convert GuitarSet JAMS annotations to MIDI reference files + metadata CSV.
+"""Convert GuitarSet JAMS annotations to reference MIDI files and a metadata CSV.
 
-Reads ``corpus/guitarset/annotations/*.jams`` (GuitarSet ground truth ships as
-JAMS, not MIDI) and writes one ``*.mid`` per excerpt (unsuffixed stems) plus a
-metadata CSV and a JSON provenance sidecar.
-
-Conversion semantics (ported from ``marl/GuitarSet`` ``interpreter.py``):
-
-- The six per-string ``note_midi`` blocks are merged into one note list. Blocks
-  are selected by ``annotation_metadata.data_source == "0".."5"`` (strings),
-  never by position -- they are interleaved with ``pitch_contour`` blocks in
-  real files. Unknown namespaces are ignored.
-- Both JAMS ``data`` layouts are tolerated *per namespace*: list-of-
-  observations (``[{time, duration, value, confidence}]``, what ``note_midi``
-  uses) and dict-of-arrays (``{time: [...], duration: [...], ...}``, what
-  ``pitch_contour`` uses). Missing/empty data, null confidences, and empty
-  per-string blocks are tolerated.
-- ``pitch = round(float(value))``; ``onset = time``; ``offset = time +
-  duration``.
-- Constant ``--velocity`` (default 100): GuitarSet has no dynamics, so
-  ``interpreter.py``'s ``100 + np.random.choice(range(-5, 5))`` fabricated
-  noise is deliberately *not* reproduced.
-- Pitch is guarded to 0-127 and non-positive durations are skipped, both
-  counted in the provenance. ``sonitra.midi_writer.write_midi`` clamps
-  velocity but not pitch, so an out-of-range value would raise from ``mido``.
-  Real guitar range is ~40-88, so this guard is defensive only.
-- Unison detection: reference notes sharing a pitch within the onset tolerance
-  (two strings sounding the same note) are unavoidable false negatives under
-  1-to-1 bipartite matching. They are counted and *kept* by default;
-  ``--dedupe-unisons`` is opt-in (keeps the earliest onset per pitch group)
-  because deleting reference notes inflates recall and silently changes the
-  ground truth.
-- Tempo is written as 120 BPM; timings are absolute seconds and
-  ``parse_midi`` reads them back unscaled.
-- A GM ``program_change`` (default 24, Acoustic Guitar (nylon) -- GuitarSet
-  was recorded on a nylon-string guitar) is written on channel 0 before the
-  first note, so General MIDI players do not fall back to their default of
-  program 0, Acoustic Grand Piano. Purely cosmetic: ``parse_midi`` ignores
-  program, so no metric sees it. ``--no-program`` restores the bare
-  note-only files.
-
-Filenames encode ``{player}_{style}{progression}-{tempo}-{key}_{comp|solo}``
-(e.g. ``00_BN1-129-Eb_comp``); style codes map to full names as in mirdata
-(``BN`` -> ``Bossa Nova``, ``SS`` -> ``Singer-Songwriter``) with unknown codes
-kept raw.
-
-Usage:
-    python scripts/guitarset_jams_to_midi.py --dry-run
-    python scripts/guitarset_jams_to_midi.py --velocity 100
-    python scripts/guitarset_jams_to_midi.py --program 27 --overwrite
-    python scripts/guitarset_jams_to_midi.py --dedupe-unisons --overwrite
+Merges each clip's six per-string note blocks into one MIDI file and writes a
+metadata CSV with a JSON provenance sidecar. Unison notes are kept unless
+``--dedupe-unisons`` is given.
 """
 
 from __future__ import annotations
@@ -66,11 +20,11 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
 from sonitra.midi_writer import write_midi  # noqa: E402
-
-#: Onset tolerance for unison detection (two strings, same pitch). Matches the
-#: onset tolerance used by the note metrics, so a counted unison is exactly a
-#: pair the evaluator cannot match 1-to-1.
-_UNISON_ONSET_TOLERANCE_SEC = 0.05
+from sonitra.unisons import (  # noqa: E402
+    _UNISON_ONSET_TOLERANCE_SEC,
+    count_unisons,
+    dedupe_unisons,
+)
 
 #: Tempo written into every output MIDI. Timings are absolute seconds;
 #: ``parse_midi`` reads them back unscaled, so this only labels the file.
@@ -260,58 +214,6 @@ def extract_notes(
             strings.add(source_str)
     notes.sort(key=lambda note: (note["onset"], note["pitch"]))
     return (notes, skipped, sorted(strings))
-
-
-def count_unisons(
-    notes: List[Dict[str, Any]],
-    tolerance: float = _UNISON_ONSET_TOLERANCE_SEC,
-) -> int:
-    """Count notes sharing a pitch within *tolerance* of a group onset.
-
-    Notes are grouped per pitch by ascending onset; the first note opens a
-    group and every later note within *tolerance* of the group onset is one
-    detected unison. A note further than *tolerance* away opens a new group.
-    """
-    by_pitch: Dict[int, List[float]] = {}
-    for note in notes:
-        by_pitch.setdefault(note["pitch"], []).append(note["onset"])
-    detected = 0
-    for onsets in by_pitch.values():
-        onsets.sort()
-        group_start: Optional[float] = None
-        for onset in onsets:
-            if group_start is None or onset - group_start > tolerance:
-                group_start = onset
-            else:
-                detected += 1
-    return detected
-
-
-def dedupe_unisons(
-    notes: List[Dict[str, Any]],
-    tolerance: float = _UNISON_ONSET_TOLERANCE_SEC,
-) -> Tuple[List[Dict[str, Any]], int]:
-    """Drop unison duplicates, keeping the earliest onset per pitch group.
-
-    Grouping is identical to :func:`count_unisons`; the return value is
-    ``(kept_notes, n_removed)`` with kept notes re-sorted by onset.
-    """
-    by_pitch: Dict[int, List[Dict[str, Any]]] = {}
-    for note in notes:
-        by_pitch.setdefault(note["pitch"], []).append(note)
-    kept: List[Dict[str, Any]] = []
-    removed = 0
-    for group in by_pitch.values():
-        group.sort(key=lambda note: note["onset"])
-        group_start: Optional[float] = None
-        for note in group:
-            if group_start is None or note["onset"] - group_start > tolerance:
-                group_start = note["onset"]
-                kept.append(note)
-            else:
-                removed += 1
-    kept.sort(key=lambda note: (note["onset"], note["pitch"]))
-    return (kept, removed)
 
 
 def _first_annotation_value(doc: Dict[str, Any], namespace: str) -> str:

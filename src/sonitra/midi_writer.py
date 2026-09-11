@@ -20,6 +20,39 @@ _CONTOUR_BINS = 264
 _TOTAL_COLUMNS = 1 + 88 + _CONTOUR_BINS + 88  # time + onset + contour + note = 441
 
 
+def _collect_note_events(
+    notes: Iterable[dict[str, Any]],
+    channel_for_note,
+) -> list[tuple[float, int, mido.Message]]:
+    """Convert note dicts to sorted MIDI events, factored for byte-identical reuse.
+
+    Args:
+        notes: Note dicts with ``pitch``, ``velocity``, ``start_sec`` and ``duration_sec``.
+        channel_for_note: Callable ``note -> channel`` returning the MIDI channel for each note.
+
+    Returns:
+        Sorted list of ``(time_sec, sort_key, message)`` where ``sort_key`` ensures
+        ``note_off`` sorts before ``note_on`` at the same instant.
+    """
+    events: list[tuple[float, int, mido.Message]] = []
+    for note in notes:
+        pitch = int(note["pitch"])
+        velocity = max(1, min(127, int(note.get("velocity", 64))))
+        start = max(0.0, float(note["start_sec"]))
+        duration = float(note["duration_sec"])
+        if duration <= 0.0:
+            continue
+        channel = int(channel_for_note(note))
+        # note_off sorts before note_on at the same instant so retriggers of
+        # the same pitch survive the round trip through midi_reader
+        events.append((start, 1, mido.Message("note_on", channel=channel, note=pitch, velocity=velocity, time=0)))
+        events.append(
+            (start + duration, 0, mido.Message("note_off", channel=channel, note=pitch, velocity=0, time=0))
+        )
+    events.sort(key=lambda item: (item[0], item[1]))
+    return events
+
+
 def write_midi(
     notes: Iterable[dict[str, Any]],
     path: Path | str,
@@ -60,19 +93,83 @@ def write_midi(
     if program is not None:
         track.append(mido.Message("program_change", channel=0, program=int(program), time=0))
 
-    events: list[tuple[float, int, mido.Message]] = []
-    for note in notes:
-        pitch = int(note["pitch"])
-        velocity = max(1, min(127, int(note.get("velocity", 64))))
-        start = max(0.0, float(note["start_sec"]))
-        duration = float(note["duration_sec"])
-        if duration <= 0.0:
-            continue
-        # note_off sorts before note_on at the same instant so retriggers of
-        # the same pitch survive the round trip through midi_reader
-        events.append((start, 1, mido.Message("note_on", note=pitch, velocity=velocity, time=0)))
-        events.append((start + duration, 0, mido.Message("note_off", note=pitch, velocity=0, time=0)))
-    events.sort(key=lambda item: (item[0], item[1]))
+    events = _collect_note_events(notes, lambda _note: 0)
+
+    previous_tick = 0
+    for time_sec, _, message in events:
+        tick = int(round(mido.second2tick(time_sec, ticks_per_beat, tempo)))
+        track.append(message.copy(time=max(0, tick - previous_tick)))
+        previous_tick = tick
+
+    midi.save(output_path)
+    return output_path
+
+
+def write_multi_program_midi(
+    notes: Iterable[dict[str, Any]],
+    path: Path | str,
+    *,
+    ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
+    tempo_bpm: float = 120.0,
+    write_programs: bool = True,
+) -> Path:
+    """Write multi-program note dicts to a single-track MIDI file.
+
+    Each distinct ``program`` gets its own channel in ascending program order,
+    skipping channel 9 (drums), with a ``program_change`` at t=0. More than 15
+    programs raises ``ValueError``. ``ticks_per_beat`` and ``tempo_bpm`` are
+    handled identically to :func:`write_midi`.
+
+    Args:
+        notes: Note dicts with ``pitch``, ``velocity``, ``start_sec``,
+            ``duration_sec`` and ``program`` (0-127).
+        path: Output ``.mid`` path; parent directories are created.
+        ticks_per_beat: MIDI resolution.
+        tempo_bpm: Tempo meta message; note times are absolute seconds.
+        write_programs: When False, no ``program_change`` messages are written;
+            notes still use their allocated channels.
+
+    Returns:
+        Path of the written MIDI file.
+
+    Raises:
+        ValueError: If any program is outside 0-127 or more than 15 distinct
+            programs are present.
+    """
+    notes_list = list(notes)
+    programs = sorted({int(n["program"]) for n in notes_list if "program" in n})
+    for prog in programs:
+        if not 0 <= prog <= 127:
+            raise ValueError(f"program must be in 0..127, got {prog}")
+    if len(programs) > 15:
+        raise ValueError(f"too many programs: {len(programs)} > 15 (one channel is drums)")
+    # Allocate channels: 0-8, 10-15
+    program_to_channel: dict[int, int] = {}
+    channel = 0
+    for prog in programs:
+        while channel == 9:
+            channel += 1
+        program_to_channel[prog] = channel
+        channel += 1
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tempo = mido.bpm2tempo(tempo_bpm)
+    midi = mido.MidiFile(ticks_per_beat=ticks_per_beat)
+    track = mido.MidiTrack()
+    midi.tracks.append(track)
+    track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=0))
+    if write_programs:
+        for prog in programs:
+            ch = program_to_channel[prog]
+            track.append(mido.Message("program_change", channel=ch, program=prog, time=0))
+
+    def _channel_for_note(note: dict[str, Any]) -> int:
+        prog = int(note["program"])
+        return program_to_channel[prog]
+
+    events = _collect_note_events(notes_list, _channel_for_note)
 
     previous_tick = 0
     for time_sec, _, message in events:
