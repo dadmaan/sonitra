@@ -10,6 +10,7 @@ behavior.
 
 Usage:
     python scripts/download_datasets.py --list
+    python scripts/download_datasets.py --notes
     python scripts/download_datasets.py maestro-v3-midi
     python scripts/download_datasets.py bsed
     python scripts/download_datasets.py --all
@@ -20,7 +21,8 @@ Usage:
 
 Interactive mode: run with no dataset name and no --all on a terminal with
 `rich` installed, pick any number of datasets from the table, and download up
-to --jobs of them concurrently.
+to --jobs of them concurrently. Type `n` at the prompt to switch to the notes
+page (each dataset's instrument, contents, and intended task); Enter returns.
 
 Interrupted downloads resume automatically on the next run: partial files are
 kept under <output-dir>/.downloads/ and re-used via HTTP Range requests. Pass
@@ -35,8 +37,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import json
 import os
 import queue
+import re
 import shutil
 import sys
 import tarfile
@@ -75,8 +79,11 @@ REPO: Path = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 # Dataset registry
 # ---------------------------------------------------------------------------
-# To add a new dataset: copy one entry below and fill in the fields. Each
-# dataset is one or more `sources` fetched into the same `corpus_subdir`:
+# To add a new dataset: copy one entry below and fill in the fields. `note`
+# (shown by --notes and the picker's notes page) says the instrument, what
+# the set holds, and the task it was made for; keys sharing a corpus_subdir
+# share one note. Each dataset is one or more `sources` fetched into the same
+# `corpus_subdir`:
 #
 #   {"url": ..., "kind": "zip" | "targz", "extract_map": [...], "size_mb": N}
 #   {"url": ..., "kind": "file", "target_subdir": "metadata", "filename": "x.csv", "size_mb": N}
@@ -101,12 +108,19 @@ METADATA_PATTERNS: FrozenSet[str] = frozenset(
     {".csv", ".json", ".txt", "readme", "license"}
 )
 
+_RETRY_SLEEPS: Tuple[int, int, int] = (3, 10, 30)
+
 DATASETS: Dict[str, Dict] = {
     "maestro-v3-midi": {
         "name": "MAESTRO V3.0.0 (MIDI only)",
         "description": (
             "1,276 piano MIDI files + metadata, no audio. Standard AMT benchmark "
             "(Hawthorne et al., ICLR 2019). CC BY-NC-SA 4.0 (noncommercial)."
+        ),
+        "note": (
+            "Solo piano. 199 h of competition performances, recorded as MIDI "
+            "by the piano itself and aligned to the audio within about 3 ms. "
+            "Made for piano transcription and generation."
         ),
         "corpus_subdir": "maestro-v3",
         "sources": [
@@ -130,6 +144,11 @@ DATASETS: Dict[str, Dict] = {
             "full zip as maestro-v3-full and discards the MIDI members. "
             "CC BY-NC-SA 4.0 (noncommercial)."
         ),
+        "note": (
+            "Solo piano. 199 h of competition performances, recorded as MIDI "
+            "by the piano itself and aligned to the audio within about 3 ms. "
+            "Made for piano transcription and generation."
+        ),
         "corpus_subdir": "maestro-v3",
         "sources": [
             {
@@ -150,6 +169,11 @@ DATASETS: Dict[str, Dict] = {
             "Standard AMT benchmark (Hawthorne et al., ICLR 2019); ~120 GB — most "
             "workflows only need maestro-v3-midi (~57 MB). "
             "CC BY-NC-SA 4.0 (noncommercial)."
+        ),
+        "note": (
+            "Solo piano. 199 h of competition performances, recorded as MIDI "
+            "by the piano itself and aligned to the audio within about 3 ms. "
+            "Made for piano transcription and generation."
         ),
         "corpus_subdir": "maestro-v3",
         "sources": [
@@ -174,6 +198,11 @@ DATASETS: Dict[str, Dict] = {
             "are also on Zenodo but not fetched by this script — see ROADMAP.md. "
             "CC BY-NC-SA 4.0 (noncommercial). Berendes et al., TISMIR 2026."
         ),
+        "note": (
+            "Orchestra. 20 Beethoven symphony excerpts, each with 4 concert "
+            "recordings and 1 synthetic version. Made to test orchestral "
+            "transcription; also suits score-to-audio alignment."
+        ),
         "corpus_subdir": "bsed",
         "sources": [
             {
@@ -193,6 +222,11 @@ DATASETS: Dict[str, Dict] = {
             "330 classical recordings (wav) with reference MIDI + per-note label "
             "CSVs + track metadata. Multi-instrument chamber/orchestral AMT "
             "benchmark (Thickstun et al., ICLR 2017). CC BY 4.0."
+        ),
+        "note": (
+            "Classical chamber music. 34 h by 10 composers for 11 instruments, "
+            "with note labels from scores aligned to the audio automatically. "
+            "Made for detecting which notes play at each moment."
         ),
         "corpus_subdir": "musicnet",
         "sources": [
@@ -223,10 +257,16 @@ DATASETS: Dict[str, Dict] = {
     "e-gmd-midi": {
         "name": "Expanded Groove MIDI Dataset (MIDI only)",
         "description": (
-            "45,537 drum performances (MIDI) + metadata, no audio. Drum-transcription "
+            "1,059 drum performances, each replayed through 43 kits: 45,537 "
+            "MIDI files + metadata, no audio. Drum-transcription "
             "AMT benchmark (Callender et al., ISMIR 2020); note this repo's "
             "transcription/evaluation backends target pitched instruments, not "
             "drum-hit classification — download-only for now. CC BY 4.0."
+        ),
+        "note": (
+            "Drum kit. 444 h: 1,059 human drum performances, each replayed "
+            "through 43 kits with electronic and acoustic sounds. Made for drum "
+            "transcription, which Sonitra can't score yet."
         ),
         "corpus_subdir": "e-gmd",
         "sources": [
@@ -244,10 +284,16 @@ DATASETS: Dict[str, Dict] = {
     "e-gmd-full": {
         "name": "Expanded Groove MIDI Dataset (MIDI + recordings)",
         "description": (
-            "45,537 drum performances (MIDI + audio) + metadata. Drum-transcription "
+            "1,059 drum performances, each replayed through 43 kits: 45,537 "
+            "MIDI + audio pairs + metadata. Drum-transcription "
             "AMT benchmark (Callender et al., ISMIR 2020); ~90 GB — note this repo's "
             "transcription/evaluation backends target pitched instruments, not "
             "drum-hit classification — download-only for now. CC BY 4.0."
+        ),
+        "note": (
+            "Drum kit. 444 h: 1,059 human drum performances, each replayed "
+            "through 43 kits with electronic and acoustic sounds. Made for drum "
+            "transcription, which Sonitra can't score yet."
         ),
         "corpus_subdir": "e-gmd",
         "sources": [
@@ -273,6 +319,11 @@ DATASETS: Dict[str, Dict] = {
             "guitarset-full for both variants at once; 6-channel "
             "hex-pickup stems deferred, see ROADMAP.md. "
             "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
+        ),
+        "note": (
+            "Acoustic guitar. 360 clips of about 30 s by 6 players in 5 styles, "
+            "as backing chords and solos. A per-string pickup gives labels down "
+            "to string and fret. Made for guitar transcription."
         ),
         "corpus_subdir": "guitarset",
         "sources": [
@@ -307,6 +358,11 @@ DATASETS: Dict[str, Dict] = {
             "hex-pickup stems deferred, see ROADMAP.md. "
             "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
         ),
+        "note": (
+            "Acoustic guitar. 360 clips of about 30 s by 6 players in 5 styles, "
+            "as backing chords and solos. A per-string pickup gives labels down "
+            "to string and fret. Made for guitar transcription."
+        ),
         "corpus_subdir": "guitarset",
         "sources": [
             {
@@ -340,6 +396,11 @@ DATASETS: Dict[str, Dict] = {
             "6-channel hex-pickup stems deferred, see ROADMAP.md. "
             "GuitarSet (Xi et al., ISMIR 2018). CC BY 4.0."
         ),
+        "note": (
+            "Acoustic guitar. 360 clips of about 30 s by 6 players in 5 styles, "
+            "as backing chords and solos. A per-string pickup gives labels down "
+            "to string and fret. Made for guitar transcription."
+        ),
         "corpus_subdir": "guitarset",
         "sources": [
             {
@@ -371,6 +432,120 @@ DATASETS: Dict[str, Dict] = {
             },
         ],
     },
+    # GAPS: HF ships 401 metadata rows + 3 unlisted orphans = 404 recordings;
+    # published GAPS is the 300 with non-empty split; we deliberately fetch/keep all;
+    # split and f-measure reach benchmark export as meta.* columns for downstream filtering.
+    #
+    # gaps-midi's sources are verbatim copies of gaps-full's midi + metadata
+    # sources (same pinned revision), sharing corpus/gaps/. gaps-full run after
+    # gaps-midi re-uses the MIDI already on disk: _download_hf_tree skips each
+    # file present at its listed size and fetches any missing or truncated one.
+    "gaps-midi": {
+        "name": "GAPS (Guitar-Aligned Performance Scores) v1.1 (MIDI only)",
+        "description": (
+            "404 classical-guitar MIDI references aligned to the recordings "
+            "+ metadata, no audio (~3 MB) — enough for MIDI-input (render → "
+            "transcribe) runs; fetch gaps-full for the ~15.3 GB of real "
+            "recordings audio-input runs need. All 404 files kept, official "
+            "split not applied (filter via meta.split/meta.f-measure downstream). "
+            "CC BY-NC-SA 4.0, research use, cite Riley et al. ISMIR 2024."
+        ),
+        "note": (
+            "Classical guitar. About 23 h of solo performances by over 200 "
+            "players in varied recording conditions, each aligned note by note "
+            "to its score. Made for guitar transcription on real-world audio. "
+            "All 404 files kept; official split not applied."
+        ),
+        "corpus_subdir": "gaps",
+        "sources": [
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "midi",
+                "patterns": frozenset({".mid", ".midi"}),
+                "target_subdir": "midi",
+                # verified 2303537 bytes via HF tree API at pinned revision.
+                "size_mb": 3,
+            },
+            {
+                "url": "https://huggingface.co/datasets/xavriley/GAPS/resolve/b4c89a33a639c7ae903e74102dfbb3e147e1417f/gaps_metadata_with_splits.csv",
+                "kind": "file",
+                "target_subdir": "metadata",
+                "filename": "gaps_metadata_with_splits.csv",
+                # verified 601780 bytes via HF tree API at pinned revision.
+                "size_mb": 1,
+            },
+        ],
+    },
+    "gaps-full": {
+        "name": "GAPS (Guitar-Aligned Performance Scores) v1.1 (MIDI + recordings)",
+        "description": (
+            "404 classical-guitar recordings (48 kHz/16-bit/stereo WAV, ~23 h, 200+ "
+            "performers) with aligned MIDI + MusicXML + syncpoints + metadata; "
+            "~15.3 GB — MIDI-input runs only need gaps-midi (~3 MB), whose MIDI "
+            "this re-uses if already on disk. All 404 files kept, official split "
+            "not applied (filter via meta.split/meta.f-measure downstream). "
+            "CC BY-NC-SA 4.0, research use, cite Riley et al. ISMIR 2024."
+        ),
+        "note": (
+            "Classical guitar. About 23 h of solo performances by over 200 "
+            "players in varied recording conditions, each aligned note by note "
+            "to its score. Made for guitar transcription on real-world audio. "
+            "All 404 files kept; official split not applied."
+        ),
+        "corpus_subdir": "gaps",
+        "sources": [
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "audio",
+                "patterns": frozenset({".wav"}),
+                "target_subdir": "recordings",
+                # verified 16193781962 bytes via HF tree API at pinned revision.
+                "size_mb": 15444,
+            },
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "midi",
+                "patterns": frozenset({".mid", ".midi"}),
+                "target_subdir": "midi",
+                # verified 2303537 bytes via HF tree API at pinned revision.
+                "size_mb": 3,
+            },
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "musicxml",
+                "patterns": frozenset({".xml"}),
+                "target_subdir": "annotations/musicxml",
+                # verified 242157326 bytes via HF tree API at pinned revision.
+                "size_mb": 231,
+            },
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "syncpoints",
+                "patterns": frozenset({".json"}),
+                "target_subdir": "annotations/syncpoints",
+                # verified 854812 bytes via HF tree API at pinned revision.
+                "size_mb": 1,
+            },
+            {
+                "url": "https://huggingface.co/datasets/xavriley/GAPS/resolve/b4c89a33a639c7ae903e74102dfbb3e147e1417f/gaps_metadata_with_splits.csv",
+                "kind": "file",
+                "target_subdir": "metadata",
+                "filename": "gaps_metadata_with_splits.csv",
+                # verified 601780 bytes via HF tree API at pinned revision.
+                "size_mb": 1,
+            },
+        ],
+    },
 }
 
 
@@ -384,6 +559,8 @@ def _all_target_subdirs(spec: Dict) -> List[str]:
     subdirs: set = set()
     for source in spec["sources"]:
         if source["kind"] == "file":
+            subdirs.add(source["target_subdir"])
+        elif source["kind"] == "hf_tree":
             subdirs.add(source["target_subdir"])
         else:
             subdirs.update(target for _, _, target in source["extract_map"])
@@ -441,7 +618,14 @@ def _write_marker(output_dir: Path, key: str, index: int, source: Dict) -> None:
     """Record that a source's download AND extraction fully succeeded."""
     marker = _marker_path(output_dir, key, index)
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(source["url"] + "\n")
+    url = source.get("url")
+    if url:
+        marker.write_text(url + "\n")
+    else:
+        marker.write_text(
+            f"hf_tree:{source.get('repo', '')}@{source.get('revision', '')}"
+            f"/{source.get('subdir', '')}\n"
+        )
 
 
 def _partial_path(output_dir: Path, key: str, index: int, source: Dict) -> Path:
@@ -483,6 +667,41 @@ def _print_list(output_dir: Path) -> None:
     for key, spec in DATASETS.items():
         target = output_dir / spec["corpus_subdir"]
         print(f"{key:<{col_name}}  {str(target):<40}  {spec['description']}")
+
+
+def _note_groups() -> List[Tuple[str, str, str]]:
+    """One ``(numbers, dataset, note)`` row per dataset, in registry order.
+
+    Keys sharing a ``corpus_subdir`` are variants of one dataset with one
+    note, so they collapse into a single row. ``numbers`` are the keys'
+    1-based picker numbers (``"1-3"`` when adjacent, else ``"1,3"``);
+    ``dataset`` is the first key's name without its trailing ``(variant)``.
+    """
+    specs: List[Dict] = list(DATASETS.values())
+    groups: Dict[str, List[int]] = {}
+    for index, spec in enumerate(specs, start=1):
+        groups.setdefault(spec["corpus_subdir"], []).append(index)
+    rows: List[Tuple[str, str, str]] = []
+    for indices in groups.values():
+        spec = specs[indices[0] - 1]
+        if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
+            numbers = f"{indices[0]}-{indices[-1]}"
+        else:
+            numbers = ",".join(str(index) for index in indices)
+        name = re.sub(r"\s*\([^()]*\)$", "", spec["name"])
+        rows.append((numbers, name, spec.get("note", "")))
+    return rows
+
+
+def _print_notes() -> None:
+    """Plain --notes output: each dataset's name, then its note indented below."""
+    rows = _note_groups()
+    col = max(len(numbers) for numbers, _, _ in rows) + 2
+    print(f"{'#':<{col}}Dataset")
+    print("-" * 120)
+    for numbers, name, note in rows:
+        print(f"{numbers:<{col}}{name}")
+        print(f"{'':<{col}}{note}")
 
 
 def _parse_content_range_total(value: Optional[str]) -> int:
@@ -606,10 +825,205 @@ def _download_file(
         except (urllib.error.URLError, http.client.IncompleteRead, TimeoutError) as exc:
             last_error = exc
         if attempt < 3:
-            time.sleep((3, 10, 30)[attempt])
+            time.sleep(_RETRY_SLEEPS[attempt])
     raise RuntimeError(
         f"download of {name} failed after 4 attempts: {last_error}"
     ) from last_error
+
+
+def _parse_link_next(link_header: Optional[str]) -> Optional[str]:
+    """Extract the ``rel="next"`` URL from an HTTP Link header, if present.
+
+    Hugging Face sends ``rel="next"``, but RFC 8288 also permits ``rel=next``
+    and ``rel='next'``. All three are accepted: failing to match would
+    silently truncate a listing to its first page, and a short corpus that
+    still fills its target dir reads as complete to ``_is_already_present``.
+    ``[^,]*`` keeps each match inside one comma-separated link value.
+    """
+    if not link_header:
+        return None
+    pattern = r"""<([^>]+)>\s*;\s*[^,]*\brel\s*=\s*(?:"next"|'next'|next\b)"""
+    for match in re.finditer(pattern, link_header):
+        return match.group(1)
+    return None
+
+
+def _hf_list_tree(repo: str, revision: str, subdir: str) -> List[Tuple[str, int]]:
+    """List files in one Hugging Face dataset subdirectory via the tree API.
+
+    Returns ``[(path, size), ...]`` for entries with ``type == "file"``;
+    ``type == "directory"`` entries are ignored (defensive — the listing is
+    non-recursive, so none should appear). Follows ``Link: <...>; rel="next"``
+    pagination until the header is absent. Transient errors are retried with
+    ``_RETRY_SLEEPS`` backoff.
+    """
+    base_url = (
+        f"https://huggingface.co/api/datasets/{repo}/tree/{revision}/{subdir}?limit=1000"
+    )
+    url: Optional[str] = base_url
+    results: List[Tuple[str, int]] = []
+    headers: Dict[str, str] = {"User-Agent": "Sonitra-Dataset-Downloader/1.0"}
+    while url is not None:
+        last_error: Optional[BaseException] = None
+        payload = None
+        link_header: Optional[str] = None
+        for attempt in range(4):
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    status: int = resp.status
+                    if status != 200:
+                        raise RuntimeError(f"unexpected HTTP status {status} for {url}")
+                    chunks: List[bytes] = []
+                    while True:
+                        chunk = resp.read(262144)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    raw = b"".join(chunks)
+                    payload = json.loads(raw.decode("utf-8"))
+                    try:
+                        link_header = resp.headers.get("Link")
+                    except AttributeError:
+                        link_header = None
+                    break
+            except urllib.error.HTTPError as exc:
+                if exc.code in (408, 429) or exc.code >= 500:
+                    last_error = exc
+                else:
+                    raise RuntimeError(
+                        f"HTTP {exc.code} {exc.reason} for {url}"
+                    ) from exc
+            except (
+                urllib.error.URLError,
+                http.client.IncompleteRead,
+                TimeoutError,
+            ) as exc:
+                last_error = exc
+            if attempt < 3:
+                time.sleep(_RETRY_SLEEPS[attempt])
+        if payload is None:
+            raise RuntimeError(
+                f"listing of {repo}/{subdir}@{revision} failed after 4 attempts: "
+                f"{last_error}"
+            ) from last_error
+        for entry in payload:
+            if entry.get("type") != "file":
+                continue
+            path = entry.get("path")
+            if not path:
+                continue
+            try:
+                size = int(entry.get("size") or 0)
+            except (ValueError, TypeError):
+                size = 0
+            results.append((path, size))
+        url = _parse_link_next(link_header)
+    return results
+
+
+def _download_hf_tree(
+    source: Dict,
+    dataset_dir: Path,
+    *,
+    output_dir: Path,
+    key: str,
+    index: int,
+    force: bool = False,
+    progress: Optional[Callable[[int, int], None]] = None,
+    report: Optional[Callable[[int, int], None]] = None,
+) -> int:
+    """Download one ``hf_tree`` source (many small files) into ``target_subdir``.
+
+    For each listed file passing ``patterns`` (via ``_matches_patterns``),
+    ``dest = dataset_dir / target_subdir / Path(path).name`` (flattened). Skip
+    when ``dest`` exists with matching size unless ``force``; skipped files
+    still count toward the returned total and advance progress. Otherwise
+    download to ``dest.with_name(dest.name + ".part")`` via ``_download_file``
+    (retries + Range resume free), then ``os.replace`` into place. ``progress``
+    receives cumulative ``(done_within_source, total_within_source)`` so rich
+    callers can add their ``bytes_before`` offset one level up. ``report``, if
+    given, is called once at the end with ``(skipped, downloaded)`` file counts.
+
+    The skip is key-independent: files another key sharing the corpus_subdir
+    already fetched (e.g. gaps-midi's MIDI, when gaps-full runs) are re-used,
+    which is sound only because such keys pin the same revision.
+    """
+    repo: str = source["repo"]
+    revision: str = source["revision"]
+    subdir: str = source["subdir"]
+    target_subdir: str = source["target_subdir"]
+    patterns: Optional[FrozenSet[str]] = source.get("patterns")
+    listing = _hf_list_tree(repo, revision, subdir)
+    filtered: List[Tuple[str, int]] = [
+        (path, size)
+        for path, size in listing
+        if _matches_patterns(Path(path).name, patterns)
+    ]
+    total: int = sum(size for _, size in filtered)
+    done: int = 0
+    count: int = 0
+    skipped: int = 0
+    for path, size in filtered:
+        dest: Path = dataset_dir / target_subdir / Path(path).name
+        if not force and dest.exists() and dest.stat().st_size == size:
+            done += size
+            count += 1
+            skipped += 1
+            if progress is not None:
+                progress(done, total)
+            continue
+        part: Path = dest.with_name(dest.name + ".part")
+        file_url: str = (
+            f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{path}"
+        )
+        name: str = f"{repo}/{subdir}/{Path(path).name}"
+        file_progress: Optional[Callable[[int, int], None]] = None
+        if progress is not None:
+            def _file_progress(
+                downloaded: int,
+                file_total: int,
+                _done: int = done,
+                _total: int = total,
+            ) -> None:
+                assert progress is not None
+                progress(_done + downloaded, _total)
+
+            file_progress = _file_progress
+        _download_file(
+            file_url,
+            part,
+            name=name,
+            output_dir=output_dir,
+            key=key,
+            index=index,
+            progress=file_progress,
+        )
+        os.replace(part, dest)
+        done += size
+        count += 1
+        if progress is not None:
+            progress(done, total)
+    if report is not None:
+        report(skipped, count - skipped)
+    return count
+
+
+def _hf_tree_reporter(key: str, source: Dict) -> Callable[[int, int], None]:
+    """``report`` callback printing one skip/download summary line per source.
+
+    Makes the per-file skip visible, e.g. ``[gaps-full] midi: 404 already
+    present, 0 downloaded`` after gaps-midi fetched the MIDI earlier. Under the
+    rich display the line goes through Live's stdout redirect, above the bars.
+    """
+
+    def report(skipped: int, downloaded: int) -> None:
+        print(
+            f"[{key}] {source['subdir']}: {skipped} already present, "
+            f"{downloaded} downloaded"
+        )
+
+    return report
 
 
 def _extract_archive(
@@ -694,6 +1108,8 @@ def _reset_download_state(output_dir: Path, key: str, spec: Dict) -> None:
     for index in range(len(spec["sources"])):
         _marker_path(output_dir, key, index).unlink(missing_ok=True)
     for index, source in enumerate(spec["sources"]):
+        if source.get("kind") == "hf_tree":
+            continue
         _partial_path(output_dir, key, index, source).unlink(missing_ok=True)
     for subdir in _all_target_subdirs(spec):
         target_dir: Path = output_dir / spec["corpus_subdir"] / subdir
@@ -724,10 +1140,12 @@ def _clear_completion_state(output_dir: Path, key: str, spec: Dict) -> None:
     for index in range(len(spec["sources"])):
         _marker_path(output_dir, key, index).unlink(missing_ok=True)
     for index, source in enumerate(spec["sources"]):
+        if source.get("kind") == "hf_tree":
+            continue
         _partial_path(output_dir, key, index, source).unlink(missing_ok=True)
 
 
-def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
+def _download_and_extract(key: str, spec: Dict, output_dir: Path, *, force: bool = False) -> int:
     """Download and extract every source of one dataset (plain stdlib path).
 
     Returns the total file count across all of the dataset's sources. Each
@@ -739,7 +1157,10 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
     files_extracted: int = 0
 
     for index, source in enumerate(spec["sources"]):
-        display_name = f"{spec['name']} ({Path(source['url']).name})"
+        if source["kind"] == "hf_tree":
+            display_name = f"{spec['name']} ({source['repo']}/{source['subdir']})"
+        else:
+            display_name = f"{spec['name']} ({Path(source['url']).name})"
 
         def progress(downloaded: int, total: int) -> None:
             if total > 0:
@@ -771,6 +1192,21 @@ def _download_and_extract(key: str, spec: Dict, output_dir: Path) -> int:
             print()  # newline after the progress line
             os.replace(part, dest)
             files_extracted += 1
+        elif source["kind"] == "hf_tree":
+            # Deferred so the summary prints after the \r progress line ends.
+            summary: List[Tuple[int, int]] = []
+            files_extracted += _download_hf_tree(
+                source,
+                dataset_dir,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                force=force,
+                progress=progress,
+                report=lambda skipped, downloaded: summary.append((skipped, downloaded)),
+            )
+            print()  # newline after the progress line
+            _hf_tree_reporter(key, source)(*summary[0])
         else:
             part = _partial_path(output_dir, key, index, source)
             _download_file(
@@ -857,10 +1293,30 @@ def _print_table(console: "_RichConsole", output_dir: Path) -> None:
     console.print(table)
 
 
+def _print_notes_table(console: "_RichConsole") -> None:
+    """Render one note row per dataset (--notes and the picker's notes page share it)."""
+    table = _RichTable(title="Dataset notes", title_style="bold")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("dataset")
+    table.add_column("notes", overflow="fold")
+    for numbers, name, note in _note_groups():
+        table.add_row(numbers, name, note)
+    console.print(table)
+
+
+def _show_notes_page(console: "_RichConsole") -> None:
+    """Swap the picker table for the notes table until Enter; EOFError propagates."""
+    console.clear()
+    _print_notes_table(console)
+    _RichPrompt.ask("Press Enter to go back", default="", show_default=False)
+    console.clear()
+
+
 def _interactive_select(output_dir: Path) -> Optional[List[str]]:
     """Show the picker table and prompt for a comma-separated multi-select.
 
-    Returns the selected dataset keys, or ``None`` when the user quits
+    ``"n"`` switches to the notes page and Enter returns from it. Returns the
+    selected dataset keys, or ``None`` when the user quits
     (``"q"``/empty input/EOF).
     """
     console = _RichConsole()
@@ -869,8 +1325,12 @@ def _interactive_select(output_dir: Path) -> Optional[List[str]]:
         _print_table(console, output_dir)
         try:
             response = _RichPrompt.ask(
-                "Select datasets (comma-separated numbers, 'all', or 'q' to quit)"
+                "Select datasets (comma-separated numbers, 'all', 'n' for notes, "
+                "or 'q' to quit)"
             )
+            if response.strip().lower() == "n":
+                _show_notes_page(console)
+                continue
         except EOFError:
             return None
         try:
@@ -1075,10 +1535,10 @@ def _download_one(
                 task_id, name, _dataset_size_mb(spec) * 1_048_576
             )
             n_files: int = _download_and_extract_rich(
-                key, spec, output_dir, display, task_id
+                key, spec, output_dir, display, task_id, force=force
             )
         else:
-            n_files = _download_and_extract(key, spec, output_dir)
+            n_files = _download_and_extract(key, spec, output_dir, force=force)
     except Exception as exc:  # noqa: BLE001 - per-dataset failure isolation
         if display is not None:
             display.finish_task(task_id, name, "error", error=str(exc))
@@ -1090,7 +1550,13 @@ def _download_one(
 
 
 def _download_and_extract_rich(
-    key: str, spec: Dict, output_dir: Path, display: "_DownloadDisplay", task_id: int
+    key: str,
+    spec: Dict,
+    output_dir: Path,
+    display: "_DownloadDisplay",
+    task_id: int,
+    *,
+    force: bool = False,
 ) -> int:
     """Rich path: download every source into the display's slot row, then extract.
 
@@ -1105,7 +1571,10 @@ def _download_and_extract_rich(
     files_extracted: int = 0
 
     for index, source in enumerate(spec["sources"]):
-        display_name = f"{spec['name']} ({Path(source['url']).name})"
+        if source["kind"] == "hf_tree":
+            display_name = f"{spec['name']} ({source['repo']}/{source['subdir']})"
+        else:
+            display_name = f"{spec['name']} ({Path(source['url']).name})"
 
         def progress(downloaded: int, total: int) -> None:
             if total > 0:
@@ -1129,6 +1598,17 @@ def _download_and_extract_rich(
             )
             os.replace(part, dest)
             files_extracted += 1
+        elif source["kind"] == "hf_tree":
+            files_extracted += _download_hf_tree(
+                source,
+                dataset_dir,
+                output_dir=output_dir,
+                key=key,
+                index=index,
+                force=force,
+                progress=progress,
+                report=_hf_tree_reporter(key, source),
+            )
         else:
             part = _partial_path(output_dir, key, index, source)
             _download_file(
@@ -1334,6 +1814,7 @@ def _parse_args() -> argparse.Namespace:
             [
                 "Examples:",
                 "  python scripts/download_datasets.py --list",
+                "  python scripts/download_datasets.py --notes",
                 "  python scripts/download_datasets.py maestro-v3-midi",
                 "  python scripts/download_datasets.py bsed",
                 "  python scripts/download_datasets.py --all",
@@ -1359,6 +1840,14 @@ def _parse_args() -> argparse.Namespace:
         "--list",
         action="store_true",
         help="Print available datasets and exit.",
+    )
+    parser.add_argument(
+        "--notes",
+        action="store_true",
+        help=(
+            "Print each dataset's instrument, contents, and intended task, "
+            "then exit."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -1397,11 +1886,23 @@ def main() -> int:
         else REPO / "corpus"
     )
 
-    if args.list:
-        if _use_rich_output():
-            _print_table(_RichConsole(), output_dir)
-        else:
-            _print_list(output_dir)
+    if args.list or args.notes:
+        console = _RichConsole() if _use_rich_output() else None
+        if args.list:
+            hint = "Run with --notes to see each dataset's instrument, contents, and intended task."
+            if console is not None:
+                _print_table(console, output_dir)
+                if not args.notes:
+                    console.print(f"[dim]{hint}[/dim]")
+            else:
+                _print_list(output_dir)
+                if not args.notes:
+                    print(hint)
+        if args.notes:
+            if console is not None:
+                _print_notes_table(console)
+            else:
+                _print_notes()
         return 0
 
     if args.dataset is None and not args.all:

@@ -64,11 +64,15 @@ class PairingResult:
             (either no candidate matched at any prefix length, or the match
             was ambiguous).
         unpaired_midi: Reference MIDI files that no audio file paired to.
+        ambiguous: The subset of *unpaired_audio* that stopped on two or more
+            candidates, mapped to those candidates (sorted), so callers can
+            tell "no match" from "ambiguous" without re-running the match.
     """
 
     mapping: dict[Path, Path] = field(default_factory=dict)
     unpaired_audio: list[Path] = field(default_factory=list)
     unpaired_midi: list[Path] = field(default_factory=list)
+    ambiguous: dict[Path, list[Path]] = field(default_factory=dict)
 
 
 def _tokens(path: Path) -> list[str]:
@@ -109,6 +113,7 @@ def pair_audio_to_reference(
 
     mapping: dict[Path, Path] = {}
     unpaired_audio: list[Path] = []
+    ambiguous_candidates: dict[Path, list[Path]] = {}
 
     for audio in sorted(audio_paths):
         a_tokens = _tokens(audio)
@@ -127,6 +132,7 @@ def pair_audio_to_reference(
                 break
             if len(candidates) >= 2:
                 ambiguous = True
+                ambiguous_candidates[audio] = candidates
                 logger.warning(
                     "Ambiguous audio-to-reference pairing for %s at k=%d: %s",
                     audio,
@@ -150,4 +156,5 @@ def pair_audio_to_reference(
         mapping=mapping,
         unpaired_audio=unpaired_audio,
         unpaired_midi=unpaired_midi,
+        ambiguous=ambiguous_candidates,
     )

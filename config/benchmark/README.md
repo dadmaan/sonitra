@@ -220,6 +220,7 @@ are excluded from the fingerprint since they don't affect result semantics.
 |---|---|---|
 | `benchmark_test.yaml` | Smoke test (reverb) | 4 |
 | `guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
+| `gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |
 | `reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
 | `compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
 | `distortion_sweep.yaml` | Signal distortion (drive) | 9 |

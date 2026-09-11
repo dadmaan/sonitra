@@ -27,7 +27,7 @@ dawdreamer:
   clear_midi_between_renders: true
 
 fluidsynth:
-  soundfont_path: null    # inert in audio mode
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
 
 pedalboard:
   instrument:

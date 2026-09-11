@@ -12,7 +12,7 @@ These are the main sections and what each one does:
 
 | Section | Controls |
 |---|---|
-| `render_pipeline` | Synth backend (`synth_backend`), effects chain (`effects_chain`), BPM, sample rate, bit depth, channels, parallelism (`max_workers`) |
+| `render_pipeline` | Synth backend (`synth_backend`), effects chain (`effects_chain`), BPM, sample rate, bit depth, channels, parallelism (`max_workers`), input source (`input_type`: `midi` by default, or `audio` to use your own recordings instead of rendering, see [Using your own dataset](custom-datasets.md)) |
 | `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template |
 | `dawdreamer` | Faust script path, VST3 plugin path, preset path — required when `synth_backend: dawdreamer_vst`; `plugin_path` must NOT be set for `synth_backend: dawdreamer_faust` |
 | `fluidsynth` | `soundfont_path` — path to the `.sf2` SoundFont file; required when `synth_backend: fluidsynth` — plus optional `program` (0–127 GM program; `null` inherits the source MIDI's program when unambiguous) |

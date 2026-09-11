@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import json
 import queue
 import sys
 import tarfile
@@ -37,12 +38,20 @@ def _assert_valid_extract_map(dd: ModuleType, extract_map) -> None:
 
 
 def _assert_valid_source(dd: ModuleType, source: dict) -> None:
-    assert source["url"]
-    assert source["kind"] in {"zip", "targz", "file"}
+    assert source["kind"] in {"zip", "targz", "file", "hf_tree"}
     if source["kind"] == "file":
+        assert source["url"]
         assert source["target_subdir"]
         assert source["filename"]
+    elif source["kind"] == "hf_tree":
+        assert source["repo"]
+        assert source["revision"]
+        assert source["subdir"]
+        assert source["target_subdir"]
+        patterns = source.get("patterns")
+        assert patterns is None or isinstance(patterns, frozenset)
     else:
+        assert source["url"]
         assert source["extract_map"]
         _assert_valid_extract_map(dd, source["extract_map"])
 
@@ -63,6 +72,8 @@ def _assert_valid_source(dd: ModuleType, source: dict) -> None:
         "guitarset-mic",
         "guitarset-mix",
         "guitarset-full",
+        "gaps-midi",
+        "gaps-full",
     ],
 )
 def test_every_registry_entry_has_valid_sources(dd: ModuleType, key: str) -> None:
@@ -71,6 +82,21 @@ def test_every_registry_entry_has_valid_sources(dd: ModuleType, key: str) -> Non
     assert spec["sources"]
     for source in spec["sources"]:
         _assert_valid_source(dd, source)
+
+
+def test_every_registry_entry_has_a_note(dd: ModuleType) -> None:
+    for key, spec in dd.DATASETS.items():
+        assert isinstance(spec.get("note"), str) and spec["note"].strip(), key
+
+
+def test_keys_sharing_a_corpus_subdir_share_one_note(dd: ModuleType) -> None:
+    # Variant keys (-midi/-wav/-full, -mic/-mix) fetch parts of one dataset,
+    # so the note describing that dataset must not drift between them.
+    notes_by_subdir: dict[str, set] = {}
+    for spec in dd.DATASETS.values():
+        notes_by_subdir.setdefault(spec["corpus_subdir"], set()).add(spec.get("note"))
+    for subdir, notes in notes_by_subdir.items():
+        assert len(notes) == 1, subdir
 
 
 def test_maestro_variants_share_corpus_subdir(dd: ModuleType) -> None:
@@ -1337,3 +1363,868 @@ def test_parse_args_force_flag(dd: ModuleType, monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("sys.argv", ["download_datasets.py", "bsed"])
     assert dd._parse_args().force is False
+
+
+# ── gaps registry shape ───────────────────────────────────────────────────
+
+
+def test_gaps_full_corpus_subdir_targets_and_pinned_revision(dd: ModuleType) -> None:
+    import re
+
+    spec = dd.DATASETS["gaps-full"]
+    assert spec["corpus_subdir"] == "gaps"
+    targets = set(dd._all_target_subdirs(spec))
+    assert targets == {
+        "recordings",
+        "midi",
+        "annotations/musicxml",
+        "annotations/syncpoints",
+        "metadata",
+    }
+    assert "audio" not in targets
+    hf_sources = [s for s in spec["sources"] if s["kind"] == "hf_tree"]
+    assert len(hf_sources) == 4
+    revisions = {s["revision"] for s in hf_sources}
+    assert len(revisions) == 1
+    revision = next(iter(revisions))
+    assert revision != "main"
+    assert re.fullmatch(r"[0-9a-f]{40}", revision) is not None
+
+
+def test_gaps_bare_key_was_split_into_midi_and_full(dd: ModuleType) -> None:
+    # Unreleased `gaps` was renamed to `gaps-full` (no alias) when the
+    # MIDI-only `gaps-midi` variant was added, as with the maestro-v3 split.
+    assert "gaps" not in dd.DATASETS
+    keys = list(dd.DATASETS)
+    assert keys.index("gaps-midi") + 1 == keys.index("gaps-full")
+
+
+def test_gaps_midi_targets_only_midi_and_metadata(dd: ModuleType) -> None:
+    spec = dd.DATASETS["gaps-midi"]
+    assert spec["corpus_subdir"] == "gaps"
+    targets = set(dd._all_target_subdirs(spec))
+    assert targets == {"midi", "metadata"}
+    assert "recordings" not in targets
+    assert "audio" not in targets
+    assert dd._dataset_size_mb(spec) == 4
+
+
+def test_gaps_midi_sources_are_identical_to_gaps_full_sources(dd: ModuleType) -> None:
+    # gaps-full skips MIDI files gaps-midi already put on disk by listed size
+    # alone, which is only sound when both keys fetch the same pinned revision.
+    full_sources = dd.DATASETS["gaps-full"]["sources"]
+    for source in dd.DATASETS["gaps-midi"]["sources"]:
+        assert source in full_sources
+
+
+@pytest.mark.parametrize("key", ["gaps-midi", "gaps-full"])
+def test_gaps_spec_carries_note(dd: ModuleType, key: str) -> None:
+    spec = dd.DATASETS[key]
+    assert spec.get("note")
+    assert spec["note"].endswith("All 404 files kept; official split not applied.")
+
+
+@pytest.mark.parametrize("key", ["gaps-midi", "gaps-full"])
+def test_gaps_description_names_licence_and_unfiltered(dd: ModuleType, key: str) -> None:
+    spec = dd.DATASETS[key]
+    assert "CC BY-NC-SA 4.0, research use, cite Riley et al. ISMIR 2024" in spec["description"]
+    assert "MIT" not in spec["description"]
+
+
+# ── gaps-full reuses MIDI already on disk ─────────────────────────────────
+
+
+_GAPS_LISTINGS = {
+    "audio": [("audio/001_a.wav", 10), ("audio/002_b.wav", 11)],
+    "midi": [("midi/001_a.mid", 3), ("midi/002_b.mid", 4), ("midi/003_c.mid", 5)],
+    "musicxml": [("musicxml/001_a.xml", 6)],
+    "syncpoints": [("syncpoints/001_a.json", 7)],
+}
+
+
+def _fake_gaps_network(dd: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list:
+    """Serve _GAPS_LISTINGS via _hf_list_tree; record every fetched URL."""
+    monkeypatch.setattr(
+        dd, "_hf_list_tree", lambda repo, revision, subdir: _GAPS_LISTINGS[subdir]
+    )
+    sizes = {Path(p).name: s for listing in _GAPS_LISTINGS.values() for p, s in listing}
+    fetched: list = []
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        fetched.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"x" * sizes.get(Path(url).name, 1))
+        return dest.stat().st_size
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+    return fetched
+
+
+def _midi_urls(fetched: list) -> list:
+    return sorted(Path(u).name for u in fetched if "/midi/" in u)
+
+
+def test_gaps_full_skips_midi_already_fetched_by_gaps_midi(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched = _fake_gaps_network(dd, monkeypatch)
+    output_dir = tmp_path / "corpus"
+    dd._download_and_extract("gaps-midi", dd.DATASETS["gaps-midi"], output_dir)
+    assert _midi_urls(fetched) == ["001_a.mid", "002_b.mid", "003_c.mid"]
+    fetched.clear()
+
+    dd._download_and_extract("gaps-full", dd.DATASETS["gaps-full"], output_dir)
+
+    assert _midi_urls(fetched) == []
+    names = {Path(u).name for u in fetched}
+    assert names == {
+        "001_a.wav",
+        "002_b.wav",
+        "001_a.xml",
+        "001_a.json",
+        "gaps_metadata_with_splits.csv",
+    }
+
+
+def test_gaps_full_downloads_all_midi_when_none_on_disk(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched = _fake_gaps_network(dd, monkeypatch)
+    output_dir = tmp_path / "corpus"
+
+    n = dd._download_and_extract("gaps-full", dd.DATASETS["gaps-full"], output_dir)
+
+    assert _midi_urls(fetched) == ["001_a.mid", "002_b.mid", "003_c.mid"]
+    assert n == 2 + 3 + 1 + 1 + 1
+    assert sorted(p.name for p in (output_dir / "gaps" / "midi").iterdir()) == [
+        "001_a.mid",
+        "002_b.mid",
+        "003_c.mid",
+    ]
+
+
+def test_gaps_full_refetches_only_missing_or_truncated_midi(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched = _fake_gaps_network(dd, monkeypatch)
+    output_dir = tmp_path / "corpus"
+    midi_dir = output_dir / "gaps" / "midi"
+    midi_dir.mkdir(parents=True)
+    (midi_dir / "001_a.mid").write_bytes(b"xxx")  # listed size 3: complete
+    (midi_dir / "002_b.mid").write_bytes(b"xx")  # listed size 4: truncated
+    # 003_c.mid missing
+
+    dd._download_and_extract("gaps-full", dd.DATASETS["gaps-full"], output_dir)
+
+    assert _midi_urls(fetched) == ["002_b.mid", "003_c.mid"]
+    assert (midi_dir / "002_b.mid").stat().st_size == 4
+
+
+def test_download_hf_tree_reports_skipped_and_downloaded_counts(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gaps_network(dd, monkeypatch)
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    (dataset_dir / "midi").mkdir(parents=True)
+    (dataset_dir / "midi" / "001_a.mid").write_bytes(b"xxx")
+    source = dd.DATASETS["gaps-full"]["sources"][1]
+    assert source["subdir"] == "midi"
+    reports: list = []
+
+    n = dd._download_hf_tree(
+        source,
+        dataset_dir,
+        output_dir=output_dir,
+        key="gaps-full",
+        index=1,
+        report=lambda skipped, downloaded: reports.append((skipped, downloaded)),
+    )
+
+    assert n == 3
+    assert reports == [(1, 2)]
+
+
+def test_plain_path_prints_hf_tree_skip_summary(
+    dd: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _fake_gaps_network(dd, monkeypatch)
+    output_dir = tmp_path / "corpus"
+    dd._download_and_extract("gaps-midi", dd.DATASETS["gaps-midi"], output_dir)
+    assert "[gaps-midi] midi: 0 already present, 3 downloaded" in capsys.readouterr().out
+
+    dd._download_and_extract("gaps-full", dd.DATASETS["gaps-full"], output_dir)
+    out = capsys.readouterr().out
+    assert "[gaps-full] midi: 3 already present, 0 downloaded" in out
+    assert "[gaps-full] audio: 0 already present, 2 downloaded" in out
+
+
+def test_gaps_full_not_present_with_only_gaps_midi_content(
+    dd: ModuleType, tmp_path: Path
+) -> None:
+    for subdir in dd._all_target_subdirs(dd.DATASETS["gaps-midi"]):
+        target = tmp_path / "gaps" / subdir
+        target.mkdir(parents=True)
+        (target / "x").write_bytes(b"x")
+
+    assert dd._is_already_present("gaps-midi", dd.DATASETS["gaps-midi"], tmp_path)
+    assert not dd._is_already_present("gaps-full", dd.DATASETS["gaps-full"], tmp_path)
+
+
+def test_gaps_midi_present_once_gaps_full_content_exists(
+    dd: ModuleType, tmp_path: Path
+) -> None:
+    for subdir in dd._all_target_subdirs(dd.DATASETS["gaps-full"]):
+        target = tmp_path / "gaps" / subdir
+        target.mkdir(parents=True)
+        (target / "x").write_bytes(b"x")
+
+    assert dd._is_already_present("gaps-full", dd.DATASETS["gaps-full"], tmp_path)
+    assert dd._is_already_present("gaps-midi", dd.DATASETS["gaps-midi"], tmp_path)
+
+
+def test_retry_sleeps_constant(dd: ModuleType) -> None:
+    assert dd._RETRY_SLEEPS == (3, 10, 30)
+
+
+# ── _hf_list_tree ─────────────────────────────────────────────────────────
+
+
+def _json_response(status: int, headers: dict, payload) -> "_FakeResponse":
+    return _FakeResponse(status, headers, [json.dumps(payload).encode()])
+
+
+def test_hf_list_tree_returns_files_only_skipping_directories(
+    dd: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = [
+        {"type": "file", "path": "audio/a.wav", "size": 123},
+        {"type": "directory", "path": "audio/sub", "size": 0},
+        {"type": "file", "path": "audio/b.wav", "size": 456},
+    ]
+    seen: list = []
+
+    def fake_urlopen(req, timeout=None):
+        seen.append((req.full_url, timeout, req.get_header("User-agent")))
+        return _json_response(200, {}, payload)
+
+    monkeypatch.setattr(dd.urllib.request, "urlopen", fake_urlopen)
+
+    result = dd._hf_list_tree("xavriley/GAPS", "abc123", "audio")
+
+    assert result == [("audio/a.wav", 123), ("audio/b.wav", 456)]
+    assert seen[0][1] == 60
+    assert seen[0][2] == "Sonitra-Dataset-Downloader/1.0"
+    assert "xavriley/GAPS" in seen[0][0]
+    assert "limit=1000" in seen[0][0]
+
+
+def test_hf_list_tree_follows_link_next_across_two_pages(
+    dd: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page1 = [{"type": "file", "path": "audio/a.wav", "size": 1}]
+    page2 = [{"type": "file", "path": "audio/b.wav", "size": 2}]
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _json_response(
+                200, {"Link": '<https://example.invalid/page2>; rel="next"'}, page1
+            )
+        return _json_response(200, {}, page2)
+
+    monkeypatch.setattr(dd.urllib.request, "urlopen", fake_urlopen)
+
+    result = dd._hf_list_tree("r", "rev", "audio")
+
+    assert result == [("audio/a.wav", 1), ("audio/b.wav", 2)]
+    assert calls["n"] == 2
+
+
+def test_hf_list_tree_retries_transient_error_then_succeeds(
+    dd: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = [{"type": "file", "path": "audio/a.wav", "size": 7}]
+    calls = {"n": 0}
+    sleeps: list = []
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("boom")
+        return _json_response(200, {}, payload)
+
+    monkeypatch.setattr(dd.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(dd.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = dd._hf_list_tree("r", "rev", "audio")
+
+    assert result == [("audio/a.wav", 7)]
+    assert calls["n"] == 2
+    assert sleeps == [3]
+
+
+def test_parse_link_next_accepts_rfc8288_quoting_variants(dd: ModuleType) -> None:
+    # Hugging Face sends rel="next", but RFC 8288 also permits rel=next and
+    # rel='next'. A miss would silently truncate a listing to page 1.
+    assert dd._parse_link_next('<u1>; rel="next"') == "u1"
+    assert dd._parse_link_next("<u2>; rel='next'") == "u2"
+    assert dd._parse_link_next("<u3>; rel=next") == "u3"
+    # rel="next" is picked out of a multi-link header, not the first <...>.
+    assert dd._parse_link_next('<p>; rel="prev", <u4>; rel="next"') == "u4"
+    assert dd._parse_link_next('<u5>; type="x"; rel="next"') == "u5"
+    # No next link -> None, so the pagination loop terminates.
+    assert dd._parse_link_next('<p>; rel="prev"') is None
+    assert dd._parse_link_next('<p>; rel="nextpage"') is None
+    assert dd._parse_link_next("") is None
+    assert dd._parse_link_next(None) is None
+
+
+# ── _download_hf_tree ─────────────────────────────────────────────────────
+
+
+def _hf_source(**overrides) -> dict:
+    source = {
+        "kind": "hf_tree",
+        "repo": "xavriley/GAPS",
+        "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+        "subdir": "audio",
+        "patterns": None,
+        "target_subdir": "recordings",
+        "size_mb": 1,
+    }
+    source.update(overrides)
+    return source
+
+
+def test_download_hf_tree_writes_files_and_returns_count(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listing = [("audio/a.wav", 4), ("audio/b.wav", 5)]
+    monkeypatch.setattr(dd, "_hf_list_tree", lambda repo, revision, subdir: listing)
+    urls: list = []
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        urls.append(url)
+        dest.write_bytes(b"data")
+        if progress is not None:
+            progress(4, 4)
+        return 4
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    source = _hf_source()
+
+    n = dd._download_hf_tree(source, dataset_dir, output_dir=output_dir, key="gaps", index=0)
+
+    assert n == 2
+    assert (dataset_dir / "recordings" / "a.wav").read_bytes() == b"data"
+    assert (dataset_dir / "recordings" / "b.wav").read_bytes() == b"data"
+    assert all("xavriley/GAPS" in u and "/resolve/" in u for u in urls)
+
+
+def test_download_hf_tree_filters_by_patterns(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listing = [("musicxml/a.xml", 3), ("musicxml/viz_fret_string_counts.py", 10)]
+    monkeypatch.setattr(dd, "_hf_list_tree", lambda repo, revision, subdir: listing)
+    downloaded: list = []
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        downloaded.append(Path(url).name)
+        dest.write_bytes(b"x")
+        return 1
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    source = _hf_source(
+        subdir="musicxml",
+        patterns=frozenset({".xml"}),
+        target_subdir="annotations/musicxml",
+    )
+
+    n = dd._download_hf_tree(source, dataset_dir, output_dir=output_dir, key="gaps", index=0)
+
+    assert n == 1
+    assert (dataset_dir / "annotations" / "musicxml" / "a.xml").exists()
+    assert not (dataset_dir / "annotations" / "musicxml" / "viz_fret_string_counts.py").exists()
+    assert downloaded == ["a.xml"]
+
+
+def test_download_hf_tree_skips_existing_matching_size(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listing = [("audio/a.wav", 4)]
+    monkeypatch.setattr(dd, "_hf_list_tree", lambda repo, revision, subdir: listing)
+    calls: list = []
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        calls.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"data")
+        return 4
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    dest = dataset_dir / "recordings" / "a.wav"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"1234")  # 4 bytes == listed size
+    progress_calls: list = []
+    source = _hf_source()
+
+    n = dd._download_hf_tree(
+        source,
+        dataset_dir,
+        output_dir=output_dir,
+        key="gaps",
+        index=0,
+        progress=lambda d, t: progress_calls.append((d, t)),
+    )
+
+    assert n == 1
+    assert calls == []
+    assert dest.read_bytes() == b"1234"
+    assert progress_calls  # skipped files still advance progress
+
+
+def test_download_hf_tree_redownloads_when_size_differs(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listing = [("audio/a.wav", 4)]
+    monkeypatch.setattr(dd, "_hf_list_tree", lambda repo, revision, subdir: listing)
+    calls: list = []
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        calls.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"1234")
+        return 4
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    dest = dataset_dir / "recordings" / "a.wav"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"xy")  # 2 bytes != listed 4
+    source = _hf_source()
+
+    n = dd._download_hf_tree(source, dataset_dir, output_dir=output_dir, key="gaps", index=0)
+
+    assert n == 1
+    assert len(calls) == 1
+    assert dest.read_bytes() == b"1234"
+
+
+def test_download_hf_tree_force_redownloads_matching_size(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listing = [("audio/a.wav", 4)]
+    monkeypatch.setattr(dd, "_hf_list_tree", lambda repo, revision, subdir: listing)
+    calls: list = []
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        calls.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"new!")
+        return 4
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    dest = dataset_dir / "recordings" / "a.wav"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"1234")
+    source = _hf_source()
+
+    n = dd._download_hf_tree(
+        source, dataset_dir, output_dir=output_dir, key="gaps", index=0, force=True
+    )
+
+    assert n == 1
+    assert len(calls) == 1
+    assert dest.read_bytes() == b"new!"
+
+
+def test_download_hf_tree_part_renamed_only_on_success(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listing = [("audio/a.wav", 4)]
+    monkeypatch.setattr(dd, "_hf_list_tree", lambda repo, revision, subdir: listing)
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"data")
+        return 4
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    dataset_dir = output_dir / "gaps"
+    source = _hf_source()
+
+    n = dd._download_hf_tree(source, dataset_dir, output_dir=output_dir, key="gaps", index=0)
+
+    assert n == 1
+    assert (dataset_dir / "recordings" / "a.wav").exists()
+    assert not (dataset_dir / "recordings" / "a.wav.part").exists()
+
+    # Failure: .part stays, final never appears.
+    def failing_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"partial-bytes")
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dd, "_download_file", failing_download_file)
+    dataset_dir2 = tmp_path / "corpus2" / "gaps"
+
+    with pytest.raises(RuntimeError, match="boom"):
+        dd._download_hf_tree(source, dataset_dir2, output_dir=tmp_path / "corpus2", key="g", index=0)
+
+    assert (dataset_dir2 / "recordings" / "a.wav.part").read_bytes() == b"partial-bytes"
+    assert not (dataset_dir2 / "recordings" / "a.wav").exists()
+
+
+# ── integration: mixed hf_tree + file ─────────────────────────────────────
+
+
+def _mixed_spec() -> dict:
+    return {
+        "name": "Mixed Fixture",
+        "corpus_subdir": "fixture",
+        "sources": [
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "audio",
+                "patterns": frozenset({".wav"}),
+                "target_subdir": "recordings",
+                "size_mb": 1,
+            },
+            {
+                "url": "https://example.invalid/meta.csv",
+                "kind": "file",
+                "target_subdir": "metadata",
+                "filename": "meta.csv",
+                "size_mb": 1,
+            },
+        ],
+    }
+
+
+def test_download_and_extract_handles_mixed_hf_tree_and_file(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        dd, "_hf_list_tree", lambda repo, revision, subdir: [("audio/a.wav", 4)]
+    )
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if url.endswith("a.wav"):
+            dest.write_bytes(b"wav-bytes")
+        else:
+            dest.write_bytes(b"metadata-bytes")
+        if progress is not None:
+            progress(1, 1)
+        return 1
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    output_dir = tmp_path / "corpus"
+    spec = _mixed_spec()
+
+    n = dd._download_and_extract("fixture", spec, output_dir)
+
+    assert n == 2
+    assert (output_dir / "fixture" / "recordings" / "a.wav").read_bytes() == b"wav-bytes"
+    assert (output_dir / "fixture" / "metadata" / "meta.csv").read_bytes() == b"metadata-bytes"
+    assert dd._marker_path(output_dir, "fixture", 0).exists()
+    assert dd._marker_path(output_dir, "fixture", 1).exists()
+    assert dd._marker_path(output_dir, "fixture", 0).read_text().startswith("hf_tree:")
+    assert dd._marker_path(output_dir, "fixture", 1).read_text() == spec["sources"][1]["url"] + "\n"
+
+
+def test_rich_path_handles_mixed_hf_tree_and_file_cumulatively(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from io import StringIO
+
+    monkeypatch.setattr(
+        dd, "_hf_list_tree", lambda repo, revision, subdir: [("audio/a.wav", 4)]
+    )
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if url.endswith("a.wav"):
+            dest.write_bytes(b"wav-bytes")
+        else:
+            dest.write_bytes(b"metadata-bytes")
+        if progress is not None:
+            progress(2, 4)
+            progress(4, 4)
+        return 4
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+
+    console = dd._RichConsole(file=StringIO(), force_terminal=True, width=100)
+    output_dir = tmp_path / "corpus"
+    spec = _mixed_spec()
+    display = dd._DownloadDisplay(console, slots=1, total_datasets=1, total_mb=2)
+    progress_calls: list = []
+    original_on_progress = display.on_progress
+
+    def recording_on_progress(task_id, downloaded, total):
+        progress_calls.append((downloaded, total))
+        return original_on_progress(task_id, downloaded, total)
+
+    display.on_progress = recording_on_progress  # type: ignore[method-assign]
+    with display:
+        status, n_files, error = dd._download_one(
+            "fixture", spec, output_dir, display=display, task_id=display.tasks[0]
+        )
+
+    assert status == "done"
+    assert error is None
+    assert n_files == 2
+    assert (output_dir / "fixture" / "recordings" / "a.wav").exists()
+    assert (output_dir / "fixture" / "metadata" / "meta.csv").exists()
+    # Cumulative across sources: the second source's byte counts carry the
+    # first source's declared size_mb as an offset, so the slot bar advances
+    # smoothly instead of resetting to zero on each source. Dropping
+    # `bytes_before` from _download_and_extract_rich makes the tail (4, 4)
+    # and fails every assertion below.
+    offset = spec["sources"][0]["size_mb"] * 1_048_576
+    assert len(progress_calls) >= 2
+    assert [d for d, _ in progress_calls] == sorted(d for d, _ in progress_calls)
+    assert progress_calls[0][0] < offset  # first source starts from zero
+    assert progress_calls[-1][0] > offset  # second source is offset past it
+    assert progress_calls[-1] == (offset + 4, offset + 4)
+
+
+def test_reset_download_state_ignores_hf_tree_url_and_clears_nested_parts(
+    dd: ModuleType, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "corpus"
+    spec = {
+        "corpus_subdir": "fixture",
+        "sources": [
+            {
+                "kind": "hf_tree",
+                "repo": "xavriley/GAPS",
+                "revision": "b4c89a33a639c7ae903e74102dfbb3e147e1417f",
+                "subdir": "musicxml",
+                "patterns": frozenset({".xml"}),
+                "target_subdir": "annotations/musicxml",
+                "size_mb": 1,
+            },
+        ],
+    }
+    dd._write_marker(output_dir, "fixture", 0, spec["sources"][0])
+    nested_part = output_dir / "fixture" / "annotations" / "musicxml" / "a.xml.part"
+    nested_part.parent.mkdir(parents=True)
+    nested_part.write_bytes(b"p")
+
+    dd._reset_download_state(output_dir, "fixture", spec)
+
+    assert not dd._marker_path(output_dir, "fixture", 0).exists()
+    assert not nested_part.exists()
+
+    # Same KeyError risk exists in _clear_completion_state.
+    dd._write_marker(output_dir, "fixture", 0, spec["sources"][0])
+    dd._clear_completion_state(output_dir, "fixture", spec)
+    assert not dd._marker_path(output_dir, "fixture", 0).exists()
+
+
+# ── TUI notes ─────────────────────────────────────────────────────────────
+
+
+def _wide_console(dd: ModuleType):
+    from io import StringIO
+
+    # Wide enough that no note folds, so each note appears as one substring.
+    return dd._RichConsole(file=StringIO(), force_terminal=True, width=1000)
+
+
+def _unique_notes(dd: ModuleType) -> list[str]:
+    return list(dict.fromkeys(spec["note"] for spec in dd.DATASETS.values()))
+
+
+def test_print_table_has_no_notes_column(dd: ModuleType, tmp_path: Path) -> None:
+    console = _wide_console(dd)
+    dd._print_table(console, tmp_path)
+    rendered = console.file.getvalue()
+
+    # tmp_path carries this test's name (and so "notes") in the target column.
+    assert "notes" not in rendered.replace(str(tmp_path), "")
+    for note in _unique_notes(dd):
+        assert note not in rendered
+    for key in dd.DATASETS:
+        assert key in rendered
+
+
+def test_print_list_omits_notes(
+    dd: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dd._print_list(tmp_path)
+    out = capsys.readouterr().out
+    for note in _unique_notes(dd):
+        assert note not in out
+    for key in dd.DATASETS:
+        assert key in out
+
+
+def test_note_groups_give_one_row_per_dataset_with_picker_numbers(
+    dd: ModuleType,
+) -> None:
+    groups = dd._note_groups()
+    assert [numbers for numbers, _, _ in groups] == [
+        "1-3", "4", "5", "6-7", "8-10", "11-12"
+    ]
+    assert [name for _, name, _ in groups] == [
+        "MAESTRO V3.0.0",
+        "Beethoven Symphony Excerpt Dataset (BSED) v1.0",
+        "MusicNet",
+        "Expanded Groove MIDI Dataset",
+        "GuitarSet",
+        "GAPS (Guitar-Aligned Performance Scores) v1.1",
+    ]
+    assert [note for _, _, note in groups] == _unique_notes(dd)
+
+
+def test_note_groups_number_non_adjacent_keys_individually(
+    dd: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def spec(subdir: str) -> dict:
+        return {"name": f"{subdir} (variant)", "note": f"{subdir} note", "corpus_subdir": subdir}
+
+    monkeypatch.setattr(dd, "DATASETS", {"a1": spec("a"), "b": spec("b"), "a2": spec("a")})
+    assert dd._note_groups() == [("1,3", "a", "a note"), ("2", "b", "b note")]
+
+
+def test_print_notes_table_shows_each_dataset_once(dd: ModuleType) -> None:
+    console = _wide_console(dd)
+    dd._print_notes_table(console)
+    rendered = console.file.getvalue()
+
+    assert "Dataset notes" in rendered
+    for numbers, name, note in dd._note_groups():
+        assert rendered.count(note) == 1
+        assert name in rendered
+        assert numbers in rendered
+
+
+def test_print_notes_plain_shows_each_dataset_once(
+    dd: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dd._print_notes()
+    out = capsys.readouterr().out
+    for numbers, name, note in dd._note_groups():
+        assert out.count(note) == 1
+        assert f"{numbers}" in out and name in out
+
+
+def _scripted_picker(
+    dd: ModuleType, monkeypatch: pytest.MonkeyPatch, responses: list[object]
+) -> tuple[object, list[str], list[str]]:
+    """Run the picker against scripted prompt answers (an Exception is raised)."""
+    console = _wide_console(dd)
+    clears: list[str] = []
+    prompts: list[str] = []
+    monkeypatch.setattr(console, "clear", lambda *a, **k: clears.append("clear"))
+    monkeypatch.setattr(dd, "_RichConsole", lambda *a, **k: console)
+    answers = iter(responses)
+
+    def fake_ask(prompt: str, *args: object, **kwargs: object) -> str:
+        prompts.append(prompt)
+        answer = next(answers)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer  # type: ignore[return-value]
+
+    monkeypatch.setattr(dd._RichPrompt, "ask", fake_ask)
+    return console, clears, prompts
+
+
+def test_picker_prompt_offers_notes_key(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, prompts = _scripted_picker(dd, monkeypatch, ["q"])
+    assert dd._interactive_select(tmp_path) is None
+    assert "'n' for notes" in prompts[0]
+
+
+@pytest.mark.parametrize("notes_key", ["n", "N", " n "])
+def test_picker_n_switches_to_notes_page_and_enter_returns(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notes_key: str
+) -> None:
+    console, clears, prompts = _scripted_picker(dd, monkeypatch, [notes_key, "", "2"])
+
+    assert dd._interactive_select(tmp_path) == [list(dd.DATASETS)[1]]
+    rendered = console.file.getvalue()
+    assert "Dataset notes" in rendered
+    assert rendered.count("Available datasets") == 2  # shown, then shown again on return
+    assert clears == ["clear", "clear"]  # into the notes page, then back out
+    assert "Enter" in prompts[1]
+
+
+def test_picker_eof_on_notes_page_quits(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scripted_picker(dd, monkeypatch, ["n", EOFError()])
+    assert dd._interactive_select(tmp_path) is None
+
+
+@pytest.mark.parametrize("rich_output", [True, False])
+def test_main_notes_flag_prints_notes_and_exits(
+    dd: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    rich_output: bool,
+) -> None:
+    monkeypatch.setattr(dd, "_use_rich_output", lambda: rich_output)
+    if rich_output:
+        console = _wide_console(dd)
+        monkeypatch.setattr(dd, "_RichConsole", lambda *a, **k: console)
+    monkeypatch.setattr("sys.argv", ["download_datasets.py", "--notes", "--output-dir", str(tmp_path)])
+
+    assert dd.main() == 0
+    out = console.file.getvalue() if rich_output else capsys.readouterr().out
+    for _, _, note in dd._note_groups():
+        assert note in out
+
+
+@pytest.mark.parametrize("rich_output", [True, False])
+def test_main_list_points_to_notes_flag(
+    dd: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    rich_output: bool,
+) -> None:
+    monkeypatch.setattr(dd, "_use_rich_output", lambda: rich_output)
+    if rich_output:
+        console = _wide_console(dd)
+        monkeypatch.setattr(dd, "_RichConsole", lambda *a, **k: console)
+    monkeypatch.setattr("sys.argv", ["download_datasets.py", "--list", "--output-dir", str(tmp_path)])
+
+    assert dd.main() == 0
+    out = console.file.getvalue() if rich_output else capsys.readouterr().out
+    assert "--notes" in out
+    for note in _unique_notes(dd):
+        assert note not in out

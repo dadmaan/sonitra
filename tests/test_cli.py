@@ -526,3 +526,15 @@ def test_transcribe_sidecar_failure_does_not_fail_transcription(
     )
     assert result.exit_code == 0, f"transcribe failed: {result.output}"
     assert (out_dir / "stub" / "test_c4.mid").exists()
+
+
+@pytest.mark.parametrize("command", ["render", "transcribe", "evaluate", "benchmark"])
+def test_dataset_option_help_names_the_dataset_first_layout(command: str) -> None:
+    import typer
+
+    from sonitra.cli import app
+
+    click_command = typer.main.get_command(app).commands[command]
+    (option,) = [param for param in click_command.params if "--dataset" in param.opts]
+    assert "corpus/{dataset}/" in option.help
+    assert "corpus/midi/{dataset}" not in option.help
