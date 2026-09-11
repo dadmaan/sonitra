@@ -1,21 +1,15 @@
-"""Corpus discovery and audio-to-reference-MIDI pairing.
-
-Sonitra's audio-input mode reads source recordings from a dataset's
-``recordings/`` directory and pairs each one to a reference MIDI in the
-sibling ``midi/`` directory (see ``scripts/download_datasets.py`` for the
-BSED layout this mirrors). This module is the single, reusable home for that
-discovery + pairing logic; ``sonitra.cli._discover_midi_files`` re-exports
-``discover_midi_files`` rather than duplicating the walk.
-"""
+"""Discover corpus files and pair each recording with its reference MIDI file."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TypeVar
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 _MIDI_SUFFIXES: frozenset[str] = frozenset({".mid", ".midi"})
 _AUDIO_SUFFIXES: frozenset[str] = frozenset({".wav", ".flac", ".mp3"})
@@ -79,6 +73,67 @@ def _tokens(path: Path) -> list[str]:
     return path.stem.split("_")
 
 
+def match_token_prefix(
+    query_tokens: list[str],
+    candidates: dict[T, list[str]],
+) -> tuple[T | None, list[T], int]:
+    """Pure token-prefix matcher.
+
+    Deterministic, top-down token-prefix matching. Tokens are ``_``-split
+    stems, compared case-sensitively. ``k`` descends from
+    ``min(len(query_tokens), max(len(candidate_tokens)))`` down to ``1``.
+    At each ``k``, ``candidates_k = {c : len(c_tokens) >= k and
+    c_tokens[:k] == query_tokens[:k]}``:
+
+    - exactly one candidate -> unique match, stop.
+    - two or more candidates -> ambiguous, stop (smaller ``k`` can only
+      grow the set further, never disambiguate).
+    - zero candidates -> continue to ``k - 1``.
+
+    This is the pure core of :func:`pair_audio_to_reference`, extracted so
+    that the same logic can be reused for metadata joins without
+    duplicating the descending-``k`` loop.
+
+    Args:
+        query_tokens: ``_``-split stem of the query (audio stem or song).
+        candidates: Mapping from candidate key to its ``_``-split tokens.
+            For audio pairing the key is a :class:`Path` to a MIDI file;
+            for metadata joins the key is the metadata stem string.
+
+    Returns:
+        A tuple ``(match, candidates_at_stop, k)`` where ``match`` is the
+        unique candidate key or ``None``, ``candidates_at_stop`` is the
+        list of candidates at the ``k`` where the search stopped (empty
+        when no candidate ever matched), and ``k`` is that prefix length
+        (``0`` when no candidate ever matched).  ``candidates_at_stop``
+        and ``k`` are returned so callers can distinguish "no match" from
+        "ambiguous" and emit the same warning as
+        :func:`pair_audio_to_reference`.
+
+    Example:
+        >>> from pathlib import Path
+        >>> cands = {Path("1727"): ["1727"], Path("1728"): ["1728"]}
+        >>> match_token_prefix(["1727", "schubert", "op114", "2"], cands)
+        (PosixPath('1727'), [PosixPath('1727')], 1)
+    """
+    max_r_len = max((len(tokens) for tokens in candidates.values()), default=0)
+    k_start = min(len(query_tokens), max_r_len)
+    for k in range(k_start, 0, -1):
+        candidates_k: list[T] = [
+            key
+            for key, tokens in candidates.items()
+            if len(tokens) >= k and tokens[:k] == query_tokens[:k]
+        ]
+        # Deterministic ordering regardless of dict insertion order.
+        candidates_k = sorted(candidates_k, key=lambda x: str(x))
+        if len(candidates_k) == 1:
+            return candidates_k[0], candidates_k, k
+        if len(candidates_k) >= 2:
+            return None, candidates_k, k
+        # zero candidates -> continue descending
+    return None, [], 0
+
+
 def pair_audio_to_reference(
     audio_paths: Sequence[Path],
     midi_paths: Sequence[Path],
@@ -109,7 +164,6 @@ def pair_audio_to_reference(
     """
     midi_paths = sorted(midi_paths)
     midi_tokens = {midi: _tokens(midi) for midi in midi_paths}
-    max_r_len = max((len(tokens) for tokens in midi_tokens.values()), default=0)
 
     mapping: dict[Path, Path] = {}
     unpaired_audio: list[Path] = []
@@ -117,35 +171,22 @@ def pair_audio_to_reference(
 
     for audio in sorted(audio_paths):
         a_tokens = _tokens(audio)
-        k_start = min(len(a_tokens), max_r_len)
-
-        matched: Path | None = None
-        ambiguous = False
-        for k in range(k_start, 0, -1):
-            candidates = [
-                midi
-                for midi, r_tokens in midi_tokens.items()
-                if len(r_tokens) >= k and r_tokens[:k] == a_tokens[:k]
-            ]
-            if len(candidates) == 1:
-                matched = candidates[0]
-                break
-            if len(candidates) >= 2:
-                ambiguous = True
-                ambiguous_candidates[audio] = candidates
-                logger.warning(
-                    "Ambiguous audio-to-reference pairing for %s at k=%d: %s",
-                    audio,
-                    k,
-                    [str(c) for c in candidates],
-                )
-                break
-            # zero candidates at this k -> keep descending.
+        matched, candidates_at_stop, k = match_token_prefix(a_tokens, midi_tokens)
 
         if matched is not None:
             mapping[audio] = matched
         else:
-            if not ambiguous:
+            if candidates_at_stop:
+                # Ambiguous: stopped on two or more candidates.
+                # Sort for deterministic reporting (match_token_prefix already sorts).
+                ambiguous_candidates[audio] = candidates_at_stop
+                logger.warning(
+                    "Ambiguous audio-to-reference pairing for %s at k=%d: %s",
+                    audio,
+                    k,
+                    [str(c) for c in candidates_at_stop],
+                )
+            else:
                 logger.warning("No reference MIDI found for audio file %s", audio)
             unpaired_audio.append(audio)
 

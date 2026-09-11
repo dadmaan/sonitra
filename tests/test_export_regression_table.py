@@ -497,3 +497,282 @@ def test_build_rows_metadata_join_keys_on_song_for_both_recordings(ert: ModuleTy
     for row in rows:
         assert row["meta.midi_filename"] == "00_BN1-129-Eb_comp.mid"
         assert row["meta.style"] == "BN"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: token-prefix metadata join (MusicNet)
+# ---------------------------------------------------------------------------
+
+
+def test_build_rows_token_prefix_joins_1727_schubert_to_1727(ert: ModuleType) -> None:
+    """1727_schubert_op114_2 joins to id 1727 in token-prefix mode."""
+    record = _make_record(
+        ert,
+        midi_path="corpus/musicnet/midi/1727_schubert_op114_2.mid",
+        metrics={"note.onset_f1": 0.9},
+    )
+    metadata = {"1727": {"id": "1727", "composer": "Schubert", "composition": "Op114"}}
+
+    rows = ert.build_rows([record], effect_types={}, metadata=metadata, metadata_match="token-prefix")
+
+    assert rows[0]["meta.id"] == "1727"
+    assert rows[0]["meta.composer"] == "Schubert"
+
+
+def test_build_rows_default_exact_does_not_join_prefix(ert: ModuleType) -> None:
+    """Default (exact) mode stays byte-identical: prefix does not join."""
+    record = _make_record(
+        ert,
+        midi_path="corpus/musicnet/midi/1727_schubert_op114_2.mid",
+        metrics={"note.onset_f1": 0.9},
+    )
+    metadata = {"1727": {"id": "1727", "composer": "Schubert"}}
+
+    rows_default = ert.build_rows([record], effect_types={}, metadata=metadata)
+    rows_exact = ert.build_rows([record], effect_types={}, metadata=metadata, metadata_match="exact")
+
+    assert not any(k.startswith("meta.") for k in rows_default[0])
+    assert not any(k.startswith("meta.") for k in rows_exact[0])
+
+
+def test_build_rows_exact_beats_prefix_in_token_prefix_mode(ert: ModuleType) -> None:
+    """If metadata has both 1727 and 1727_schubert_op114_2, song 1727 hits exact."""
+    record = _make_record(
+        ert,
+        midi_path="corpus/musicnet/midi/1727.mid",
+        metrics={"note.onset_f1": 0.9},
+    )
+    metadata = {
+        "1727": {"id": "1727", "composer": "A"},
+        "1727_schubert_op114_2": {"id": "1727_schubert_op114_2", "composer": "B"},
+    }
+
+    rows = ert.build_rows([record], effect_types={}, metadata=metadata, metadata_match="token-prefix")
+
+    # Without exact-first, k=1 would see both candidates sharing prefix 1727
+    # and would be ambiguous -> no match.  Exact-first must win.
+    assert rows[0]["meta.composer"] == "A"
+    assert rows[0]["meta.id"] == "1727"
+
+
+def test_build_rows_token_prefix_ambiguous_is_unmatched(ert: ModuleType) -> None:
+    """Ambiguous prefix means no match and no meta columns."""
+    record = _make_record(
+        ert,
+        midi_path="corpus/musicnet/midi/1727_schubert_op114_2.mid",
+        metrics={"note.onset_f1": 0.9},
+    )
+    # Both share prefix 1727 at k=1, so 1727_schubert_op114_2 is ambiguous.
+    metadata = {
+        "1727_a": {"id": "1727_a"},
+        "1727_b": {"id": "1727_b"},
+    }
+
+    rows = ert.build_rows([record], effect_types={}, metadata=metadata, metadata_match="token-prefix")
+
+    assert not any(k.startswith("meta.") for k in rows[0])
+
+
+def test_build_rows_token_prefix_cached_per_song(ert: ModuleType) -> None:
+    """Two rows with same song share the cached prefix lookup (no error)."""
+    metadata = {"1727": {"id": "1727"}}
+    records = [
+        _make_record(ert, midi_path="corpus/musicnet/midi/1727_schubert_op114_2.mid"),
+        _make_record(ert, midi_path="corpus/musicnet/midi/1727_schubert_op114_2.mid"),
+    ]
+
+    rows = ert.build_rows(records, effect_types={}, metadata=metadata, metadata_match="token-prefix")
+
+    assert len(rows) == 2
+    for row in rows:
+        assert row["meta.id"] == "1727"
+
+
+def test_main_token_prefix_join_and_unmatched_count(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """main with --metadata-match token-prefix: prefix match joins, ambiguous counted."""
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    results_path = work_dir / "benchmark_results.jsonl"
+    records = [
+        {
+            "condition": "baseline",
+            "transcriber": "basic_pitch",
+            "midi_path": "corpus/musicnet/midi/1727_schubert_op114_2.mid",
+            "audio_path": "a.wav",
+            "status": "succeeded",
+            "metrics": {"note.onset_f1": 0.9},
+            "overrides": {},
+        },
+        {
+            "condition": "baseline",
+            "transcriber": "basic_pitch",
+            "midi_path": "corpus/musicnet/midi/9999_unknown_piece.mid",
+            "audio_path": "b.wav",
+            "status": "succeeded",
+            "metrics": {"note.onset_f1": 0.7},
+            "overrides": {},
+        },
+        {
+            "condition": "baseline",
+            "transcriber": "basic_pitch",
+            "midi_path": "corpus/musicnet/midi/ambiguous_song.mid",
+            "audio_path": "c.wav",
+            "status": "succeeded",
+            "metrics": {"note.onset_f1": 0.5},
+            "overrides": {},
+        },
+    ]
+    with results_path.open("w") as handle:
+        for rec in records:
+            handle.write(json.dumps(rec) + "\n")
+
+    metadata_path = work_dir / "metadata.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [
+            {"id": "1727", "composer": "Schubert"},
+            {"id": "1727_a", "composer": "A"},
+            {"id": "1727_b", "composer": "B"},
+        ],
+        fieldnames=["id", "composer"],
+    )
+
+    # In this setup, 1727_schubert_op114_2 would be ambiguous if candidates were
+    # 1727_a/1727_b, but we have distinct 1727 as well.  For the
+    # ambiguous_song test we need candidates that force ambiguity for that song.
+    # ambiguous_song splits as ["ambiguous","song"]; make two metadata keys
+    # sharing that prefix.
+    # Recreate with appropriate keys: 1727 for first, and ambiguous_a/b for third.
+    metadata_path2 = work_dir / "metadata2.csv"
+    _write_metadata_csv(
+        metadata_path2,
+        [
+            {"id": "1727", "composer": "Schubert"},
+            {"id": "ambiguous_a", "composer": "A"},
+            {"id": "ambiguous_b", "composer": "B"},
+        ],
+        fieldnames=["id", "composer"],
+    )
+
+    out_path = work_dir / "regression_table.csv"
+    exit_code = ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(metadata_path2),
+            "--metadata-join-column", "id",
+            "--metadata-match", "token-prefix",
+        ]
+    )
+
+    assert exit_code == 0
+    with out_path.open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    by_song = {row["song"]: row for row in rows}
+    # 1727_schubert_op114_2 -> 1727 via prefix
+    assert by_song["1727_schubert_op114_2"]["meta.composer"] == "Schubert"
+    # ambiguous_song -> ambiguous (both ambiguous_a/b share prefix) -> no meta
+    assert by_song["ambiguous_song"]["meta.composer"] == ""
+    # unknown -> no match
+    assert by_song["9999_unknown_piece"]["meta.composer"] == ""
+
+    stderr = capsys.readouterr().err
+    # 2 unmatched out of 3 (ambiguous + unknown), prefix match is NOT counted
+    assert "2/3 songs had no metadata match" in stderr
+    # In token-prefix mode there should be no hint
+    assert "--metadata-match token-prefix" not in stderr
+
+
+def test_main_exact_mode_warning_suggests_token_prefix(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    results_path = work_dir / "benchmark_results.jsonl"
+    records = [
+        {
+            "condition": "baseline",
+            "transcriber": "basic_pitch",
+            "midi_path": "corpus/musicnet/midi/1727_schubert_op114_2.mid",
+            "audio_path": "a.wav",
+            "status": "succeeded",
+            "metrics": {"note.onset_f1": 0.9},
+            "overrides": {},
+        },
+    ]
+    with results_path.open("w") as handle:
+        for rec in records:
+            handle.write(json.dumps(rec) + "\n")
+
+    metadata_path = work_dir / "metadata.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [{"id": "1727", "composer": "Schubert"}],
+        fieldnames=["id", "composer"],
+    )
+
+    exit_code = ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(metadata_path),
+            "--metadata-join-column", "id",
+            # default exact
+        ]
+    )
+
+    assert exit_code == 0
+    stderr = capsys.readouterr().err
+    assert "1/1 songs had no metadata match" in stderr
+    assert "--metadata-match token-prefix" in stderr
+
+
+def test_main_token_prefix_is_byte_identical_without_flag(
+    ert: ModuleType, tmp_path: Path
+) -> None:
+    """Exports without --metadata-match stay byte-identical to before."""
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    results_path = work_dir / "benchmark_results.jsonl"
+    records = [
+        {
+            "condition": "baseline",
+            "transcriber": "basic_pitch",
+            "midi_path": "corpus/maestro/midi/song_01.midi",
+            "audio_path": "a.wav",
+            "status": "succeeded",
+            "metrics": {"note.onset_f1": 0.9},
+            "overrides": {},
+        },
+    ]
+    with results_path.open("w") as handle:
+        for rec in records:
+            handle.write(json.dumps(rec) + "\n")
+
+    metadata_path = work_dir / "metadata.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [{"midi_filename": "song_01.midi", "composer": "Bach"}],
+        fieldnames=["midi_filename", "composer"],
+    )
+
+    # Exact (default) run
+    ert.main(["--work-dir", str(work_dir), "--metadata-csv", str(metadata_path)])
+    with (work_dir / "regression_table.csv").open() as f:
+        content_default = f.read()
+
+    # Explicit exact should be identical
+    ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(metadata_path),
+            "--metadata-match", "exact",
+        ]
+    )
+    with (work_dir / "regression_table.csv").open() as f:
+        content_exact = f.read()
+
+    assert content_default == content_exact

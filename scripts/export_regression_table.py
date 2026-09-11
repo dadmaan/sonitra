@@ -1,21 +1,7 @@
-"""Flatten a `sonitra benchmark` output directory into a tidy regression CSV.
+"""Flatten a ``sonitra benchmark`` run into a regression-ready CSV.
 
-Reads a benchmark run's per-file results (``benchmark_results.jsonl`` by
-default) and produces one row per (condition, transcriber, file) with every
-evaluation metric and every pedalboard/config override as its own column --
-ready to load into pandas/R/statsmodels for a regression against the exact
-settings that produced each row, instead of just the categorical condition
-name.
-
-Usage:
-    uv run python scripts/export_regression_table.py --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT
-
-    # Optionally left-join a metadata CSV (e.g. MAESTRO's) onto each row by
-    # matching a filename column against 'song':
-    uv run python scripts/export_regression_table.py \\
-        --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI_INPUT \\
-        --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv \\
-        --metadata-join-column midi_filename
+One row per (condition, transcriber, file), with every metric and config
+override as its own column; a metadata CSV can optionally be joined on.
 """
 
 from __future__ import annotations
@@ -32,6 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
 from sonitra.benchmark.results import BenchmarkRecord, load_records  # noqa: E402
+from sonitra.corpus import match_token_prefix  # noqa: E402
 
 _EFFECT_PATH_RE = re.compile(r"^pedalboard\.effects\.(\d+)\.(.+)$")
 
@@ -110,12 +97,62 @@ def load_metadata_join(csv_path: Path, join_column: str) -> dict[str, dict[str, 
     return index
 
 
+def _resolve_song_metadata_keys(
+    songs: set[str],
+    metadata: dict[str, dict[str, str]],
+    mode: str,
+) -> dict[str, str | None]:
+    """Resolve each song stem to the metadata key that should be joined.
+
+    In ``exact`` mode this is a direct dict lookup.  In ``token-prefix``
+    mode an exact match is tried first; if that misses, a unique
+    token-prefix match is attempted through :func:`match_token_prefix`,
+    cached per song.  Ambiguous and unmatched songs map to ``None`` and
+    are counted in the existing warning.
+
+    Args:
+        songs: Distinct ``song`` stems (``Path(midi_path).stem``).
+        metadata: Index returned by :func:`load_metadata_join`.
+        mode: ``"exact"`` or ``"token-prefix"``.
+
+    Returns:
+        Mapping ``song -> metadata_key`` (or ``None`` when no unique
+        match exists).  The returned key is guaranteed to be present in
+        *metadata* when not ``None``.
+    """
+    result: dict[str, str | None] = {}
+    if not metadata:
+        return {s: None for s in songs}
+    if mode == "exact":
+        for song in songs:
+            result[song] = song if song in metadata else None
+        return result
+    # token-prefix mode
+    candidates: dict[str, list[str]] = {key: key.split("_") for key in metadata}
+    for song in songs:
+        if song in metadata:
+            result[song] = song
+            continue
+        query_tokens = song.split("_")
+        match, _, _ = match_token_prefix(query_tokens, candidates)
+        result[song] = match if match is not None else None
+    return result
+
+
 def build_rows(
     records: list[BenchmarkRecord],
     effect_types: dict[int, str],
     metadata: dict[str, dict[str, str]] | None = None,
+    metadata_match: str = "exact",
+    song_to_metadata_key: dict[str, str | None] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    # Lazy prefix state when caller did not supply a pre-resolved map.
+    _prefix_candidates: dict[str, list[str]] | None = None
+    _prefix_cache: dict[str, str | None] = {}
+    if metadata and metadata_match == "token-prefix" and song_to_metadata_key is None:
+        _prefix_candidates = {key: key.split("_") for key in metadata}
+
     for record in records:
         row: dict[str, Any] = {
             "condition": record.condition,
@@ -132,7 +169,30 @@ def build_rows(
         for override_key, override_value in record.overrides.items():
             row[rename_override_key(override_key, effect_types)] = override_value
         if metadata:
-            meta_row = metadata.get(row["song"])
+            meta_row: dict[str, str] | None = None
+            song = row["song"]
+            if metadata_match == "token-prefix":
+                if song_to_metadata_key is not None:
+                    meta_key = song_to_metadata_key.get(song)
+                    meta_row = metadata.get(meta_key) if meta_key is not None else None
+                else:
+                    # Cached per-song lookup.
+                    if song not in _prefix_cache:
+                        if song in metadata:
+                            _prefix_cache[song] = song
+                        else:
+                            assert _prefix_candidates is not None
+                            query_tokens = song.split("_")
+                            match, _, _ = match_token_prefix(query_tokens, _prefix_candidates)
+                            _prefix_cache[song] = match if match is not None else None
+                    meta_key = _prefix_cache[song]
+                    meta_row = metadata.get(meta_key) if meta_key is not None else None
+            else:
+                if song_to_metadata_key is not None:
+                    meta_key = song_to_metadata_key.get(song)
+                    meta_row = metadata.get(meta_key) if meta_key is not None else None
+                else:
+                    meta_row = metadata.get(song)
             if meta_row is not None:
                 for column, value in meta_row.items():
                     row[f"meta.{column}"] = value
@@ -191,6 +251,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "MAESTRO's column name -- just a default, override for other datasets). "
         "Ignored if --metadata-csv is not given.",
     )
+    parser.add_argument(
+        "--metadata-match",
+        choices=["exact", "token-prefix"],
+        default="exact",
+        help="How to match song stems to metadata keys (default: exact). "
+        "Use token-prefix for MusicNet score MIDI where the reference stem "
+        "includes composer/work tokens beyond the numeric id "
+        "(e.g. 1727_schubert_op114_2 -> 1727).  In token-prefix mode an "
+        "exact match is tried first, then a unique token-prefix match via "
+        "the same logic as audio-to-MIDI pairing (see sonitra.corpus). "
+        "For aligned references use --metadata-csv metadata/musicnet.csv "
+        "with the default; for score references use "
+        "--metadata-csv metadata/musicnet_metadata.csv --metadata-join-column id "
+        "--metadata-match token-prefix.",
+    )
     return parser.parse_args(argv)
 
 
@@ -216,7 +291,24 @@ def main(argv: list[str] | None = None) -> int:
         metadata = load_metadata_join(args.metadata_csv, args.metadata_join_column)
 
     records = load_records(results_path)
-    rows = build_rows(records, effect_types, metadata)
+
+    # Single resolved song -> metadata key map (Phase 5). Both build_rows
+    # and the unmatched count use this map; otherwise prefix matches would
+    # still be counted as unmatched.
+    song_to_metadata_key: dict[str, str | None] | None = None
+    if args.metadata_csv is not None:
+        distinct_for_map = {Path(r.midi_path).stem for r in records}
+        song_to_metadata_key = _resolve_song_metadata_keys(
+            distinct_for_map, metadata, args.metadata_match
+        )
+
+    rows = build_rows(
+        records,
+        effect_types,
+        metadata,
+        metadata_match=args.metadata_match,
+        song_to_metadata_key=song_to_metadata_key,
+    )
     output_path = args.output or (work_dir / "regression_table.csv")
     write_csv(rows, output_path)
 
@@ -225,14 +317,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.metadata_csv is not None:
         distinct_songs = {row["song"] for row in rows}
-        unmatched = sorted(song for song in distinct_songs if song not in metadata)
+        if song_to_metadata_key is not None:
+            unmatched = sorted(song for song in distinct_songs if song_to_metadata_key.get(song) is None)
+        else:
+            unmatched = sorted(song for song in distinct_songs if song not in metadata)
         if unmatched:
             sample = ", ".join(unmatched[:5])
-            print(
+            msg = (
                 f"warning: {len(unmatched)}/{len(distinct_songs)} songs had no metadata "
-                f"match (e.g. {sample})",
-                file=sys.stderr,
+                f"match (e.g. {sample})"
             )
+            if args.metadata_match == "exact":
+                msg += " -- try --metadata-match token-prefix for MusicNet score MIDI"
+            print(msg, file=sys.stderr)
     return 0
 
 
