@@ -1,156 +1,60 @@
 # AGENT.md
 
-This file provides guidance to coding agents when working with code in this repository.
+Guidance for coding agents working in this repository. Deeper detail lives in `ARCHITECTURE.md` and `docs/`.
 
-## What this is
+## Project
 
-Sonitra is a research toolkit for **benchmarking automatic music transcription (AMT) systems**. It does not train models. The core loop renders symbolic scores to audio, optionally degrades/separates that audio, transcribes it back to symbolic form with one or more AMT backends, and scores the result against the ground-truth score.
-
-```
-MIDI → synthesise audio → transcribe (audio→MIDI) → evaluate vs reference
-```
+- Sonitra benchmarks automatic music transcription (AMT) systems; it does not train models.
+- Core loop: MIDI → synthesise audio (optional effects / stem separation) → transcribe audio → MIDI → score against the reference.
+- Audio-input mode (`render_pipeline.input_type: audio`) skips synthesis and pairs real recordings with reference MIDI.
+- Data is dataset-first: `corpus/<dataset>/{midi,recordings,audio,transcription,eval_results}/`.
 
 ## Commands
 
 ```bash
-uv sync --extra dev              # preferred: editable install + test deps (lockfile)
-pip install -e ".[dev]"          # fallback if uv is unavailable
-
-uv run pytest                         # run the suite (no venv activation needed)
-uv run pytest tests/test_pipeline_config.py -v  # single file
-uv run pytest tests/test_pipeline_config.py::test_name  # single test
-uv run pytest -m "not skip_if_no_vst"   # skip tests needing a real VST plugin path
-uv run pytest -m integration            # only end-to-end VST tests
-uv run pytest -m "not slow"             # skip tests that invoke heavy backends (basic-pitch)
+uv sync --extra dev                       # install (fallback: pip install -e ".[dev]")
+uv run pytest tests/                      # always scope to tests/ (no testpaths configured)
+uv run pytest tests/test_config.py::test_name
+uv run pytest tests/ -m "not slow"        # skip heavy backends (basic-pitch)
 ```
 
-Test markers (`pyproject.toml`): `skip_if_no_vst` and `integration` both require a real VST. `slow` marks tests that invoke optional/heavy backends such as basic-pitch (TensorFlow inference). VST-dependent fixtures read the plugin path from the `VST_PATH` / `VST3_PATH` env vars and `pytest.skip` when unset.
-
-CLI entry points (Typer, also `python -m sonitra`). The recommended invocation style uses `--config` + `--dataset`:
-
-```bash
-sonitra init       --config FILE                                          # write a starter config
-sonitra render     --config FILE [--dataset NAME] [--limit N] [--seed N]
-sonitra transcribe --config FILE [--dataset NAME] [--transcriber NAME]
-sonitra evaluate   --config FILE [--dataset NAME]
-sonitra benchmark  --config FILE [--dataset NAME]
-sonitra serve      --port 8000
-sonitra --version
-```
-
-Explicit path overrides also work (`--corpus`, `--output`, `--audio`, `--reference`, `--estimate`).
-Batch runner script: `python scripts/run_transcribe_eval.py` (see Scripts section below).
-
-> There is **no ruff/black/mypy config in `pyproject.toml`** — `pytest` is the real quality gate.
+- Without `uv`: `python -m pytest tests/`.
+- Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
+- No linter or type-checker config; pytest is the quality gate.
+- CLI (Typer, also `python -m sonitra`): `sonitra init|render|transcribe|evaluate|benchmark --config FILE [--dataset NAME]`, `sonitra serve --port 8000`.
 
 ## Architecture
 
-### Pluggable-backend pattern (the central idiom)
-
-Every swappable component — synthesisers, transcribers, evaluation metrics — follows the same three-part shape:
-
-1. A **`Protocol`** (`runtime_checkable`) defining the interface — e.g. `TranscriberProtocol.transcribe()`, `SymbolicMetric.compute()`, `SynthesiserProtocol`.
-2. A **registry + decorator** keyed by a config discriminator — `@register_transcriber("basic_pitch")`, `@register_symbolic_metric("note")`.
-3. A **`make_*` factory** that reads config and returns instances — `make_synth(cfg)`, `make_transcriber(cfg)`, `make_symbolic_metrics(section)`.
-
-Crucially, factories **lazily import backend modules inside the function body** so registration happens on first use and optional dependencies (e.g. dawdreamer VST) are never imported at package load time. When adding a backend: define it in its subpackage, decorate it with the registry decorator, and ensure the factory's lazy import covers the new module. Don't import backends at module top level.
-
-### Config (`config.py`)
-
-Single Pydantic `PipelineConfig` tree, one nested section per concern (`render_pipeline`, `io`, `dawdreamer`, `fluidsynth`, `pedalboard`, `normalisation`, `quality_gates`, `transcription`, `evaluation`, `benchmark`, `observability`, `separation`). All sections use `extra="forbid"` — unknown YAML keys are hard errors. `model_validate` re-raises validation failures as `ConfigError`. `config/source.yaml` is the fully-annotated reference documenting every parameter; `default_config_path()` in `config.py` points there. `PipelineConfig.save(path)` serialises a config instance back to YAML.
-
-`render_pipeline.synth_backend` (enum `SynthBackend`: `fluidsynth | dawdreamer_faust | dawdreamer_vst | pedalboard_instrument`) and `render_pipeline.effects_chain` (enum `EffectsChain`: `none | pedalboard`) replace the former `rendering_mode` key. `render_pipeline.bpm` (default 120) sets the playback tempo. `render_pipeline.max_workers` controls render-step parallelism; `transcription.max_workers`, `evaluation.max_workers`, and `benchmark.max_workers` provide independent per-step parallelism.
-
-Backend-specific validators enforce: `synth_backend=fluidsynth` requires `fluidsynth.soundfont_path`; `synth_backend=dawdreamer_vst` requires `dawdreamer.plugin_path`; `synth_backend=dawdreamer_faust` must NOT set `dawdreamer.plugin_path`.
-
-`validate_worker_constraint()` forces `render_pipeline.max_workers=1` for DawDreamer synth backends (`dawdreamer_faust`, `dawdreamer_vst`) — DawDreamer/JUCE is not safe to run concurrently. `fluidsynth` and `pedalboard_instrument` are unaffected. Call it before parallelising work.
-
-### Synth backends (`synth/`)
-
-`make_synth(cfg)` in `synth/protocol.py` selects the synthesis backend from `cfg.render_pipeline.synth_backend`:
-
-- **`PedalboardSynth`** — when `synth_backend=pedalboard_instrument`; renders via `pedalboard.instrument.plugin_path`. If `pedalboard.instrument.plugin_path` is null but `fluidsynth.soundfont_path` is set, falls back to `FluidSynth` with a logged warning.
-- **`FluidSynth`** — when `synth_backend=fluidsynth`; requires `fluidsynth.soundfont_path`; invokes the `fluidsynth` CLI against the named `.sf2` SoundFont file. Lazily imported from `synth/fluid_synth.py`. Honours `fluidsynth.program` (0–127 GM program override); when null (default), the source MIDI's program is used when the file carries exactly one distinct program, otherwise the SoundFont's default preset applies.
-- **`DawDreamerSynth`** — when `synth_backend=dawdreamer_faust` (built-in Faust oscillator) or `synth_backend=dawdreamer_vst` (VST3 plugin, requires `dawdreamer.plugin_path`); both values map to the same implementation branch.
-
-### Pipeline (`pipeline.py`)
-
-`run_pipeline` has **two code paths**: the config-driven path (when `config=` is passed — this is the real one) and a legacy `engine=`-based path kept for the older API/tests. New work goes through the config path. The pipeline is fail-soft: each MIDI file is rendered in a try/except that logs a per-file record and continues; it never aborts the batch. Per-file outcomes are written to a JSONL manifest (`renders.jsonl`) plus an optional `.failed.txt`. Note that some setup steps, such as building the effects chain from config, currently run before the per-file loop and can abort the batch if they fail (e.g., a VST3 plugin cannot be loaded). Order within a file: parse MIDI → synth.render → pre-normalise → effects chain (skipped when `render_pipeline.effects_chain: none`) → post-normalise → quality gate → write.
-
-### Benchmark (`benchmark/`)
-
-`run_benchmark` is the top-level orchestrator. It expands **conditions** and **sweeps** (`benchmark/conditions.py`) into a list of variants, each defined by **dotted-path config overrides** (e.g. `pedalboard.effects.1.wet_level`) applied via `apply_overrides`. For every condition it re-renders the corpus, runs each enabled transcriber, and scores against the cached reference notes. Outputs: per-(condition×transcriber×file) records to JSONL (each record carries its condition's `overrides` dict), `summary.json` containing the aggregate `summary` (each row also carries its condition's `overrides`) and a `degradation` table of metric deltas vs the `baseline` condition (with `overrides` carried through unchanged, not diffed), and a `config.yaml` snapshot of the fully-resolved `PipelineConfig` the run actually used. `scripts/export_regression_table.py` flattens a run's JSONL into a per-file regression-ready CSV (metrics + overrides as columns, pedalboard effect slots labeled by type when `config.yaml` is present).
-
-### Evaluation (`evaluation/`)
-
-Metrics implemented natively in NumPy/SciPy with mir_eval-compatible matching semantics (no mir_eval dependency). Two protocol families: `SymbolicMetric` (note/frame/expressive — reference vs estimated notes) and `AudioMetric` (DTW — compares the rendered audio against a **re-synthesis of the transcription** using the same synth config). Results are flattened into `"<metric>.<key>"` keys. **Undefined values are `NaN`** (e.g. correlations over too few matched notes) and aggregation deliberately skips them — preserve this convention when adding metrics.
-
-### API (`api/`)
-
-FastAPI app (`create_app`) with a `JobStore`, a synchronous render worker (`worker.py`) running `run_pipeline` on the event loop while holding an `asyncio.Lock` (DawDreamer/JUCE global state is not safe to run concurrently), runtime config reload via `PUT /config`, and an SSE status stream. Config is loaded into `app.state.config` at startup. Routers are split by concern under `api/routers/`. `tests/api/openapi_snapshot.json` is a checked-in OpenAPI snapshot — schema changes will require regenerating it (see `tests/api/test_openapi.py`).
-
-### Scripts (`scripts/`)
-
-`scripts/run_transcribe_eval.py` is a batch runner that iterates over every YAML file in `config/examples/`, runs `sonitra render`, `sonitra transcribe`, then `sonitra evaluate` for each, and writes results under a dataset-first layout:
-
-- `corpus/{dataset}/eval_results/<config>.jsonl` — per-file evaluation records for each config
-- `corpus/{dataset}/eval_results/summary.jsonl` — one line per config, mean of per-file metrics
-- `corpus/{dataset}/eval_results/summary.csv` — same data as `summary.jsonl` in CSV format
-- `corpus/{dataset}/eval_results/all_results.csv` — flat table with one row per (config, file)
-
-When no `--dataset` is passed the paths collapse to `corpus/eval_results/`, `corpus/audio/`, etc.
-
-NaN values are written as `null` in JSONL and as empty cells `""` in CSV.
-
-The script accepts `--jobs N` (default: 1) to process N configs in parallel; each config's render→transcribe→evaluate steps still run serially within the worker. Use `--skip-render` to reuse previously rendered audio.
-
-`scripts/run_mixed_effects_analysis.py` fits the condition-effect mixed model on a table from `export_regression_table.py` (which must have been run with `--metadata-csv`, since the model needs the `meta.*` columns):
-
-```
-note.onset_f1 ~ condition + duration + performance_year + (1 | song) + (1 | composer),  family = beta_family(logit)
-```
-
- **R** executes via `scripts/mixed_effects_analysis.R`; no crossed random effects beta GLMM in Python stack. Python handles validation/reporting, calls `Rscript` (not rpy2) ensuring standalone R runnable and ABI-bound C extensions. Requires R with `glmmTMB`, `jsonlite`; `--rscript` or `$SONITRA_RSCRIPT` overrides interpreter. Output to `regression_analysis/` alongside input CSV (`model_summary.txt`, `fixed_effects.csv`, `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`, plus `model_comparison.csv` and `models/<label>/` when `--covariate` is given). Base model spec copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R` apart from the `year` -> `performance_year` rename; do not improve the base spec. The script can additionally fit nested covariate / condition-interaction models via generic `--covariate COL` (plus `--covariate-transform`, `--covariate-divisor`, `--interact-with-condition`), e.g. `--covariate meta.composition_year`.
-
-`scripts/enrich_metadata.py` left-joins any delimited annotation table onto any dataset metadata CSV on a composite key, producing an enriched CSV for the unchanged `export_regression_table.py --metadata-csv` flow (two-step: enrich first, then export):
-
-```
-python scripts/enrich_metadata.py \
-    --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
-    --annotations misc/MAESTRO_comp_year.txt --annotations-delimiter '|' \
-    --on canonical_composer=Composer --on canonical_title=Piece \
-    --add Year=composition_year \
-    --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv
-python scripts/export_regression_table.py --work-dir <benchmark-dir> \
-    --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv \
-    --metadata-join-column midi_filename
-```
-
-Annotation parsing defaults to quoting-disabled (QUOTE_NONE semantics, like R `quote=""`) because the comp-year file has unbalanced quotes; the base metadata stays RFC4180 (`--annotations-quotechar '"'` opts an annotation file into RFC4180). Join keys are stripped tuples, never pasted strings; first row wins on duplicate keys (identical vs conflicting counted separately); unmatched rows get blank cells; `<output>.provenance.json` records input sha256s, argv, coverage, and duplicate-key counts. `--require-full-coverage` turns partial coverage into a non-zero exit; `--output` never clobbers `--metadata`.
-
-`scripts/download_datasets.py` is the stdlib-only (no project env, no `huggingface_hub`) dataset fetcher backing `python scripts/download_datasets.py [--list|--notes|--all|KEY...]`. Registry keys: `maestro-v3-{midi,wav,full}`, `bsed`, `musicnet`, `e-gmd-{midi,full}`, `guitarset-{mic,mix,full}`, `gaps-{midi,full}`. Each spec is `{name, description, note?, corpus_subdir, sources[]}`; source kinds are `zip` / `targz` (archive + `extract_map`), `file` (single URL), and `hf_tree`. `hf_tree` covers Hugging-Face-hosted datasets that ship as loose files with no archive: `_hf_list_tree(repo, revision, subdir)` pages the HF tree API (`Link: rel="next"`) and `_download_hf_tree` fetches each listed file passing `patterns` into `target_subdir/<basename>`, skipping any file already on disk at the listed size (the resume mechanism; `--force` bypasses it) and writing via `.part` + `os.replace`. The skip is key-independent, which is how `gaps-full` re-uses MIDI that `gaps-midi` already fetched into the shared `corpus/gaps/` — sound only because `gaps-midi`'s sources are verbatim copies of `gaps-full`'s (same pinned revision, enforced by a test); an optional `report(skipped, downloaded)` callback prints one summary line per `hf_tree` source. Revisions are pinned to commit SHAs, never `main`. Every spec carries a `note` (instrument, what the set holds, and the task it was made for); keys sharing a `corpus_subdir` share one note, and tests enforce both. Notes stay out of the main table and `--list`: `_note_groups()` collapses them to one row per dataset (with the keys' picker numbers, e.g. `1-3`), shown by `--notes` and by the picker's notes page (type `n`, Enter returns; the screen clears on each switch). GAPS needs no conversion step, unlike GuitarSet.
-
-`scripts/guitarset_jams_to_midi.py` converts GuitarSet JAMS annotations to MIDI references plus a metadata CSV: reads `corpus/guitarset/annotations/*.jams`, writes `corpus/guitarset/midi/*.mid` (360 unsuffixed stems) plus `corpus/guitarset/metadata/guitarset.csv` and a `<csv>.provenance.json` audit trail (`python scripts/guitarset_jams_to_midi.py --dry-run` to inspect counts first). Merges the six per-string `note_midi` blocks (selected by `data_source`, never position), tolerates both JAMS `data` layouts, rounds float pitch to semitones, constant `--velocity` (default 100), writes a GM `program_change` (`--program`, default 24 = Acoustic Guitar (nylon); `--no-program` omits it) so players do not default to piano, counts skipped notes and unisons (`--dedupe-unisons` opt-in), output-never-clobbers-input guard as in `enrich_metadata.py`.
-
-`scripts/check_dataset.py` is the pre-run check for a user's own dataset (`python scripts/check_dataset.py --dataset NAME [--corpus-root DIR] [--input-type midi|audio] [--bpm N] [--plan FILE | --apply FILE] [-v]`; needs the project env). It reads `<corpus-root>/NAME/` like `sonitra benchmark` and pairs through `sonitra.corpus.pair_audio_to_reference` itself (never a re-implementation), using `PairingResult.ambiguous` to tell ambiguous from unmatched. Findings are grouped as errors (exit 1: unmatched/ambiguous recordings, duplicate MIDI stems in audio mode, `_`-token prefix clashes, first tempo ≠ `--bpm` in MIDI mode, empty/unreadable MIDI), warnings (several programs, drum channel, unreadable endings in `recordings/`, audio at the top of `audio/`, nested symlinked dirs) and notes (unused MIDI). Input type defaults to `audio` when `recordings/` has audio. Safe renames only cover case/separator differences, only rename recordings (MIDI stems feed the metadata join), and are re-verified by the real pairing call plus collision checks; `--plan` writes a CSV, `--apply` validates every row before renaming anything and writes `<plan>.undo.csv` (itself a plan). Neither file is ever overwritten. Fuzzy near misses are hints only.
-
-### Config directory (`config/`)
-
-`config/source.yaml` is the fully-annotated reference config documenting every parameter (not a runnable pipeline config). Runnable preset configs are split across two subdirectories — these are not test fixtures (those live in `tests/fixtures/`):
-
-- `config/examples/` — 18 preset configs used by `scripts/run_transcribe_eval.py` and the roundtrip tests: `pedalboard_baseline`, `pedalboard_no_effects`, `pedalboard_no_effects_parallel`, `pedalboard_parallel`, `pedalboard_all_effects`, `pedalboard_extreme_reverb`, `pedalboard_heavy_compression`, `pedalboard_chorus_delay`, `pedalboard_distortion_gain`, `pedalboard_vital`, `dawdreamer_soundfont`, `dawdreamer_faust`, `dawdreamer_vital`, `dawdreamer_vital_pedalboard`, `dawdreamer_vital_goodies`, `dawdreamer_vital_goodies_pedalboard`, `dawdreamer_vital_delayed_flight`, `dawdreamer_vital_delayed_flight_pedalboard`.
-- `config/benchmark/` — 8 parametric study configs plus a `README.md`: `reverb_sweep`, `compression_sweep`, `distortion_sweep`, `effects_combinations`, `synthesis_backends`, `benchmark_test` (smoke test), `guitarset_test` (guitar smoke test, MIDI-input mode rendering the converted references), `gaps_test` (long-form classical-guitar smoke test, audio-input mode, `save_audio: false` and `dtw.enabled: false`). `config/benchmark/paper_experiments/` holds paper-run studies (`piano_only`, `guitar_only`).
-
-### GPU support
-
-The `[gpu]` optional extras (`uv sync --extra gpu`, Linux x86_64 only) install `tensorflow[and-cuda]` to enable GPU inference for Basic Pitch. Set `device: GPU:0` (or the relevant TF device string) on any `basic_pitch` transcriber entry in the `transcription.transcribers` list. The default is `device: cpu`.
-
-Docker GPU passthrough is a profile on the single `docker/docker-compose.yml` (`--profile gpu`, service `sonitra-gpu`; `--profile cpu`/service `sonitra` for the default build — a profile is always required, there is no profile-less default). Devcontainer GPU passthrough is a separate override file, `.devcontainer/docker-compose.gpu.yml` (added to the `dockerComposeFile` array in `devcontainer.json`), since VS Code's Dev Containers tooling doesn't support Compose profiles.
+- **Backends**: each swappable component is a `runtime_checkable` Protocol plus a `make_*` factory driven by config.
+  - Transcribers, metrics and separators also register via decorators (e.g. `@register_transcriber("basic_pitch")`).
+  - Factories import backend modules lazily, so optional dependencies never load at import time. Never import a backend at package top level.
+- **Config** (`config.py`): one Pydantic `PipelineConfig` tree.
+  - Every section is `extra="forbid"`; validation failures raise `ConfigError`.
+  - `config/source.yaml` documents every key (reference only, not runnable).
+  - By `synth_backend`: `fluidsynth` requires `fluidsynth.soundfont_path`; `dawdreamer_vst` requires `dawdreamer.plugin_path`; `dawdreamer_faust` forbids it.
+  - DawDreamer/JUCE is not thread-safe: call `validate_worker_constraint()` before parallelising (forces `render_pipeline.max_workers=1`).
+- **Synth** (`synth/`): `make_synth` dispatches on `render_pipeline.synth_backend`; `pedalboard_instrument` with no plugin falls back to FluidSynth when a SoundFont is set.
+- **Pipeline** (`pipeline.py`): `run_pipeline(config=...)` is the real path; `engine=` is legacy. Per file: load → synth → normalise → effects → normalise → quality gate → write, logged to `renders.jsonl`.
+- **Benchmark** (`benchmark/`): expands conditions/sweeps into dotted-path overrides (`pedalboard.effects.1.wet_level`), then renders, transcribes and scores each. Writes per-file JSONL, `summary.json` (summary + degradation vs. `baseline`) and the resolved `config.yaml`.
+- **Evaluation** (`evaluation/`): NumPy/SciPy metrics with mir_eval-compatible matching (no mir_eval dependency). Keys are `"<metric>.<key>"`; undefined values are `NaN` and aggregation skips them.
+- **API** (`api/`): FastAPI; renders are serialised by an `asyncio.Lock`. Schema changes require regenerating `tests/api/openapi_snapshot.json`.
+- **Scripts** (`scripts/`): standalone dataset and analysis tools; `--help` and `docs/` hold usage.
+  - `download_datasets.py` stays stdlib-only (`rich` optional); dataset revisions are pinned to commit SHAs, never `main`.
+  - `check_dataset.py` pairs via `sonitra.corpus.pair_audio_to_reference`; never re-implement pairing.
+  - `run_mixed_effects_analysis.py` fits in R via `Rscript`. Do not alter its base model spec.
+  - Scripts that write files must never overwrite their inputs.
+- **Configs**: `config/examples/` holds presets (used by `run_transcribe_eval.py` and roundtrip tests); `config/benchmark/` holds benchmark studies; test fixtures live in `tests/fixtures/`.
+- **GPU**: set `device: GPU:0` on a `basic_pitch` transcriber; Docker needs `--profile gpu` or `--profile cpu` (no default profile).
 
 ## Conventions
 
-- `from __future__ import annotations` at the top of every module; type everything.
-- New tunable behaviour goes through the Pydantic config tree, not function kwargs — keep `extra="forbid"` working by updating the relevant section.
-- Pipeline/benchmark/CLI loops are fail-soft: log a structured per-item record and continue rather than raising out of a batch.
-- `research.md` is the literature survey backing the metric choices; cite it when changing metric definitions.
-- `basic-pitch` is a **core dependency** (in `dependencies`, not just extras). The `[basicpitch]` extra remains as a backward-compatible alias only.
+- `from __future__ import annotations` in every module; type everything.
+- New tunables go through the config tree (keep `extra="forbid"` valid), not function kwargs.
+- Batch loops are fail-soft: log a per-item record and continue.
+- Cite `docs/research.md` when changing a metric definition.
+- `basic-pitch` is a core dependency; the `[basicpitch]` extra is only an alias.
+- **Module docstrings** must be very concise and self-explanatory:
+  - A one-line summary, plus at most a few short lines on essential behaviour.
+  - Understandable without external context: no references to plans, phases, tickets, upstream code or other files unless needed to use the module.
+  - No usage examples, flag lists, output schemas or design history; put those in `--help`, function docstrings, comments or `docs/`.
+- Keep this file concise: add only essential facts an agent cannot quickly derive from the code.

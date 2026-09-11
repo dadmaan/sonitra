@@ -1,10 +1,4 @@
-"""MidiSource program-inheritance tests.
-
-Covers the ``source.py`` slice of the fluidsynth program-support plan:
-``MidiSource.load`` derives a per-file program from the ``programs`` key of
-the ``parse_midi(..., return_meta=True)`` meta dict and passes it as a
-keyword-only ``program=`` argument to ``synth.render``.
-"""
+"""Tests that ``MidiSource`` passes each MIDI file's program to the synthesiser."""
 
 from __future__ import annotations
 

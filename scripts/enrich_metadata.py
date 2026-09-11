@@ -1,27 +1,7 @@
-"""Left-join an auxiliary annotation table onto a dataset metadata CSV.
+"""Left-join a delimited annotation table onto a dataset metadata CSV.
 
-Takes any delimited annotation table (e.g. ``misc/MAESTRO_comp_year.txt``, an
-AI-compiled composition year per MAESTRO work) and joins it onto any dataset
-metadata CSV on a composite key (e.g. ``canonical_composer`` + ``canonical_title``),
-producing an enriched metadata CSV that drops into the existing, unmodified
-``scripts/export_regression_table.py --metadata-csv`` flow.
-
-The two sides need different quoting: the base metadata CSV is RFC4180 (MAESTRO
-titles contain commas and quotes), while the annotation file must be parsed with
-quoting *disabled* -- its unbalanced double quotes (e.g. ``"Wachet  auf, ruft uns
-die Stimme' BWV 645``) make ``csv.reader`` swallow rows into a single field.
-Hence ``--annotations-quotechar`` defaults to None (manual split, QUOTE_NONE
-semantics); pass an explicit quotechar for RFC4180 annotation files.
-
-Usage:
-    python scripts/enrich_metadata.py \\
-        --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \\
-        --annotations misc/MAESTRO_comp_year.txt \\
-        --annotations-delimiter '|' \\
-        --on 'canonical_composer=Composer' \\
-        --on 'canonical_title=Piece' \\
-        --add 'Year=composition_year' \\
-        --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv
+Rows match on a composite key; unmatched rows get blank cells. Annotation
+quoting is disabled by default so stray quotes cannot merge rows.
 """
 
 from __future__ import annotations
