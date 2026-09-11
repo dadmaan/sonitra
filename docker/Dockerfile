@@ -20,6 +20,17 @@
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim AS builder
 
+# apt runs unattended during a build. Without a non-interactive frontend,
+# any package whose postinst calls debconf will open a prompt that BuildKit
+# gives no stdin to answer, and the build hangs indefinitely rather than
+# failing — tzdata, pulled in transitively by r-base-core in the runtime
+# stages below, asks for a geographic area and does exactly this.
+#
+# Declared as ARG, not ENV, so it applies only while building and never
+# leaks into the shipped image, where `docker exec` + apt should still get
+# the normal interactive frontend.
+ARG DEBIAN_FRONTEND=noninteractive
+
 # System packages needed only at build time (compilers, headers).
 # Most project dependencies ship as manylinux wheels so this layer is a
 # lightweight safety net rather than a heavy compilation environment.
@@ -59,6 +70,17 @@ RUN uv sync --frozen --no-dev
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim AS runtime
 
+# Build-only non-interactive apt frontend — see the builder stage above.
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Fix the container timezone explicitly. This gives tzdata (installed as a
+# dependency of r-base-core below) an already-answered configuration to find,
+# and pins container-local timestamps to Oslo wall-clock time regardless of
+# the host's own timezone. glibc reads TZ directly, so overriding it at run
+# time (`-e TZ=...`, or `environment:` in docker-compose.yml) is enough to
+# shift a single container without rebuilding.
+ENV TZ=Europe/Oslo
+
 # UID/GID for the non-root `sonitra` user, overridable at build time so it
 # matches the host user on native Linux hosts (docker-compose.yml passes
 # these through as HOST_UID/HOST_GID). On Linux, bind mounts share the host
@@ -79,7 +101,12 @@ ARG HOST_GID=1000
 #   libgl1            — tensorflow/basic-pitch: indirect OpenGL dep on headless Linux
 #   gosu              — step-down privilege tool used by the entrypoint
 #   tmux              — interactive terminal multiplexer for `docker exec` sessions
-RUN apt-get update \
+#
+# /etc/localtime and /etc/timezone are seeded before the first apt call so
+# tzdata's postinst finds the timezone already chosen (see ENV TZ above).
+RUN ln -snf /usr/share/zoneinfo/Europe/Oslo /etc/localtime \
+    && echo Europe/Oslo > /etc/timezone \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         libsndfile1 \
         libfftw3-double3 \
@@ -195,6 +222,12 @@ CMD ["sonitra", "serve", "--port", "8000"]
 # ---------------------------------------------------------------------------
 FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS runtime-gpu
 
+# Build-only non-interactive apt frontend + fixed timezone — see the builder
+# and runtime stages above. This stage is where the tzdata prompt actually
+# bit: jammy's r-base-core drags tzdata in unconfigured.
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Oslo
+
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 
@@ -211,7 +244,12 @@ ARG HOST_GID=1000
 # python3.11, and the venv's own python binary is a symlink to it rather
 # than a self-contained copy — so this stage must expose python3.11 at the
 # exact same /usr/local/bin/python3(.11) path for that symlink to resolve.
-RUN apt-get update \
+#
+# /etc/localtime and /etc/timezone are seeded before the first apt call so
+# tzdata's postinst finds the timezone already chosen (see ENV TZ above).
+RUN ln -snf /usr/share/zoneinfo/Europe/Oslo /etc/localtime \
+    && echo Europe/Oslo > /etc/timezone \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         python3.11 \
         python3.11-venv \
