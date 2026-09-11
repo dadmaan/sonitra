@@ -11,12 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - GAPS (Guitar-Aligned Performance Scores v1.1; Riley et al., ISMIR 2024)
   dataset support for the `sonitra benchmark` path:
-  `python scripts/download_datasets.py gaps` fetches 404 long-form
-  classical-guitar recordings (~14 h, 48 kHz/16-bit/stereo WAV) plus aligned
+  `python scripts/download_datasets.py gaps-full` fetches 404 long-form
+  classical-guitar recordings (~23 h, 48 kHz/16-bit/stereo WAV) plus aligned
   MIDI, MusicXML, syncpoints, and the metadata CSV (~15.3 GB) into
   `corpus/gaps/{recordings,midi,annotations/musicxml,annotations/syncpoints,metadata}/`,
   and `config/benchmark/gaps_test.yaml` runs a four-condition smoke test over
-  them. No conversion step: GAPS ships note-level ground truth as `.mid`
+  them. `gaps-midi` fetches only the 404 MIDI references and the metadata CSV
+  (~3 MB) into the same `corpus/gaps/`, enough for MIDI-input runs; its
+  sources are verbatim copies of `gaps-full`'s at the same pinned revision, so
+  `gaps-full` run afterwards checks each MIDI file and skips it when it is
+  already on disk at the listed size, downloading any missing or truncated
+  file (everything when none is present). Each `hf_tree` source prints a
+  `[key] subdir: N already present, M downloaded` line so the re-use is
+  visible. No conversion step: GAPS ships note-level ground truth as `.mid`
   already aligned to the audio timeline, at sounding (not written) pitch, with
   stems identical to the audio. All 404 recordings are kept unfiltered —
   the published split (300 files) and the `f-measure >= 0.75` rule (also 300)
@@ -37,8 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   progress, so an interrupted fetch re-costs only what it had not finished;
   `--force` bypasses the skip. Revisions pin to a commit SHA, never `main`,
   so an upstream release cannot silently change a published benchmark.
-  Registry specs gained an optional `note` field, rendered in a `notes`
-  column in the rich table and appended to the `--list` description. The
+  Registry specs gained a `note` field naming the instrument, what the set
+  holds, and the task it was made for, checked against each dataset's
+  official page or paper; keys sharing a `corpus_subdir` share one note, and
+  tests enforce both. Notes live on their own page, one row per dataset, so
+  the main table stays compact: type `n` in the interactive picker to switch
+  to it (Enter returns), or run `--notes`; `--list` points to `--notes`. The
   script stays standard-library-only — no `huggingface_hub` dependency.
   Covered by new tests in `tests/test_download_datasets.py`; documented in
   `docs/datasets.md`, `config/benchmark/README.md`, `ROADMAP.md`, and
@@ -245,6 +256,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restores note-only files, out-of-range `--program` exits non-zero, and the
   resolved value is recorded in `<csv>.provenance.json`. Covered by
   `tests/test_midi_writer.py` and `tests/test_guitarset_jams_to_midi.py`
+- `docs/custom-datasets.md`: how to benchmark your own MIDI files, or MIDI
+  plus matching recordings — the `corpus/<name>/{midi,recordings,metadata}/`
+  layout, switching to audio-input mode (`render_pipeline.input_type: audio`,
+  `evaluation.dtw.enabled: false`), the file-naming rule the token-prefix
+  pairing needs (with tested good/bad names), and a pre-run checklist
+  (120 BPM first tempo, one GM program, no drum tracks, unique names, no
+  nested symlinked folders). Linked from `README.md`, `docs/datasets.md`, and
+  `docs/configuration.md`. The MIDI-mode tempo mismatch it warns about (render
+  stretched by `native_bpm / render_pipeline.bpm`, reference not) is logged in
+  `ROADMAP.md` as a planned fix
+- `scripts/check_dataset.py`: pre-run check for a custom dataset folder.
+  Reports recordings that pair with no MIDI file or several (via
+  `sonitra.corpus.pair_audio_to_reference` itself), MIDI names that can never
+  pair, MIDI files whose first tempo differs from the render tempo, several
+  programs, drum-channel notes, empty/unreadable MIDI, ignored file endings,
+  recordings left in `audio/`, and skipped nested symlinks; exits 1 on any
+  error. Proposes renames only for case/separator mismatches that the pairing
+  code confirms, writes them to a reviewable CSV (`--plan`), and applies them
+  all-or-nothing with an undo plan (`--apply`). Covered by
+  `tests/test_check_dataset.py`
+- `sonitra.corpus.PairingResult.ambiguous`: maps each ambiguously matched
+  recording to its candidate MIDI files (previously only the log said which
+  unpaired files were ambiguous). Covered by `tests/test_audio_corpus.py`
 
 ### Changed
 
@@ -267,6 +301,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `regression_table_with_metadata.csv` to `regression_table.csv` to match
   `export_regression_table.py` output
 - `.gitignore`: ignore `misc/` local workspace
+- `config/benchmark/gaps_test.yaml`: smoke test now runs in MIDI-input
+  mode (`input_type: midi`) with a concrete `fluidsynth.soundfont_path`
+  (`/usr/share/sounds/sf2/default-GM.sf2`) instead of audio-input mode
+  where the SoundFont was `null` and inert; the GAPS corpus is now
+  fetched via `gaps-midi` (MIDI only, ~3 MB) or `gaps-full` (adds
+  recordings, ~15.3 GB). `AGENT.md` now notes `guitarset_test` as
+  MIDI-input and corrects the GAPS duration from 14 h to ~23 h
 - `pyproject.toml` now declares the licence as an SPDX identifier
   (`AGPL-3.0-or-later`), previously omitted; the README licence section
   notes third-party GPLv3 components (`pedalboard`, `dawdreamer`) and
@@ -274,6 +315,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `sonitra render|transcribe|evaluate|benchmark --help`: the `--dataset` help
+  text named the pre-dataset-first layout (`corpus/midi/{dataset}/`, outputs
+  under `corpus/{subdir}/{dataset}/`); it now says inputs and outputs live
+  under `corpus/{dataset}/` and that the flag overrides `io.dataset`. Covered
+  by `tests/test_cli.py`
 - `scripts/download_datasets.py`: failed downloads are now visible — the rich
   display no longer swallows per-dataset errors (each failure prints
   `[error] <name>: <message>` to stderr during the run, with a final

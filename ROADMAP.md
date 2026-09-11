@@ -43,10 +43,11 @@ notes turned once into MIDI with
 `scripts/guitarset_jams_to_midi.py`) is ready. Its 6-channel hex-pickup
 tracks (`hex-pickup_original` and `_debleeded`) are on hold. `read_audio`
 reads all channels and `write_audio` will not mix them down, so Sonitra needs render-path work first.
-GAPS (Guitar-Aligned Performance Scores, `gaps`) is ready too: 404
-classical-guitar recordings, about 14 hours, made everywhere from studios to
+GAPS (Guitar-Aligned Performance Scores, `gaps-midi` for the MIDI alone or
+`gaps-full` with the audio) is ready too: 404
+classical-guitar recordings, about 23 hours, made everywhere from studios to
 phone microphones, with score MIDI already lined up to the audio. It needs no
-conversion step. It is the first entry served from Hugging Face rather than
+conversion step. `gaps-full` re-uses any MIDI `gaps-midi` already fetched. It is the first entry served from Hugging Face rather than
 from one archive file, so the script gained a `hf_tree` source kind that lists
 a folder through the Hugging Face tree API and fetches each file at a pinned
 commit. Any future Hugging-Face-hosted set can reuse it.
@@ -102,6 +103,21 @@ than MAESTRO. `scripts/download_datasets.py bsed` already fetches real
 recordings into `corpus/bsed/recordings/` next to `corpus/bsed/midi/`. Both sides
 share a `BSED-<NN>_...` name start. So Sonitra can link a score to its recordings by
 file name, with no CSV lookup.
+
+## MIDI tempo handling in rendered audio
+
+**Status:** Not yet started.
+
+Sonitra renders MIDI at `render_pipeline.bpm` (120 by default) and stretches
+each file's timing by the ratio between the file's own first tempo and that
+setting, but it still scores against the file's unstretched timing. A MIDI
+file whose first tempo is not 120 BPM therefore renders at the wrong speed
+relative to its reference, and scores come out wrong. The built-in benchmark
+sets are all written at 120 BPM, so they are unaffected today, but this bites
+anyone bringing their own MIDI at another tempo (see
+[docs/custom-datasets.md](docs/custom-datasets.md)). The planned fix makes
+the render follow each MIDI file's own timing, so the render and the
+reference line up whatever tempo the file was saved at.
 
 ## Note-level performance-alignment annotations (BSED)
 

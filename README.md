@@ -154,6 +154,8 @@ io:
 
 For VST3 instrument and preset setup and the SoundFont fallback, see [docs/plugins.md](docs/plugins.md). VST3 is a common plugin format. A SoundFont is a file of sampled sounds.
 
+Bringing your own MIDI, or MIDI plus matching recordings? See [docs/custom-datasets.md](docs/custom-datasets.md) for the folder layout and naming rules.
+
 ## Quick start
 
 Run these steps to do your first full test. Render means turn scores into audio. Transcribe means turn audio back into notes. Evaluate means score the notes:
