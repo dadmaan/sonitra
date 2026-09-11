@@ -51,7 +51,11 @@ class PipelineSection(BaseModel):
     synth_backend: SynthBackend
     effects_chain: EffectsChain
     input_type: InputType = Field(default=InputType.MIDI)
-    bpm: int = Field(default=120, ge=1)
+    bpm: int = Field(
+        default=120,
+        ge=1,
+        description="Host tempo for tempo-synced plugins and FluidSynth's temporary-MIDI tick grid; notes follow the MIDI file's own tempo map",
+    )
     sample_rate: int
     bit_depth: int
     channels: int

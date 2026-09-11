@@ -29,8 +29,7 @@ MIDI means a digital score file.
 
 `scripts/download_datasets.py` now fetches MAESTRO V3.0.0 (piano, `-midi`,
 `-wav`, and `-full` options), BSED (orchestral, Beethoven symphony clips, MIDI plus real
-recordings), MusicNet (chamber and orchestral music with many instruments, MIDI plus audio plus per-note
-label CSVs), and the Expanded Groove MIDI Dataset (drums, `-midi` and `-full`; download-only,
+recordings), MusicNet (chamber and orchestral music with many instruments, `musicnet-midi` for score MIDI only, ~4 MB, or `musicnet-full` for 34 h of recordings plus label CSVs and a score-MIDI copy, ~10.6 GB, needs `scripts/musicnet_labels_to_midi.py` to build aligned MIDI), and the Expanded Groove MIDI Dataset (drums, `-midi` and `-full`; download-only,
 because Sonitra tests pitched instruments like piano, not drum hits).
 The script also has a picker table you can click through and parallel
 downloads with `--jobs N`. Each entry can pull from more than one link or file type
@@ -103,21 +102,6 @@ than MAESTRO. `scripts/download_datasets.py bsed` already fetches real
 recordings into `corpus/bsed/recordings/` next to `corpus/bsed/midi/`. Both sides
 share a `BSED-<NN>_...` name start. So Sonitra can link a score to its recordings by
 file name, with no CSV lookup.
-
-## MIDI tempo handling in rendered audio
-
-**Status:** Not yet started.
-
-Sonitra renders MIDI at `render_pipeline.bpm` (120 by default) and stretches
-each file's timing by the ratio between the file's own first tempo and that
-setting, but it still scores against the file's unstretched timing. A MIDI
-file whose first tempo is not 120 BPM therefore renders at the wrong speed
-relative to its reference, and scores come out wrong. The built-in benchmark
-sets are all written at 120 BPM, so they are unaffected today, but this bites
-anyone bringing their own MIDI at another tempo (see
-[docs/custom-datasets.md](docs/custom-datasets.md)). The planned fix makes
-the render follow each MIDI file's own timing, so the render and the
-reference line up whatever tempo the file was saved at.
 
 ## Note-level performance-alignment annotations (BSED)
 

@@ -41,8 +41,7 @@ flowchart TB
 flowchart LR
     midi[("MIDI file")]
     parse["1. parse_midi (note dicts)"]
-    tempo["2. Tempo rescale (native BPM → render_pipeline.bpm)"]
-    synth["3. synth.render (per-thread backend)"]
+    synth["2. synth.render (per-thread backend)"]
     audio_in[("Audio file (recordings/)")]
     read["read_audio"]
     pre["Pre-normalise (only if pre_effects)"]
@@ -52,14 +51,14 @@ flowchart LR
     write["write_audio (wav / flac / mp3)"]
     manifest[("Manifest (renders.jsonl + .failed.txt)")]
 
-    midi --> parse --> tempo --> synth --> pre
+    midi --> parse --> synth --> pre
     audio_in --> read --> pre
     pre --> fx --> post --> gate
     gate -- pass --> write --> manifest
     gate -- fail --> manifest
 ```
 
-In audio mode the synth stage is skipped: `read_audio` replaces `parse_midi` → tempo rescale → `synth.render`. Audio-mode manifest entries record `source_path` (the source recording) alongside the usual fields.
+In audio mode the synth stage is skipped: `read_audio` replaces `parse_midi` → `synth.render`. Audio-mode manifest entries record `source_path` (the source recording) alongside the usual fields.
 
 ## Pluggable-backend idiom
 
