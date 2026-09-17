@@ -269,7 +269,10 @@ def test_basic_pitch_config_still_forbids_unknown_keys() -> None:
 def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
     config_dir = Path(__file__).parent.parent / "config"
     runnable = sorted(p for p in config_dir.rglob("*.yaml") if p.name != "source.yaml")
-    assert len(runnable) == 32
+    # Guard that the glob still finds both config trees rather than pinning an
+    # exact count, which goes stale every time a preset or study is added.
+    found = {p.relative_to(config_dir).parts[0] for p in runnable}
+    assert found == {"benchmark", "examples"}, found
 
     for path in runnable:
         cfg = load_config(path)

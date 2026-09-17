@@ -163,3 +163,4 @@ preset/
 docker/amt_models
 misc/
 dashboard/
+.zed/

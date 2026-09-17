@@ -5,7 +5,7 @@ import sys
 from contextlib import ExitStack
 from pathlib import PurePath
 from types import TracebackType
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -25,8 +25,13 @@ from rich.progress import (
 )
 from rich.text import Text
 
-from sonitra.benchmark.results import BenchmarkRecord, WorkerEvent
 from sonitra.config import PipelineConfig
+
+if TYPE_CHECKING:
+    # Annotation-only: importing sonitra.benchmark at runtime would pull in
+    # benchmark.runner -> pipeline -> pedalboard/dawdreamer, making every
+    # console helper (and `sonitra --help`) depend on the heavy render stack.
+    from sonitra.benchmark.results import WorkerEvent
 
 _console: Console | None = None
 logger = logging.getLogger(__name__)
