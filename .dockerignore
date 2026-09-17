@@ -1,6 +1,3 @@
-# =============================================================================
-# Docker Ignore - ARIA Music Generation
-# =============================================================================
 
 # Python cache and bytecode
 __pycache__/
@@ -87,3 +84,4 @@ Thumbs.db
 desktop.ini
 TODO.md
 notes/
+corpus/

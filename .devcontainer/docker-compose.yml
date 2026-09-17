@@ -25,6 +25,10 @@ services:
       # Mount local notes directory. Set LOCAL_NOTES_DIR env var, or default to
       # the project-root .local/notes folder relative to this compose file.
       - ${LOCAL_NOTES_DIR:-../.local/notes}:/workspace/.local/notes
+      # Mount local corpus directory (datasets: midi, recordings, audio,
+      # transcription, eval_results). Set LOCAL_CORPUS_DIR env var, or default
+      # to the project-root corpus folder relative to this compose file.
+      - ${LOCAL_CORPUS_DIR:-../corpus}:/workspace/corpus
     environment:
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE:-4096}
       JUPYTER_ENABLED: ${JUPYTER_ENABLED:-true}
