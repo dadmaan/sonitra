@@ -49,11 +49,23 @@ class PrecomputedTranscriberConfig(_TranscriberBase):
     extensions: list[str] = Field(default_factory=lambda: [".mid", ".midi"])
 
 
+class TranskunTranscriberConfig(_TranscriberBase):
+    """TransKun piano transcription (requires `pip install sonitra[transkun]`)."""
+
+    type: Literal["transkun"] = "transkun"
+    device: str = "cpu"
+    segment_size_sec: float | None = None
+    segment_hop_sec: float | None = None
+    weights_path: Path | str | None = None
+    conf_path: Path | str | None = None
+
+
 TranscriberConfig = Annotated[
     Union[
         BasicPitchTranscriberConfig,
         ExternalCommandTranscriberConfig,
         PrecomputedTranscriberConfig,
+        TranskunTranscriberConfig,
     ],
     Field(discriminator="type"),
 ]

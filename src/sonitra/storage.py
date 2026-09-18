@@ -43,6 +43,24 @@ def read_audio(path: Path | str) -> tuple[np.ndarray, int]:
     return np.asarray(audio, dtype=np.float32), sample_rate
 
 
+def read_audio_resampled(
+    path: Path | str, target_sr: int = 44100
+) -> tuple[np.ndarray, int]:
+    """Read audio resampled to ``target_sr`` via pedalboard.
+
+    Uses ``AudioFile(path).resampled_to(target_sr)`` so wav/flac/mp3
+    are handled without ffmpeg. Returns ``(channels, samples)`` float32
+    and the target sample rate.
+    """
+    input_path = Path(path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {input_path}")
+    with AudioFile(str(input_path)).resampled_to(target_sr) as f:
+        audio = f.read(f.frames)
+        sample_rate = int(f.samplerate)
+    return np.asarray(audio, dtype=np.float32), sample_rate
+
+
 def derive_output_path(midi_path: Path | str, *, out_dir: Path | str, ext: str = ".wav") -> Path:
     midi = Path(midi_path)
     out_dir = Path(out_dir)
