@@ -8,6 +8,7 @@ inside writers; registration happens at import time.
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
@@ -67,13 +68,34 @@ def _collect_note_events(
     Returns:
         Sorted list of ``(time_sec, sort_key, message)`` where ``sort_key`` ensures
         ``note_off`` sorts before ``note_on`` at the same instant.
+
+    Raises:
+        ValueError: If ``velocity``, ``start_sec`` or ``duration_sec`` is
+            non-finite (NaN/+-Inf). This bypasses ``sonitra.notes.make_note``
+            for byte-identical reuse, but a non-finite field is a producer
+            bug here too -- a bare ``float()`` cast would otherwise let NaN
+            or Inf silently defeat the clamps below.
     """
     events: list[tuple[float, int, mido.Message]] = []
     for note in notes:
         pitch = int(note["pitch"])
-        velocity = max(1, min(127, int(note.get("velocity", 64))))
-        start = max(0.0, float(note["start_sec"]))
-        duration = float(note["duration_sec"])
+
+        velocity_raw = note.get("velocity", 64)
+        velocity_float = float(velocity_raw)
+        if not math.isfinite(velocity_float):
+            raise ValueError(f"velocity must be a finite number, got {velocity_raw!r}")
+        velocity = max(1, min(127, int(velocity_float)))
+
+        start_raw = note["start_sec"]
+        start_float = float(start_raw)
+        if not math.isfinite(start_float):
+            raise ValueError(f"start_sec must be a finite number, got {start_raw!r}")
+        start = max(0.0, start_float)
+
+        duration_raw = note["duration_sec"]
+        duration = float(duration_raw)
+        if not math.isfinite(duration):
+            raise ValueError(f"duration_sec must be a finite number, got {duration_raw!r}")
         if duration <= 0.0:
             continue
         channel = int(channel_for_note(note))

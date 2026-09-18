@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,31 @@ def test_zero_duration_notes_are_dropped(tmp_path: Path) -> None:
     output = write_midi(notes, tmp_path / "out.mid")
     rebuilt = parse_midi(output)
     assert [note["pitch"] for note in rebuilt] == [64]
+
+
+# ── non-finite note fields: _collect_note_events bypasses make_note and
+# reimplements the same clamps inline, so it needs the same finite guard. ──
+
+
+@pytest.mark.parametrize("bad_duration", [math.nan, math.inf, -math.inf])
+def test_write_midi_rejects_non_finite_duration(tmp_path: Path, bad_duration: float) -> None:
+    notes = [{"pitch": 60, "velocity": 100, "start_sec": 0.0, "duration_sec": bad_duration}]
+    with pytest.raises(ValueError, match="duration_sec"):
+        write_midi(notes, tmp_path / "out.mid")
+
+
+@pytest.mark.parametrize("bad_start", [math.nan, math.inf, -math.inf])
+def test_write_midi_rejects_non_finite_start(tmp_path: Path, bad_start: float) -> None:
+    notes = [{"pitch": 60, "velocity": 100, "start_sec": bad_start, "duration_sec": 1.0}]
+    with pytest.raises(ValueError, match="start_sec"):
+        write_midi(notes, tmp_path / "out.mid")
+
+
+@pytest.mark.parametrize("bad_velocity", [math.nan, math.inf, -math.inf])
+def test_write_midi_rejects_non_finite_velocity(tmp_path: Path, bad_velocity: float) -> None:
+    notes = [{"pitch": 60, "velocity": bad_velocity, "start_sec": 0.0, "duration_sec": 1.0}]
+    with pytest.raises(ValueError, match="velocity"):
+        write_midi(notes, tmp_path / "out.mid")
 
 
 def test_same_pitch_retrigger_survives_round_trip(tmp_path: Path) -> None:
