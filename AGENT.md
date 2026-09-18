@@ -51,6 +51,7 @@ uv run pytest tests/ -m "not slow"        # skip heavy backends (basic-pitch)
 - `from __future__ import annotations` in every module; type everything.
 - New tunables go through the config tree (keep `extra="forbid"` valid), not function kwargs.
 - Batch loops are fail-soft: log a per-item record and continue.
+- Note dict contract (`src/sonitra/notes.py:make_note`): `pitch` 0..127 raises `ValueError`, `velocity` clamps 1..127, `start_sec` clamps >=0, `duration_sec <= 0` drops via `None`; output is sorted by `(start_sec, pitch)`. Every producer (transcriber, converter, test helper) must route notes through `make_note`; check results with `tests/helpers.py::assert_notes_satisfy_contract`. `TranscriptionResult.backend_type` is the fixed `type` discriminator used for the writer registry; `transcriber` is the user-overridable `name`.
 - Cite `docs/research.md` when changing a metric definition.
 - `basic-pitch` is a core dependency; the `[basicpitch]` extra is only an alias.
 - **Module docstrings** must be very concise and self-explanatory:

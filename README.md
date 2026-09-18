@@ -187,7 +187,7 @@ See [docs/cli.md](docs/cli.md) for the full flag list, such as explicit path fla
 
 `config/source.yaml` is the full sample config. It explains every setting. Make a small starter with `sonitra init --config config.yaml`. Sonitra checks the config with Pydantic, a Python validation tool. It uses `extra="forbid"`, which means unknown keys stop the run with an error.
 
-See [docs/configuration.md](docs/configuration.md) for the full section guide, synth and effects tables, and transcription options.
+See [docs/configuration.md](docs/configuration.md) for the full section guide, synth and effects tables, and transcription options. For model details see [docs/model-cards.md](docs/model-cards.md). To add a new backend see [docs/adding-a-transcriber.md](docs/adding-a-transcriber.md).
 
 ## Evaluation metrics
 

@@ -61,9 +61,9 @@ multi-instrument sets such as Slakh2100, and auto downloads for them.
 
 ## Additional transcription backends
 
-**Status:** Not yet started.
+**Status:** TransKun landed. More backends still planned.
 
-Sonitra now uses Basic Pitch and a generic `external_command` tool. Basic Pitch is Spotify's free transcription tool. `external_command` lets you call any outside transcriber. Direct support for more AMT tools, such as MT3 and Omnizart, is being considered. MT3 is a Google multi-instrument transcription model.
+Sonitra now uses Basic Pitch and TransKun plus generic `precomputed` and `external_command` adapters. Basic Pitch is Spotify's free transcription tool. TransKun is a PyTorch piano tool (Transformer encoder into neural semi-CRF, MIT, v2.0.1) that you add with `pip install sonitra[transkun]` and `type: transkun`. `external_command` lets you call any outside transcriber. Direct support for more AMT tools, such as MT3 and Omnizart, is still planned. MT3 is a Google multi-instrument transcription model. See [Model cards](docs/model-cards.md) and [Adding a transcriber](docs/adding-a-transcriber.md).
 
 ## User-facing documentation site (Zensical)
 

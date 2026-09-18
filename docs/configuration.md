@@ -49,6 +49,7 @@ A transcriber turns audio back into notes. AMT means automatic music transcripti
 | Backend | `type` value | Notes |
 |---|---|---|
 | Spotify Basic Pitch | `basic_pitch` | Installed by default; supports `device` field (default: `cpu`; set to `GPU:0` for GPU inference — requires `[gpu]` extras on Linux x86_64) |
+| TransKun | `transkun` | Piano only; requires `pip install sonitra[transkun]` (bundled 56 MB checkpoint, PyTorch). Supports `device` values `cpu`, `cuda`, `cuda:1`, `mps` and `GPU:0` (translated to `cuda:0` internally). See `config/source.yaml` commented block and `config/benchmark/transkun_baseline.yaml` |
 | Pre-exported MIDI | `precomputed` | Point at a directory of MIDI from external tools |
 | Any CLI tool | `external_command` | Template: `"tool transcribe {input} -o {output}"` |
 

@@ -20,7 +20,7 @@ flowchart TB
     subgraph process["Process"]
         direction TB
         sep["Stem separation (optional, benchmark only) (Demucs · Passthrough)"]
-        tx["Transcription (Basic Pitch · Precomputed · External)"]
+        tx["Transcription (Basic Pitch · TransKun · Precomputed · External)"]
         eval["Evaluation (Note · Frame · Expressive · DTW)"]
         audio --> tx
         audio -.-> sep -.-> tx
@@ -36,6 +36,8 @@ flowchart TB
 ```
 
 `render_pipeline.input_type: midi | audio` selects the render input: MIDI renders via synthesis, audio reads the source recording directly (synth skipped). Evaluation always uses the reference MIDIs in `midi/`. Stem separation and DTW run only inside `sonitra benchmark`; the standalone `transcribe` / `evaluate` commands skip them.
+
+The canonical note dict contract lives in `src/sonitra/notes.py` (`make_note` / `normalise_notes`). Producers must route notes through `make_note` and consumers check with `tests/helpers.py::assert_notes_satisfy_contract`. The helper checks pitch, velocity, start, duration and sorted order.
 
 ## Render path (per file)
 
@@ -88,7 +90,7 @@ flowchart TB
 
     subgraph families["Where it applies"]
         direction TB
-        t1["Transcribers (register_transcriber → make_transcriber)"]
+        t1["Transcribers (Basic Pitch · TransKun · Precomputed · External) (register_transcriber → make_transcriber)"]
         s1["Separators (register_separator → make_separator)"]
         m1["Metrics (register_symbolic_metric / register_audio_metric)"]
         x1["Synthesisers: exception (make_synth = if/elif dispatch over SynthBackend, no registry)"]
