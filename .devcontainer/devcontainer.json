@@ -54,6 +54,6 @@
     8000,
     8888
   ],
-  "postCreateCommand": ["python", "-m", "sonitra.cli"],
+  "postCreateCommand": ["bash", ".devcontainer/post-create.sh"],
   "postStartCommand": ["python", "--version"]
 }

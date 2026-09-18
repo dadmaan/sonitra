@@ -1,5 +1,6 @@
 # Base stays python:3.11-slim; CUDA 12.2 + cuDNN 8.9 for TF 2.15 are supplied by
 # the [gpu] pip wheels (tensorflow[and-cuda]) when GPU_EXTRAS=gpu, not by the base image.
+# The image also carries uv 0.7.8 for the post-create lock sync (post-create.sh).
 FROM python:3.11-slim
 
 ARG TZ
@@ -198,6 +199,14 @@ RUN mkdir -p /home/node/.jupyter \
   && echo "c.ServerApp.open_browser = False" >> /home/node/.jupyter/jupyter_lab_config.py \
   && echo "c.IdentityProvider.token = ''" >> /home/node/.jupyter/jupyter_lab_config.py \
   && chown -R node:node /home/node/.jupyter
+
+# uv 0.7.8 — the same binary and version as docker/Dockerfile's builder-base, so the
+# devcontainer syncs the lock with the uv that produced it. Copied as the last content
+# layer: nothing above depends on it, and a version bump invalidates only this COPY.
+# The sync itself cannot be baked — /workspace is a bind mount, so anything written to
+# /workspace/.venv at build time is masked at run time. It runs from postCreateCommand
+# instead (devcontainer.json -> .devcontainer/post-create.sh).
+COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 
 # Expose ports for Dash app and Jupyter
 EXPOSE  8888
