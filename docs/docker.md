@@ -109,7 +109,7 @@ echo "INSTALL_TRANSKUN=0" >> .env
 docker compose -f docker/docker-compose.yml --profile cpu build   # or --profile gpu
 ```
 
-The two images carry different torch builds. The CPU image carries CPU torch. The GPU image carries CUDA torch from PyPI. CUDA is NVIDIA's system for running code on the graphics card. The CUDA build needs an R580-series or newer host driver. Verified on driver 581.29 with an RTX 4090: `torch.cuda.is_available()` is True, and TensorFlow 2.15 and torch share one process in both import orders. For a bare-metal install, use `pip install sonitra[transkun]`. The `transkun-gpu` extra is Docker-only. For a bare-metal install on a graphics card, still use the `[gpu]` extra path.
+The two images carry different torch builds. The CPU image carries CPU torch. The GPU image carries CUDA torch from PyPI. CUDA is NVIDIA's system for running code on the graphics card. The CUDA build needs an R580-series or newer host driver. Verified on driver 581.29 with an RTX 4090: `torch.cuda.is_available()` is True, and TensorFlow 2.15 and torch share one process in both import orders. For a bare-metal install, use `pip install sonitra[transkun]`. The `transkun-gpu` extra is for the GPU image and the GPU devcontainer only (see [Devcontainer](devcontainer.md)). For a bare-metal install on a graphics card, still use the `[gpu]` extra path.
 
 TransKun inference now runs on both images. The GPU image copies its Python from `python:3.11-slim-bookworm`, the same 3.11.16 the venv was built with. Ubuntu 22.04's apt Python is the pre-release 3.11.0rc1, which lacks `sys.get_int_max_str_digits`, a function torch's dynamo path calls. TensorFlow and torch still coexist and both see the GPU.
 

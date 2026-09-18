@@ -88,6 +88,10 @@ docker compose -f docker/docker-compose.yml --profile cpu up --build
 
 The REST API is then at `http://localhost:8000`. A REST API lets your programs talk to Sonitra over the web. You must always pass a profile, `cpu` or `gpu`. See [docs/docker.md](docs/docker.md) for GPU use, CLI commands through Compose, and the volume and setting reference.
 
+### Devcontainer
+
+A devcontainer gives you a ready Linux environment in VS Code without installing anything on your machine. See [docs/devcontainer.md](docs/devcontainer.md) for the rebuild path, the create-time backend sync, and the `uv sync` rules.
+
 ### Running commands
 
 `uv run` runs any command inside the managed env with no need to turn it on first:

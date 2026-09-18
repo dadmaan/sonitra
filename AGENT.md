@@ -12,12 +12,14 @@ Guidance for coding agents working in this repository. Deeper detail lives in `A
 ## Commands
 
 ```bash
-uv sync --extra dev                       # install (fallback: pip install -e ".[dev]")
+uv sync --extra dev --extra transkun      # install, CPU fork (GPU: --extra transkun-gpu; fallback: pip install -e ".[dev]")
 uv run pytest tests/                      # always scope to tests/ (no testpaths configured)
 uv run pytest tests/test_config.py::test_name
-uv run pytest tests/ -m "not slow"        # skip heavy backends (basic-pitch)
+uv run pytest tests/ -m "not slow"        # skip heavy backends (basic-pitch, transkun)
+uv run --no-sync pytest tests/ -m slow    # heavy backends only
 ```
 
+- `uv sync` is exact and strips packages the requested set does not name (`transkun`, `torch`, `pytest` among them); re-sync with `--extra ... --extra dev` or run `.devcontainer/post-create.sh` (see `docs/devcontainer.md`). `uv run` is inexact and safe; `--no-sync` mutates nothing.
 - Without `uv`: `python -m pytest tests/`.
 - Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
 - No linter or type-checker config; pytest is the quality gate.

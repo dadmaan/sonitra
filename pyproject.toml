@@ -46,14 +46,16 @@ transkun = [
     "torch==2.12.1",
     "torchaudio==2.11.0",
 ]
-# CUDA fork of the transkun extra for the GPU Docker image
-# (docker/Dockerfile target `runtime-gpu`, installed via `--extra
-# transkun-gpu` in `builder-gpu`). Same pinned transkun; only the torch
-# build differs: `transkun` resolves torch/torchaudio from the PyTorch CPU
-# index on Linux (see [tool.uv.sources] below), while `transkun-gpu` takes
-# PyPI torch - a CUDA 13 build that needs an R580-series (or newer) host
-# driver to see the GPU. The two extras are mutually exclusive under
-# [tool.uv] conflicts, so one uv.lock expresses both Docker builds.
+# CUDA fork of the transkun extra for the two GPU consumers: the production
+# image (docker/Dockerfile target `runtime-gpu`, installed via `--extra
+# transkun-gpu` in `builder-gpu`) and the GPU devcontainer
+# (.devcontainer/post-create.sh, which selects this fork when the image was
+# built with the TensorFlow CUDA wheels). Same pinned transkun; only the
+# torch build differs: `transkun` resolves torch/torchaudio from the PyTorch
+# CPU index on Linux (see [tool.uv.sources] below), while `transkun-gpu`
+# takes PyPI torch - a CUDA 13 build that needs an R580-series (or newer)
+# host driver to see the GPU. The two extras are mutually exclusive under
+# [tool.uv] conflicts, so one uv.lock expresses both forks.
 transkun-gpu = [
     "transkun==2.0.1",
     "torch==2.12.1",
