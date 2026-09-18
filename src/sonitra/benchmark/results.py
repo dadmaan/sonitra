@@ -60,6 +60,11 @@ class WorkerEvent:
     fires once per file); ``status == "start"`` marks a worker beginning one
     (file, transcriber) cell; ``status == "done"`` marks a record produced for
     that cell, with ``ok`` reporting whether the evaluation succeeded.
+
+    ``start`` and ``done`` are not guaranteed to pair: when a render fails the
+    runner emits ``done`` with ``ok=False`` for every pending transcriber and
+    skips the file before any ``start`` is sent. Consumers tracking in-flight
+    cells must tolerate a ``done`` they never saw a ``start`` for.
     """
 
     worker_id: int  # os.getpid() of the worker process (or parent pid in serial mode)

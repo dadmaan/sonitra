@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
 
-from sonitra.cli import init
+from sonitra.cli import evaluate, init
 from sonitra.config import SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
 from sonitra.transcribe.base import TranscriptionResult
@@ -541,3 +542,61 @@ def test_dataset_option_help_names_the_dataset_first_layout(command: str) -> Non
     (option,) = [param for param in click_command.params if "--dataset" in param.opts]
     assert "corpus/{dataset}/" in option.help
     assert "corpus/midi/{dataset}" not in option.help
+
+
+def _write_simple_midi(path: Path, pitch: int = 60) -> None:
+    """Write a one-note MIDI file that parse_midi can read back."""
+    from sonitra.midi_writer import write_midi
+
+    write_midi(
+        [{"pitch": pitch, "velocity": 64, "start_sec": 0.0, "duration_sec": 1.0}],
+        path,
+    )
+
+
+def test_evaluate_is_fail_soft_on_unreadable_reference(tmp_path: Path) -> None:
+    """One corrupt reference must not abort the whole evaluate run.
+
+    parse_midi raises OSError on a file with no MTrk header. Batch loops are
+    fail-soft per AGENT.md: the bad pair is recorded and the run continues.
+    """
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    reference = tmp_path / "reference"
+    estimate = tmp_path / "estimate"
+    reference.mkdir()
+    estimate.mkdir()
+
+    for stem in ("good_a", "good_b", "corrupt"):
+        _write_simple_midi(estimate / f"{stem}.mid")
+    _write_simple_midi(reference / "good_a.mid")
+    _write_simple_midi(reference / "good_b.mid")
+    (reference / "corrupt.mid").write_bytes(
+        b"MThd\x00\x00\x00\x06\x00\x01\x00\x01\x01\xe0GARBAGE"
+    )
+
+    output = tmp_path / "results.jsonl"
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate",
+            "--reference", str(reference),
+            "--estimate", str(estimate),
+            "--output", str(output),
+        ],
+    )
+    assert result.exit_code == 0, f"evaluate aborted: {result.output}"
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    by_file = {row["file"]: row for row in rows}
+
+    # Both readable pairs were scored despite the corrupt sibling.
+    assert "good_a.mid" in by_file
+    assert "good_b.mid" in by_file
+    assert "error" not in by_file["good_a.mid"]
+
+    # The failure is recorded rather than swallowed or fatal.
+    assert "corrupt.mid" in by_file
+    assert "error" in by_file["corrupt.mid"]

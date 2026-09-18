@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import random
@@ -29,6 +30,8 @@ from sonitra.terminal import (
     set_log_level,
     setup_logging,
 )
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="sonitra")
 
@@ -489,11 +492,17 @@ def evaluate(
         if est_path is None:
             return None
         rel = ref_path.relative_to(actual_reference)
-        values = evaluate_notes(
-            notes_from_dicts(parse_midi(ref_path)),
-            notes_from_dicts(parse_midi(est_path)),
-            metrics,
-        )
+        try:
+            values = evaluate_notes(
+                notes_from_dicts(parse_midi(ref_path)),
+                notes_from_dicts(parse_midi(est_path)),
+                metrics,
+            )
+        except Exception as exc:  # noqa: BLE001 - evaluate logs and continues
+            # Unreadable MIDI (parse_midi raises OSError on a missing MTrk
+            # header) or a contract violation must not abort the batch.
+            logger.warning("evaluate failed for %s: %s", rel, exc)
+            return {"file": str(rel), "error": str(exc)}
         return {"file": str(rel), **values}
 
     show_progress = console.is_terminal and not console.quiet
@@ -501,6 +510,7 @@ def evaluate(
         show_progress = show_progress and eval_cfg.observability.progress
 
     rows: list[dict] = []
+    failures: list[dict] = []
     skips = 0
     progress: Progress | None = None
     task_id: Any = None
@@ -516,6 +526,10 @@ def evaluate(
             skips += 1
             if progress is not None and task_id is not None:
                 progress.update(task_id, description=f"evaluate - {skips} skipped")
+        elif "error" in result:
+            failures.append(result)
+            if progress is not None and task_id is not None:
+                progress.update(task_id, description=f"evaluate - {len(failures)} failed")
         else:
             rows.append(result)
 
@@ -533,15 +547,22 @@ def evaluate(
         console.print("[yellow]Interrupted — partial results kept[/yellow]")
         raise typer.Exit(130)
 
-    if not rows:
-        console.print("[red]No reference/estimate pairs evaluated[/red]")
-        raise typer.Exit(code=1)
-
+    # Failure records are written to the JSONL so the run leaves a per-item
+    # trace, but they are kept out of `rows` so means stay over scored pairs.
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8") as handle:
-            for row in rows:
+            for row in [*rows, *failures]:
                 handle.write(json.dumps(row) + "\n")
+
+    if failures:
+        console.print(f"[yellow]{len(failures)} pair(s) failed to evaluate[/yellow]")
+        for row in failures:
+            console.print(f"  [dim]{row['file']}: {row['error']}[/dim]")
+
+    if not rows:
+        console.print("[red]No reference/estimate pairs evaluated[/red]")
+        raise typer.Exit(code=1)
 
     metric_names = sorted({key for row in rows for key in row if key != "file"})
     console.print(f"Evaluated {len(rows)} pairs (mean over files):")
