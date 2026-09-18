@@ -42,6 +42,7 @@ uv run pytest tests/ -m "not slow"        # skip heavy backends (basic-pitch)
   - `download_datasets.py` stays stdlib-only (`rich` optional); dataset revisions are pinned to commit SHAs, never `main`.
   - `check_dataset.py` pairs via `sonitra.corpus.pair_audio_to_reference`; never re-implement pairing.
   - `run_mixed_effects_analysis.py` fits in R via `Rscript`. Do not alter its base model spec.
+  - `export_model_baselines.py` owns the generated block in `docs/model-cards.md`; never hand-edit between `<!-- BEGIN/END GENERATED: baselines -->`. `corpus/` is untracked, so `--check` cannot run in CI.
   - Scripts that write files must never overwrite their inputs.
 - **Configs**: `config/examples/` holds presets (used by `run_transcribe_eval.py` and roundtrip tests); `config/benchmark/` holds benchmark studies; test fixtures live in `tests/fixtures/`.
 - **GPU**: set `device: GPU:0` on a `basic_pitch` transcriber; Docker needs `--profile gpu` or `--profile cpu` (no default profile).
