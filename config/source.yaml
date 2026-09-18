@@ -200,6 +200,13 @@ transcription:
         # - type: external_command
         #   name: my-amt-tool
         #   command: "amt-tool transcribe {input} -o {output}"
+        # TransKun — requires `pip install sonitra[transkun]`:
+        # - type: transkun
+        #   device: cpu               # cuda, cuda:1, mps, or GPU:0 (translated to cuda:0)
+        #   segment_size_sec: null    # null lets bundled conf stay default (16s)
+        #   segment_hop_sec: null     # null lets bundled conf stay default (8s)
+        #   weights_path: null        # null uses bundled checkpoint
+        #   conf_path: null           # null uses bundled conf
 
 evaluation:
     max_workers: 1 # parallel reference/estimate pairs during scoring
