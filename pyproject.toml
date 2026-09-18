@@ -13,11 +13,14 @@ dependencies = [
     "mido",
     "numpy",
     "scipy",
-    # 0.9.25 is excluded: its manylinux x86_64 wheel executes AVX-512
+    # Capped at <0.9.25: 0.9.25's manylinux x86_64 wheel executes AVX-512
     # (vinserti64x2) in a library initialiser, so `import pedalboard`
     # dies with SIGILL on any CPU without AVX-512 (all Intel 12th-14th
     # gen consumer/laptop parts). 0.9.24 and earlier are unaffected.
-    "pedalboard>=0.9.24,!=0.9.25",
+    # The bound is an upper cap rather than an exclusion because no later
+    # release has been checked on a CPU without AVX-512. Lifting the cap
+    # requires `import pedalboard` to succeed on such a CPU first.
+    "pedalboard>=0.9.24,<0.9.25",
     "fastapi",
     "uvicorn[standard]",
     "httpx",

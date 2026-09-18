@@ -324,6 +324,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/sonitra/transcribe/basic_pitch.py` now builds notes via `make_note` (dropping non-positive durations instead of clamping to `0.0` and keeping them) and emits provenance (`package_version`, `device`, `filtered_dropped` etc.) via `checkpoint_identity`; `BasicPitchTranscriber` and `Evaluation` paths now share the same filter so scored estimates and written MIDI no longer diverge
 - `src/sonitra/midi_writer.py:write_transcription_outputs` now dispatches through the `backend_type`-keyed writer registry (`_get_raw_writer`) instead of hard-coding `write_raw_outputs`; `_collect_note_events` gains a typed `channel_for_note` callable annotation
 - `pyproject.toml` `slow` marker description expanded to cover `transkun` in addition to `basic-pitch`
+- `pedalboard` capped at `>=0.9.24,<0.9.25` (was `!=0.9.25`): 0.9.25's
+  manylinux x86_64 wheel dies with SIGILL on CPUs without AVX-512, and no
+  later release has been checked there yet, so the cap blocks every future
+  release until `import pedalboard` succeeds on such a CPU. `uv.lock`
+  relocked (pedalboard 0.9.23 → 0.9.24, plus the `transkun` extra)
 
 ### Fixed
 
