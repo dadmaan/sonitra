@@ -100,5 +100,20 @@ docker compose -f docker/docker-compose.yml --profile cpu build   # or --profile
 
 The two images carry different R versions because they build on different base systems. The CPU image (Debian) has R 4.5 with glmmTMB 1.1.10. The GPU image (Ubuntu 22.04) has R 4.1.2 with glmmTMB 1.1.2.3. Both fit the same model, but small digits may differ between versions. So do not mix results from the two images in one study. Each run saves the exact versions it used in `model_meta.json`.
 
+## TransKun (piano transcription)
+
+Both images include TransKun with its torch build. The build comes from the `transkun` extra in `pyproject.toml`. TransKun is the piano transcription backend you select with `type: transkun`. Torch is the machine-learning library it runs on. So TransKun works with no extra setup on the CPU image. If you never transcribe with TransKun, you can skip it. Set `INSTALL_TRANSKUN=0` in `.env` to leave it out:
+
+```bash
+echo "INSTALL_TRANSKUN=0" >> .env
+docker compose -f docker/docker-compose.yml --profile cpu build   # or --profile gpu
+```
+
+The two images carry different torch builds. The CPU image carries CPU torch. The GPU image carries CUDA torch from PyPI. CUDA is NVIDIA's system for running code on the graphics card. The CUDA build needs an R580-series or newer host driver. Verified on driver 581.29 with an RTX 4090: `torch.cuda.is_available()` is True, and TensorFlow 2.15 and torch share one process in both import orders. For a bare-metal install, use `pip install sonitra[transkun]`. The `transkun-gpu` extra is Docker-only. For a bare-metal install on a graphics card, still use the `[gpu]` extra path.
+
+Known issue: TransKun inference does not run on the GPU image yet. That image's Python is Ubuntu 22.04's 3.11.0rc1, which lacks `sys.get_int_max_str_digits`. Torch's dynamo path calls that function, and TransKun reaches dynamo through `torch.utils.checkpoint`. It fails with `AttributeError: module 'sys' has no attribute 'get_int_max_str_digits'`. The CPU image's Python is newer, so it is not affected. TensorFlow and torch themselves coexist and both see the GPU, so this is an interpreter problem, not a GPU problem. A fix for the GPU image's Python is planned.
+
+Measured sizes with defaults (`INSTALL_R=1`, `INSTALL_TRANSKUN=1`): `sonitra:latest` is 3.68 GB and `sonitra:gpu` is 15.6 GB. With both `INSTALL_R=0` and `INSTALL_TRANSKUN=0`: 2.56 GB and 10.5 GB. The slim figure drops R and TransKun together, so do not read it as TransKun alone.
+
 ---
 [← Back to README](../README.md)
