@@ -67,6 +67,10 @@ services:
         # R + glmmTMB for scripts/run_mixed_effects_analysis.py. Set
         # INSTALL_R=0 in .env to drop ~400 MB if you never fit the model.
         INSTALL_R: ${INSTALL_R:-1}
+        # transkun backend + its torch build (CPU torch in `sonitra`,
+        # CUDA torch in `sonitra-gpu`). Set INSTALL_TRANSKUN=0 in .env
+        # to leave it out of the image.
+        INSTALL_TRANSKUN: ${INSTALL_TRANSKUN:-1}
     image: sonitra:latest
     ports:
       - "8000:8000"
@@ -83,13 +87,17 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: runtime-gpu      # NVIDIA CUDA base image; see Dockerfile Stage 3
+      target: runtime-gpu      # NVIDIA CUDA base image; see Dockerfile Stage 5
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
         # R + glmmTMB for scripts/run_mixed_effects_analysis.py. Set
         # INSTALL_R=0 in .env to drop ~400 MB if you never fit the model.
         INSTALL_R: ${INSTALL_R:-1}
+        # transkun backend + its torch build (CPU torch in `sonitra`,
+        # CUDA torch in `sonitra-gpu`). Set INSTALL_TRANSKUN=0 in .env
+        # to leave it out of the image.
+        INSTALL_TRANSKUN: ${INSTALL_TRANSKUN:-1}
     image: sonitra:gpu
     ports:
       - "8000:8000"

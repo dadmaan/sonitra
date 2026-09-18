@@ -37,6 +37,27 @@ basicpitch = [
 ]
 transkun = [
     "transkun==2.0.1",
+    # Direct torch pins so [tool.uv.sources] below can redirect this
+    # extra's torch to the CPU index on Linux: uv requires a source-extra
+    # package to be a direct member of that extra (transkun itself only
+    # pulls torch transitively, which uv 0.7.8 rejects). Versions pinned to
+    # the current lock so the CPU and CUDA forks differ by build only
+    # (+cpu vs CUDA), never by version.
+    "torch==2.12.1",
+    "torchaudio==2.11.0",
+]
+# CUDA fork of the transkun extra for the GPU Docker image
+# (docker/Dockerfile target `runtime-gpu`, installed via `--extra
+# transkun-gpu` in `builder-gpu`). Same pinned transkun; only the torch
+# build differs: `transkun` resolves torch/torchaudio from the PyTorch CPU
+# index on Linux (see [tool.uv.sources] below), while `transkun-gpu` takes
+# PyPI torch - a CUDA 13 build that needs an R580-series (or newer) host
+# driver to see the GPU. The two extras are mutually exclusive under
+# [tool.uv] conflicts, so one uv.lock expresses both Docker builds.
+transkun-gpu = [
+    "transkun==2.0.1",
+    "torch==2.12.1",
+    "torchaudio==2.11.0",
 ]
 demucs = [
     "demucs",
@@ -53,7 +74,7 @@ gpu = [
     # image (target `runtime-gpu`) no longer uses this extra — it installs
     # CUDA/cuDNN system-wide via apt on an nvidia/cuda base image instead,
     # after this pip-wheel approach hit a reproducible TensorFlow 2.15 GPU
-    # registration bug (see the Dockerfile's Stage 3 comment). Left here for
+    # registration bug (see the Dockerfile's Stage 5 comment). Left here for
     # bare-metal installs where the pip-wheel approach may still be fine.
     #
     # Install nvidia-* CUDA runtime wheels directly instead of
@@ -92,3 +113,32 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 packages = [{include = "sonitra", from = "src"}]
+
+[tool.uv]
+# One lockfile, two torch builds (uv conflicting-extras pattern): `transkun`
+# (CPU torch) and `transkun-gpu` (CUDA torch) are mutually exclusive, so uv
+# resolves each fork separately and one uv.lock expresses both Docker builds
+# (`builder-cpu` syncs `--extra transkun`, `builder-gpu` syncs
+# `--extra transkun-gpu`). `conflicts` verified working on uv 0.7.8: a single
+# transkun/transkun-gpu pair suffices — `demucs` (which also pulls PyPI torch)
+# needed no extra conflict coverage to lock cleanly.
+conflicts = [
+    [{ extra = "transkun" }, { extra = "transkun-gpu" }],
+]
+
+# PyTorch CPU index (explicit: used only where named in [tool.uv.sources]).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+# The `transkun` (CPU) fork takes torch/torchaudio from the PyTorch CPU
+# index on Linux only; every other fork (incl. `transkun-gpu` and `demucs`
+# on all platforms, and `transkun` off Linux) uses default PyPI torch.
+torch = [
+    { index = "pytorch-cpu", extra = "transkun", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "transkun", marker = "sys_platform == 'linux'" },
+]
