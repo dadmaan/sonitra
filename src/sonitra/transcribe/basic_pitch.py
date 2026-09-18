@@ -2,9 +2,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sonitra.transcribe.base import TranscriptionError, TranscriptionResult
+from sonitra.notes import make_note
+from sonitra.transcribe.base import (
+    TranscriptionError,
+    TranscriptionResult,
+    checkpoint_identity,
+)
 from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 from sonitra.transcribe.protocol import register_transcriber
+
+
+def _basic_pitch_package_version() -> str:
+    """Best-effort package version for provenance metadata."""
+
+    try:
+        from importlib.metadata import version
+
+        try:
+            return version("basic-pitch")
+        except Exception:
+            try:
+                return version("sonitra")
+            except Exception:
+                return "unknown"
+    except Exception:
+        return "unknown"
 
 
 class BasicPitchTranscriber:
@@ -72,21 +94,36 @@ class BasicPitchTranscriber:
                 melodia_trick=self.melodia_trick,
                 multiple_pitch_bends=self.multiple_pitch_bends,
             )
-        notes = [
-            {
-                "pitch": int(pitch),
-                "velocity": max(1, min(127, round(float(amplitude) * 127))),
-                "start_sec": float(start),
-                "duration_sec": max(0.0, float(end) - float(start)),
-            }
-            for start, end, pitch, amplitude, _bends in note_events
-        ]
-        notes.sort(key=lambda note: (note["start_sec"], note["pitch"]))
+        notes: list[dict[str, object]] = []
+        for start, end, pitch, amplitude, _bends in note_events:
+            note = make_note(
+                pitch=int(pitch),
+                velocity=round(float(amplitude) * 127),
+                start_sec=float(start),
+                duration_sec=float(end) - float(start),
+            )
+            if note is not None:
+                notes.append(note)
+        notes.sort(key=lambda n: (n["start_sec"], n["pitch"]))
+        # Provenance metadata: package version, checkpoint identity (no I/O on
+        # default path), device actually used, and filtered-note counts.
+        pkg_version = _basic_pitch_package_version()
+        checkpoint = checkpoint_identity(pkg_version)
+        filtered_dropped = len(note_events) - len(notes)
+        metadata: dict[str, object] = {
+            **checkpoint,
+            "device": self.device,
+            "filtered_dropped": filtered_dropped,
+            "note_events_total": len(note_events),
+            "notes_kept": len(notes),
+        }
         return TranscriptionResult(
             notes=notes,
             transcriber=self.name,
             source_audio=audio_path,
             raw_outputs=model_output if self.save_raw_outputs else None,
+            backend_type="basic_pitch",
+            metadata=metadata,
         )
 
 

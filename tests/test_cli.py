@@ -157,7 +157,10 @@ class _StubTranscriber:
 
     def transcribe(self, audio_path):
         return TranscriptionResult(
-            notes=[], transcriber=self.name, raw_outputs=self._raw
+            notes=[],
+            transcriber=self.name,
+            raw_outputs=self._raw,
+            backend_type="basic_pitch",
         )
 
 

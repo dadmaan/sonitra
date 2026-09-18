@@ -580,6 +580,7 @@ def _run_condition(
                     error=str(reason),
                     source_path=str(source_path) if audio_paths is not None else None,
                     render_seconds=entry.get("elapsed_seconds", float("nan")),
+                    transcriber_metadata={},
                 )
                 if writer is not None:
                     writer.write(record)
@@ -774,6 +775,7 @@ def _evaluate_one(
             separate_seconds=separate_seconds,
             transcribe_seconds=transcribe_seconds,
             evaluate_seconds=evaluate_seconds,
+            transcriber_metadata=dict(getattr(result, "metadata", {}) or {}),
         )
     except Exception as exc:  # noqa: BLE001 - benchmark logs and continues
         logger.exception("Transcription failed: %s on %s", transcriber.name, audio_path)
@@ -790,6 +792,7 @@ def _evaluate_one(
             separate_seconds=separate_seconds,
             transcribe_seconds=transcribe_seconds,
             evaluate_seconds=evaluate_seconds,
+            transcriber_metadata={},
         )
     if writer is not None:
         writer.write(record)

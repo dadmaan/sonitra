@@ -6,14 +6,17 @@ import pytest
 
 from sonitra.midi_reader import parse_midi
 from sonitra.midi_writer import write_midi
+from tests.helpers import assert_notes_satisfy_contract
 
 
 def test_round_trip_preserves_notes(midi_fixture, tmp_path: Path) -> None:
     original = parse_midi(midi_fixture("test_polyphonic.mid"))
     assert original
+    assert_notes_satisfy_contract(original)
 
     output = write_midi(original, tmp_path / "out.mid")
     rebuilt = parse_midi(output)
+    assert_notes_satisfy_contract(rebuilt)
 
     assert len(rebuilt) == len(original)
     original_sorted = sorted(original, key=lambda n: (n["start_sec"], n["pitch"]))
@@ -133,7 +136,9 @@ def test_write_transcription_outputs_writes_midi_and_sidecar(tmp_path: Path) -> 
         "contour": np.zeros((2, 264)),
         "note": np.zeros((2, 88)),
     }
-    result = TranscriptionResult(notes=notes, transcriber="t", raw_outputs=raw)
+    result = TranscriptionResult(
+        notes=notes, transcriber="t", raw_outputs=raw, backend_type="basic_pitch"
+    )
 
     write_transcription_outputs(result, tmp_path / "out.mid")
 
@@ -176,7 +181,9 @@ def test_write_transcription_outputs_sidecar_failure_does_not_raise(
         "contour": np.zeros((2, 264)),
         "note": np.zeros((2, 88)),
     }
-    result = TranscriptionResult(notes=notes, transcriber="t", raw_outputs=raw)
+    result = TranscriptionResult(
+        notes=notes, transcriber="t", raw_outputs=raw, backend_type="basic_pitch"
+    )
 
     # The sidecar CSV write is isolated; a failure must not propagate.
     write_transcription_outputs(result, tmp_path / "out.mid")
@@ -282,8 +289,10 @@ def test_write_multi_program_midi_round_trip(tmp_path: Path) -> None:
         {"pitch": 64, "velocity": 90, "start_sec": 0.5, "duration_sec": 0.5, "program": 40},
         {"pitch": 67, "velocity": 80, "start_sec": 0.75, "duration_sec": 0.25, "program": 0},
     ]
+    assert_notes_satisfy_contract(notes)
     out = write_multi_program_midi(notes, tmp_path / "round.mid", ticks_per_beat=480, tempo_bpm=120.0)
     rebuilt = parse_midi(out)
+    assert_notes_satisfy_contract(rebuilt)
     # parse_midi merges channels, should recover all notes
     assert len(rebuilt) == len(notes)
     rebuilt_sorted = sorted(rebuilt, key=lambda n: (n["start_sec"], n["pitch"]))

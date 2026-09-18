@@ -41,6 +41,10 @@ class BenchmarkRecord:
     """Per-cell transcription wall-clock."""
     evaluate_seconds: float = float("nan")
     """Per-cell evaluation wall-clock."""
+    transcriber_metadata: dict[str, Any] = field(default_factory=dict)
+    """Provenance metadata from the transcriber (package version, checkpoint,
+    device, filtered counts). Defaulted so old JSONL without this key still
+    loads via ``BenchmarkRecord(**json.loads(line))``."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

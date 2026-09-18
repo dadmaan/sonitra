@@ -66,6 +66,7 @@ class ExternalCommandTranscriber:
                 transcriber=self.name,
                 source_audio=audio_path,
                 metadata={"command": self.command},
+                backend_type="external_command",
             )
 
 

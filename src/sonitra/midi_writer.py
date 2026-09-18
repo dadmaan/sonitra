@@ -1,8 +1,15 @@
+"""MIDI writing and raw-output sidecars.
+
+Writes note dicts to MIDI and persists per-backend raw outputs
+via a type-keyed writer registry. Heavy model imports stay lazy
+inside writers; registration happens at import time.
+"""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 import mido
 import numpy as np
@@ -19,10 +26,37 @@ _MAX_MIDI_PITCH = 108
 _CONTOUR_BINS = 264
 _TOTAL_COLUMNS = 1 + 88 + _CONTOUR_BINS + 88  # time + onset + contour + note = 441
 
+# ── Raw-output writer registry ───────────────────────────────────────
+
+RawWriter = Callable[[dict[str, Any], Path | str], Path]
+
+_RAW_WRITER_REGISTRY: dict[str, RawWriter] = {}
+
+
+def register_raw_writer(type_name: str) -> Callable[[RawWriter], RawWriter]:
+    """Register a raw-output writer for a transcriber ``type`` discriminator."""
+
+    def decorator(writer: RawWriter) -> RawWriter:
+        _RAW_WRITER_REGISTRY[type_name] = writer
+        return writer
+
+    return decorator
+
+
+def _get_raw_writer(backend_type: str | None) -> RawWriter | None:
+    """Lookup writer for ``backend_type``; ``None`` if no writer registered."""
+    if backend_type is None:
+        return None
+    # Return the live module global for ``basic_pitch`` so tests that
+    # monkeypatch ``write_raw_outputs`` still exercise the failure path.
+    if backend_type == "basic_pitch":
+        return write_raw_outputs
+    return _RAW_WRITER_REGISTRY.get(backend_type)
+
 
 def _collect_note_events(
     notes: Iterable[dict[str, Any]],
-    channel_for_note,
+    channel_for_note: Callable[[dict[str, Any]], int],
 ) -> list[tuple[float, int, mido.Message]]:
     """Convert note dicts to sorted MIDI events, factored for byte-identical reuse.
 
@@ -181,6 +215,7 @@ def write_multi_program_midi(
     return output_path
 
 
+@register_raw_writer("basic_pitch")
 def write_raw_outputs(
     raw_outputs: dict[str, Any],
     midi_path: Path | str,
@@ -274,7 +309,9 @@ def write_transcription_outputs(
     write_midi(result.notes, midi_path)
     if result.raw_outputs is not None:
         try:
-            write_raw_outputs(result.raw_outputs, midi_path)
+            writer = _get_raw_writer(result.backend_type)
+            if writer is not None:
+                writer(result.raw_outputs, midi_path)
         except Exception as exc:  # noqa: BLE001 - sidecar is best-effort
             logger.warning("Failed to write raw outputs CSV for %s: %s", midi_path, exc)
     return Path(midi_path)
