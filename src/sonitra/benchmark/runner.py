@@ -39,6 +39,7 @@ from sonitra.evaluation.protocol import (
 from sonitra.evaluation.types import NoteEvent, notes_from_dicts
 from sonitra.midi_reader import parse_midi
 from sonitra.midi_writer import write_transcription_outputs
+from sonitra.notes import normalise_notes
 from sonitra.pipeline import run_pipeline
 from sonitra.separation.protocol import make_separator
 from sonitra.storage import read_audio
@@ -811,13 +812,19 @@ def _audio_metric_values(
     audio with the same synthesiser configuration, and audio metrics (DTW)
     score the divergence from the audio the transcriber actually heard.
     """
+    # Pin the resynthesis path through the canonical contract (Part C Stage 16).
+    # This is the one metric input that never passes through notes_from_dicts;
+    # without it a zero-duration phantom would leak to the synth and inflate
+    # duration. normalise_notes drops duration<=0, clamps velocity/start,
+    # sorts, and raises on bad pitch — exactly what notes_from_dicts does.
+    filtered_notes = normalise_notes(estimate_notes)
     reference_audio, sample_rate = read_audio(audio_path)
     synth = make_synth(condition_config)
     duration = max(
-        (float(n["start_sec"]) + float(n["duration_sec"]) for n in estimate_notes),
+        (float(n["start_sec"]) + float(n["duration_sec"]) for n in filtered_notes),
         default=0.0,
     ) + condition_config.render_pipeline.duration_padding_sec
-    estimate_audio = np.asarray(synth.render(estimate_notes, duration_sec=duration))
+    estimate_audio = np.asarray(synth.render(filtered_notes, duration_sec=duration))
 
     values: dict[str, float] = {}
     for metric in audio_metrics:
