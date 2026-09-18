@@ -214,6 +214,7 @@ def test_basic_pitch_note_fields_are_valid_types(tmp_path: Path) -> None:
     from scipy.io import wavfile
 
     from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+    from tests.helpers import assert_notes_satisfy_contract
 
     sample_rate = 22050
     duration = 2.0
@@ -229,9 +230,8 @@ def test_basic_pitch_note_fields_are_valid_types(tmp_path: Path) -> None:
     for n in result.notes:
         assert isinstance(n["pitch"], int), f"pitch must be int, got {type(n['pitch'])}"
         assert isinstance(n["velocity"], int), f"velocity must be int, got {type(n['velocity'])}"
-        assert 1 <= n["velocity"] <= 127, f"velocity {n['velocity']} out of [1, 127]"
         assert isinstance(n["start_sec"], float), f"start_sec must be float, got {type(n['start_sec'])}"
-        assert n["duration_sec"] >= 0.0, f"duration_sec {n['duration_sec']} is negative"
+    assert_notes_satisfy_contract(result.notes)
 
 
 # ── Basic Pitch configurable knobs + raw model outputs ───────────────

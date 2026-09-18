@@ -281,6 +281,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/download_datasets.py`: `superseded_by` relation (`maestro-v3-midi`/`wav` → `-full`, `e-gmd-midi` → `-full`, `guitarset-mic`/`mix` → `-full`, `gaps-midi` → `-full`, `musicnet-midi` → `-full`), `_resolve_selection()` prunes `--all`/picker before preflight/display (`[skip] <key> — superseded by <full> (also selected)`), registry-driven `next_steps`, per-download-key `_Coordinator` locks with `*.<source_id>.part` temp names, failure memo, cancel event, run-scoped `--force`, `_bytes_needed()` dedup and satisfied-skip, file-level skip for every kind (`hf_tree`/`file`/`zip`/`targz`), `[stale]` warning, `_source_id`/`_download_key` sharing; legacy `.downloads/<key>.*.ok`/`.part` treated as incomplete and adopted; covered by `tests/test_download_datasets.py`
 - `scripts/export_regression_table.py`: new `--metadata-match {exact,token-prefix}` (default `exact`) using `sonitra.corpus.match_token_prefix` (exact first, then unique token-prefix) cached per song; `token-prefix` needed for MusicNet score MIDI (`1727_schubert_op114_2` → `1727`); unmatched warning suggests `token-prefix` in `exact` mode; `build_rows` and unmatched count share one `_resolve_song_metadata_keys` map; `sonitra.corpus.match_token_prefix(query_tokens, candidates) -> (match|None, candidates_at_stop, k)` extracted from `pair_audio_to_reference`; covered by `tests/test_export_regression_table.py` and `tests/test_audio_corpus.py`
 - `config/benchmark/musicnet_test.yaml`: MusicNet smoke test (4 conditions: baseline + `no_reverb` + two `wet_level` sweeps), `io.dataset: musicnet`, `input_type: midi`, `sample_rate: 44100` (works on score MIDI (`musicnet-midi`) or converted MIDI; `input_type: audio` needs converter first; 7 corrupt upstream files are skipped); listed in `config/benchmark/README.md`
+- `src/sonitra/notes.py`: canonical note helpers `make_note` / `normalise_notes` enforcing the note-dict contract (pitch 0..127 validated, velocity clamped 1..127, start_sec clamped >=0, duration_sec <=0 dropped, sorted by `(start_sec, pitch)`; extra keys passed through)
+- `tests/helpers.py`: shared `assert_notes_satisfy_contract(notes)` helper validating pitch/velocity/start/duration bounds and sortedness; used by `tests/test_midi_reader.py` and `tests/test_transcribers.py`
 
 ### Changed
 
@@ -309,6 +311,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`AGPL-3.0-or-later`), previously omitted; the README licence section
   notes third-party GPLv3 components (`pedalboard`, `dawdreamer`) and
   dataset licences, which Sonitra's licence does not cover
+- `src/sonitra/evaluation/types.py:notes_from_dicts` now validates via `make_note` — dropping zero/negative-duration notes, clamping velocity/start, raising on out-of-range pitch, and returning a sorted list
+- `src/sonitra/transcribe/configs.py:BasicPitchTranscriberConfig.minimum_note_length_ms` now validated `ge=0`
 
 ### Fixed
 

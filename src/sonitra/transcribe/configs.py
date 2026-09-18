@@ -19,7 +19,7 @@ class BasicPitchTranscriberConfig(_TranscriberBase):
     type: Literal["basic_pitch"] = "basic_pitch"
     onset_threshold: float = 0.5
     frame_threshold: float = 0.3
-    minimum_note_length_ms: float = 127.7
+    minimum_note_length_ms: float = Field(default=127.7, ge=0)
     minimum_frequency_hz: float | None = None
     maximum_frequency_hz: float | None = None
     device: str = "cpu"

@@ -7,6 +7,7 @@ import mido
 import pytest
 
 from sonitra.midi_reader import parse_midi
+from tests.helpers import assert_notes_satisfy_contract
 
 
 def _write_midi_with_programs(
@@ -56,11 +57,8 @@ def test_note_fields_present(midi_fixture: Any) -> None:
 
 
 def test_note_values_in_range(midi_fixture: Any) -> None:
-    note = parse_midi(midi_fixture("test_c4.mid"))[0]
-    assert 0 <= note["pitch"] <= 127
-    assert 0 < note["velocity"] <= 127
-    assert note["start_sec"] >= 0.0
-    assert note["duration_sec"] > 0.0
+    notes = parse_midi(midi_fixture("test_c4.mid"))
+    assert_notes_satisfy_contract(notes)
 
 
 def test_empty_midi_returns_empty_list(midi_fixture: Any) -> None:
