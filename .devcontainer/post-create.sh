@@ -11,8 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 EXTRA="transkun"
+SYNC_EXTRAS=(--extra transkun --extra dev)
 if [ -n "${NV:-}" ] && [ -d "$NV/cudnn/lib" ]; then
     EXTRA="transkun-gpu"
+    SYNC_EXTRAS=(--extra transkun-gpu --extra xla-ptx --extra dev)
 fi
 
 # Lets F5 verify the selection without a multi-GB sync.
@@ -21,8 +23,14 @@ if [ "${1:-}" = "--print-extra" ]; then
     exit 0
 fi
 
-echo "post-create: uv sync --locked --extra ${EXTRA} --extra dev"
-uv sync --locked --extra "$EXTRA" --extra dev
+echo "post-create: uv sync --locked ${SYNC_EXTRAS[*]}"
+# Self-heal a broken venv (e.g. a partial sync through a Windows bind mount):
+# uv errors instead of recreating when .venv exists without bin/python.
+if [ -d .venv ] && [ ! -x .venv/bin/python ]; then
+    echo "post-create: removing broken .venv (no bin/python)"
+    rm -rf .venv
+fi
+uv sync --locked "${SYNC_EXTRAS[@]}"
 
 # `--no-sync`: this check must not touch the environment it just built.
 uv run --no-sync python -c "import sonitra"

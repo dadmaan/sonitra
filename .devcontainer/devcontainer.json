@@ -29,7 +29,7 @@
       ],
       "settings": {
         "editor.formatOnSave": false,
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
         "python.linting.enabled": true,
         "python.linting.pylintEnabled": true,
         "python.analysis.typeCheckingMode": "basic"

@@ -97,6 +97,15 @@ gpu = [
     "nvidia-nccl-cu12==2.16.5 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "nvidia-nvjitlink-cu12==12.2.140 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+xla-ptx = [
+    # ptxas + nvvm/libdevice for TensorFlow's runtime PTX codegen. TF 2.15's
+    # wheels carry cubins only to sm_75 (compute_80 PTX above that), so on any
+    # newer GPU every kernel_gen/XLA op is compiled at runtime and needs
+    # libdevice. TF searches <site-packages>/nvidia/cuda_nvcc, so this must
+    # live in the SAME environment as tensorflow — LD_LIBRARY_PATH cannot
+    # supply it (it is a file lookup, not a dlopen).
+    "nvidia-cuda-nvcc-cu12==12.2.140 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [project.scripts]
 sonitra = "sonitra.cli:app"

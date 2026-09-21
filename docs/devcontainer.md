@@ -21,9 +21,9 @@ Do not use `docker compose build` in `.devcontainer/` as a rebuild path. It upda
 `postCreateCommand` in `.devcontainer/devcontainer.json` runs `.devcontainer/post-create.sh`. The script picks the lock's torch build for the image and syncs it into `/workspace/.venv`:
 
 - CPU fork: `uv sync --locked --extra transkun --extra dev`
-- GPU fork: `uv sync --locked --extra transkun-gpu --extra dev`
+- GPU fork: `uv sync --locked --extra transkun-gpu --extra xla-ptx --extra dev`
 
-An extra is a named group of optional dependencies, such as `transkun` and `dev`. A fork here is one of the lock's two torch builds, CPU or CUDA.
+An extra is a named group of optional dependencies, such as `transkun` and `dev`. A fork here is one of the lock's two torch builds, CPU or CUDA. The GPU fork carries the narrow `xla-ptx` extra as well: `nvidia-cuda-nvcc-cu12` ships `ptxas` and `nvvm/libdevice` for TensorFlow 2.15's runtime PTX codegen. TF 2.15 wheels carry cubins only to sm_75 (compute_80 PTX above that), so on newer GPUs every kernel_gen/XLA op is JIT-compiled at runtime and needs libdevice from the same environment as TensorFlow — `LD_LIBRARY_PATH` cannot supply it.
 
 The fork follows the image, not your host. The script checks for `$NV/cudnn/lib`, a folder that exists only when the image was built with the GPU override (`docker-compose.gpu.yml`). A GPU host that starts the base compose file gets the CPU fork, which matches the container's absent GPU passthrough.
 
@@ -41,10 +41,12 @@ bash .devcontainer/post-create.sh --print-extra
 
 ## Two Python environments
 
-- The pip `--user` site is the image's own environment, and the default VS Code interpreter (`/usr/local/bin/python`). It has the core stack (TensorFlow, basic-pitch, Jupyter, R) but no transkun and no torch. It works even when the sync fails.
-- `/workspace/.venv` is the sync target. It carries the heavy backends, basic-pitch and transkun, on the torch build the lock names. It lives on the bind mount (a shared folder between your machine and the container), so it survives a rebuild.
+- `/workspace/.venv` is the main environment (an isolated Python folder). Bare `sonitra` and `python` run from `/workspace/.venv/bin` because that folder comes first on `PATH` (the list of folders your shell searches for commands). It holds torch and transkun on the torch build the lock names, plus `ptxas`/`libdevice` via `xla-ptx` on the GPU fork. VS Code uses it too (`/workspace/.venv/bin/python`). It lives on the bind mount (a shared folder between your machine and the container), so it survives a rebuild. This takes effect on Rebuild Container. The venv also wins in login bash: the image appends the same prepend to `/home/node/.profile`, after Debian's stock `$HOME/.local/bin` block.
+- The pip `--user` site is the image's own environment (`/usr/local/bin/python`). It has the core stack (TensorFlow, basic-pitch, Jupyter, R) but no transkun and no torch. It works even when the sync fails.
 
-Run commands in the venv with `uv run --no-sync <command>`, or call `/workspace/.venv/bin/python` directly. Both leave the environment alone.
+`uv run --no-sync <command>` still works. It runs the venv without changing anything, so it is the mutation-free form. You can also call `/workspace/.venv/bin/python` directly. Both leave the environment alone.
+
+`pip` is not in the venv. uv venvs ship with no pip, so bare `pip list` still reports the image environment even after the PATH fix. Use `uv pip list` or `python -m pip list` to see what the venv holds.
 
 ## The `uv sync` footgun
 
@@ -53,7 +55,7 @@ Run commands in the venv with `uv run --no-sync <command>`, or call `/workspace/
 Safe ways to sync:
 
 - Run the script: `bash .devcontainer/post-create.sh`.
-- Run it by hand with the extras: `uv sync --locked --extra transkun --extra dev` (GPU: `--extra transkun-gpu --extra dev`).
+- Run it by hand with the extras: `uv sync --locked --extra transkun --extra dev` (GPU: `--extra transkun-gpu --extra xla-ptx --extra dev`).
 - `uv run` is inexact. It installs what the default set needs and removes nothing, so `uv run python -m pytest` is safe. `uv run --no-sync` skips the check and mutates nothing. Avoid `uv run --exact`, which strips the extras.
 
 ## Run the tests
@@ -81,3 +83,4 @@ On a CPU devcontainer, the slow command gives 6 passed.
 
 - The create step failed, or you are offline: the pip site still works, so you can keep editing and run commands that do not need transkun. When the network returns, re-run `bash .devcontainer/post-create.sh` and check the Dev Containers log.
 - `transkun` is missing from the venv: check `bash .devcontainer/post-create.sh --print-extra`, then re-run the script.
+- `uv sync` reports `/workspace/.venv` is not a valid Python environment (no Python executable found): the bind-mounted venv is a broken stub, usually from an interrupted sync. The script now removes and recreates it automatically; if the container never started, delete `.venv` on the host and rebuild.
