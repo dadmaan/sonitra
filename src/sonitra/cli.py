@@ -793,6 +793,49 @@ def benchmark(
             timing_table.add_row(*cells)
         console.print(timing_table)
 
+        # Per-transcriber breakdown (Option A): transcribe/evaluate are
+        # per-cell measurements, so they can be attributed per backend from
+        # the `per_transcriber` roll-up already stored in summary.json.
+        # wall/render/separate stay on the condition table above: wall is a
+        # condition stopwatch and render/separate are shared per file.
+        by_transcriber_rows: list[tuple[str, str, object, object, object]] = []
+        for entry in timing_conditions:
+            condition_name = str(entry.get("condition", ""))
+            for pt in entry.get("per_transcriber") or []:
+                by_transcriber_rows.append(
+                    (
+                        condition_name,
+                        str(pt.get("transcriber", "")),
+                        pt.get("transcribe_seconds", float("nan")),
+                        pt.get("evaluate_seconds", float("nan")),
+                        pt.get("n_succeeded", 0),
+                    )
+                )
+        if by_transcriber_rows:
+            bt_table = Table(title="Benchmark timing by transcriber (seconds)")
+            bt_table.add_column("condition")
+            bt_table.add_column("transcriber")
+            bt_table.add_column("transcribe (sec)", justify="right")
+            bt_table.add_column("evaluate (sec)", justify="right")
+            bt_table.add_column("ok", justify="right")
+            for cond, name, t_sec, e_sec, n_ok in by_transcriber_rows:
+                bt_cells = [cond, name]
+                for value in (t_sec, e_sec):
+                    if isinstance(value, (int, float)) and math.isnan(value):
+                        bt_cells.append("[dim]NaN[/dim]")
+                    elif isinstance(value, (int, float)):
+                        bt_cells.append(f"{value:.1f}")
+                    else:
+                        bt_cells.append(str(value))
+                bt_cells.append(
+                    str(int(n_ok)) if isinstance(n_ok, (int, float)) else str(n_ok)
+                )
+                bt_table.add_row(*bt_cells)
+            console.print(bt_table)
+            console.print(
+                "[dim]per-transcriber values sum succeeded runs only.[/dim]"
+            )
+
     if result.degradation:
         deg_table = Table(title="Benchmark degradation (delta vs baseline)")
         deg_table.add_column("condition")

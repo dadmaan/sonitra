@@ -382,6 +382,20 @@ def test_benchmark_timing_table_shows_condition_timing(
                         "separate_seconds": float("nan"),
                         "transcribe_seconds": 6.5,
                         "evaluate_seconds": 1.2,
+                        "per_transcriber": [
+                            {
+                                "transcriber": "basic_pitch",
+                                "transcribe_seconds": 2.5,
+                                "evaluate_seconds": 0.4,
+                                "n_succeeded": 2,
+                            },
+                            {
+                                "transcriber": "transkun",
+                                "transcribe_seconds": 4.0,
+                                "evaluate_seconds": 0.8,
+                                "n_succeeded": 2,
+                            },
+                        ],
                     }
                 ],
             },
@@ -420,6 +434,13 @@ def test_benchmark_timing_table_shows_condition_timing(
     assert "4.0" in result.output
     assert "6.5" in result.output
     assert "1.2" in result.output
+
+    # Per-transcriber timing breakdown.
+    assert "Benchmark timing by transcriber (seconds)" in result.output
+    assert "transkun" in result.output
+    assert "2.5" in result.output
+    assert "0.4" in result.output
+    assert "0.8" in result.output
 
 
 def test_benchmark_timing_table_shows_separate_seconds_when_present(
@@ -480,6 +501,20 @@ def test_benchmark_timing_table_shows_separate_seconds_when_present(
                         "separate_seconds": 3.3,
                         "transcribe_seconds": 6.5,
                         "evaluate_seconds": 1.2,
+                        "per_transcriber": [
+                            {
+                                "transcriber": "basic_pitch",
+                                "transcribe_seconds": 2.5,
+                                "evaluate_seconds": 0.4,
+                                "n_succeeded": 2,
+                            },
+                            {
+                                "transcriber": "transkun",
+                                "transcribe_seconds": 4.0,
+                                "evaluate_seconds": 0.8,
+                                "n_succeeded": 2,
+                            },
+                        ],
                     }
                 ],
             },
@@ -504,6 +539,92 @@ def test_benchmark_timing_table_shows_separate_seconds_when_present(
 
     assert "separate (sec)" in result.output
     assert "3.3" in result.output
+    assert "Benchmark timing by transcriber (seconds)" in result.output
+    assert "transkun" in result.output
+    assert "2.5" in result.output
+    assert "4.0" in result.output
+
+
+def test_benchmark_timing_by_transcriber_absent_without_per_transcriber(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Old summary.json files without `per_transcriber` still render the
+    condition timing table and skip the per-transcriber breakdown."""
+    import sys
+
+    from rich.console import Console
+
+    precomputed_dir = tmp_path / "precomputed"
+    precomputed_dir.mkdir()
+
+    corpus_root = audio_corpus_dir.parent
+    dataset = audio_corpus_dir.name
+
+    config_path = audio_corpus_dir / "config.yaml"
+    config_path.write_text(
+        _AUDIO_BENCHMARK_CONFIG.format(
+            corpus_root=str(corpus_root), precomputed_dir=str(precomputed_dir)
+        )
+    )
+
+    monkeypatch.setattr(
+        "sonitra.cli.get_console",
+        lambda *args, **kwargs: Console(file=sys.stdout, width=200),
+    )
+
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=[],
+            summary=[
+                {
+                    "condition": "baseline",
+                    "transcriber": "basic_pitch",
+                    "n_files": 2,
+                    "n_succeeded": 2,
+                    "note.f1": 0.9,
+                }
+            ],
+            degradation=[],
+            results_path=work_dir / "results.jsonl",
+            summary_path=work_dir / "summary.json",
+            elapsed_seconds=0.0,
+            timing={
+                "overall_seconds": 100.0,
+                "host": {},
+                "conditions": [
+                    {
+                        "condition": "baseline",
+                        "wall_seconds": 30.2,
+                        "render_seconds": 4.0,
+                        "separate_seconds": float("nan"),
+                        "transcribe_seconds": 6.5,
+                        "evaluate_seconds": 1.2,
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--config", str(config_path),
+            "--dataset", dataset,
+        ],
+    )
+    assert result.exit_code == 0, f"benchmark failed:\n{result.output}"
+
+    assert "Benchmark timing (seconds)" in result.output
+    assert "Benchmark timing by transcriber (seconds)" not in result.output
 
 
 def test_benchmark_timing_table_absent_without_timing(
@@ -573,6 +694,7 @@ def test_benchmark_timing_table_absent_without_timing(
     assert result.exit_code == 0, f"benchmark failed:\n{result.output}"
 
     assert "Benchmark timing (seconds)" not in result.output
+    assert "Benchmark timing by transcriber (seconds)" not in result.output
     assert "Benchmark summary" in result.output
     assert "note.f1" in result.output
 
