@@ -218,6 +218,8 @@ are excluded from the fingerprint since they don't affect result semantics.
 
 | Config file | Acoustic factor | Conditions |
 |---|---|---|
+| `transkun_baseline.yaml` | TransKun vs Basic Pitch baseline (CPU) | 1 |
+| `transkun_baseline_gpu.yaml` | TransKun vs Basic Pitch baseline (CUDA; requires GPU host) | 1 |
 | `benchmark_test.yaml` | Smoke test (reverb) | 4 |
 | `guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
 | `gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |

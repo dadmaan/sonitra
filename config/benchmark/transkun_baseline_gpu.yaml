@@ -1,9 +1,9 @@
-# TransKun baseline: head-to-head basic_pitch vs transkun on the same render.
-# Minimal runnable benchmark; use `--dataset test --limit 2 --seed 123` for smoke runs.
-# CPU preset: runs on any host. For the CUDA twin, see transkun_baseline_gpu.yaml.
+# TransKun baseline (GPU): head-to-head basic_pitch vs transkun on the same render.
+# Requires a CUDA host. Both backends raise rather than silently using CPU when
+# no GPU is present. CPU twin: transkun_baseline.yaml.
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/transkun_baseline.yaml --dataset test --limit 2 --seed 123
+#   sonitra benchmark --config config/benchmark/transkun_baseline_gpu.yaml --dataset maestro-v3 --limit 1
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -89,8 +89,9 @@ transcription:
   transcribers:
     - type: basic_pitch
       enabled: true
-      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
-      device: cpu
+      # Unified spelling: `cuda` is translated to TensorFlow's `GPU:0`
+      # (see src/sonitra/transcribe/devices.py). Needs a CUDA host.
+      device: cuda
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -101,8 +102,9 @@ transcription:
       save_raw_outputs: false
     - type: transkun
       enabled: true
-      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
-      device: cpu
+      # CUDA preset: assumes a CUDA host. Raises rather than silently falling
+      # back when CUDA is absent. Also accepts `GPU:0` / `cuda:0`.
+      device: cuda
       segment_size_sec: null
       segment_hop_sec: null
       weights_path: null

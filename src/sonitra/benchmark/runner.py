@@ -52,6 +52,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _preflight_devices(transcribers: Sequence[TranscriberProtocol]) -> None:
+    """Fail fast when a configured accelerator is absent.
+
+    Runs exactly once in the parent before the first render. Backends without
+    a ``validate_device`` method (``external_command``, ``precomputed``) are
+    skipped naturally via ``getattr``. A missing GPU aborts the whole run
+    rather than dropping that transcriber.
+    """
+    from sonitra.transcribe.base import TranscriptionError
+
+    for transcriber in transcribers:
+        validate = getattr(transcriber, "validate_device", None)
+        if validate is None:
+            continue
+        try:
+            validate()
+        except TranscriptionError as exc:
+            raise TranscriptionError(f"{transcriber.name}: {exc}") from exc
+
+
 # Shared queue through which worker subprocesses stream per-record events to
 # the parent. Set by the ProcessPoolExecutor initializer; None in the parent
 # (and in serial mode, where no subprocesses exist).
@@ -250,6 +270,8 @@ def run_benchmark(
         raise ValueError("No enabled transcribers configured under 'transcription.transcribers'")
     transcribers = [make_transcriber(cfg) for cfg in transcriber_configs]
     transcriber_names = [t.name for t in transcribers]
+
+    _preflight_devices(transcribers)  # raises TranscriptionError naming the transcriber
 
     conditions = expand_conditions(config.benchmark)
     condition_order = [condition.name for condition in conditions]

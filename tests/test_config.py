@@ -291,3 +291,15 @@ def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
     source_text = (config_dir / "source.yaml").read_text()
     for key in ("melodia_trick", "multiple_pitch_bends", "save_raw_outputs"):
         assert key in source_text
+
+
+def test_transkun_baseline_presets_pin_cpu_and_cuda() -> None:
+    config_dir = Path(__file__).parent.parent / "config" / "benchmark"
+    cpu_cfg = load_config(config_dir / "transkun_baseline.yaml")
+    gpu_cfg = load_config(config_dir / "transkun_baseline_gpu.yaml")
+
+    def _devices(cfg: PipelineConfig) -> dict[str, str]:
+        return {t.type: t.device for t in cfg.transcription.transcribers}
+
+    assert _devices(cpu_cfg) == {"basic_pitch": "cpu", "transkun": "cpu"}
+    assert _devices(gpu_cfg) == {"basic_pitch": "cuda", "transkun": "cuda"}

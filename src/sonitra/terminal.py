@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import ExitStack
 from pathlib import PurePath
@@ -90,6 +91,30 @@ def setup_logging(level: str = "INFO", *, console: Console | None = None) -> Non
 def set_log_level(level: str) -> None:
     """Update only the ROOT logger level (e.g. after a config reloads)."""
     logging.getLogger().setLevel(level.upper())
+
+
+_TF_CPP_USER_SET = "TF_CPP_MIN_LOG_LEVEL" in os.environ
+
+
+def configure_framework_logging(level: str) -> None:
+    """Set TF's C++ log level from the effective log level, unless the user set it.
+
+    Maps ``DEBUG`` → ``0`` (all), ``INFO`` → ``1``, ``WARNING`` → ``2``,
+    ``ERROR``/``CRITICAL`` → ``3``. No-op when ``TF_CPP_MIN_LOG_LEVEL`` was
+    already in the environment at import time. Must run before any lazy TF
+    import; pool workers inherit the env. In parallel mode worker fds are
+    redirected, so C++ output lands in ``worker-<pid>.log``, not the terminal.
+    """
+    if _TF_CPP_USER_SET:
+        return
+    mapping = {
+        "DEBUG": "0",
+        "INFO": "1",
+        "WARNING": "2",
+        "ERROR": "3",
+        "CRITICAL": "3",
+    }
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = mapping.get(level.upper(), "1")
 
 
 def _format_file_field(midi_path: str, *, max_len: int = 40) -> str:

@@ -69,7 +69,7 @@ TransKun does not refuse non-piano input. Point it at an orchestral or guitar re
 | Input length | Any length. The model windows internally |
 | Pitch range | MIDI 21 to 108 with pitch bend support |
 | Package | `basic-pitch` 0.4.x. Installed by default with Sonitra |
-| Device config | `device: cpu` or `GPU:0` style. Passed to `tf.device` |
+| Device config | Unified `cpu`, `cuda`, `cuda:N`, `GPU:N`; `cuda` is translated to TensorFlow's `GPU:0` internally |
 
 ### TransKun
 
@@ -92,7 +92,7 @@ TransKun does not refuse non-piano input. Point it at an orchestral or guitar re
 | Framework | PyTorch |
 | Input length | Overlapping windows. Sonitra keeps the bundled conf as truth: 16 s window with 8 s hop when fields are `null`. CLI help shows 20 s and 10 s as its own defaults |
 | Pitch range | MIDI 21 to 108. Raw output also contains -64 and -67 for sustain and soft pedal, filtered before `make_note` |
-| Package | `transkun==2.0.1` under the `transkun` extra. `pip install sonitra[transkun]` |
+| Package | `transkun==2.0.1` under the `transkun` extra. `pip install 'sonitra[transkun]'` |
 | Device config | `cpu`, `cuda`, `cuda:1`, `mps` or `GPU:0` style. Sonitra translates `GPU:0` to `cuda:0`. A `cuda` request with no CUDA raises |
 | Checkpoint location | `importlib.resources` under `transkun/pretrained/`. Override with `weights_path` and `conf_path` |
 

@@ -173,7 +173,7 @@ separation:
     enabled: false
     backend: passthrough # only "passthrough" is implemented; "demucs" is planned
     model: htdemucs
-    device: cpu
+    device: cpu # unified: "cpu", "cuda", "cuda:N" or "GPU:N"; "GPU:0" → torch "cuda:0" (see transcribe/devices.py)
     stem: null
     output_dir: stems
 
@@ -188,7 +188,7 @@ transcription:
           minimum_note_length_ms: 127.7
           minimum_frequency_hz: null # null = no lower frequency cutoff
           maximum_frequency_hz: null # null = no upper frequency cutoff
-          device: cpu # TF device for inference: "cpu", "GPU:0", "GPU:1", …
+          device: cpu # unified: "cpu", "cuda", "cuda:N" or "GPU:N"; "cuda" → TF "GPU:0" (see transcribe/devices.py)
           melodia_trick: true # HMM/melodia post-processing smoothing (code default)
           multiple_pitch_bends: false # allow overlapping same-pitch notes w/ glissando (code default)
           save_raw_outputs: false # persist raw model outputs as CSV sidecar next to each MIDI (code default)
@@ -202,7 +202,7 @@ transcription:
         #   command: "amt-tool transcribe {input} -o {output}"
         # TransKun — requires `pip install sonitra[transkun]`:
         # - type: transkun
-        #   device: cpu               # cuda, cuda:1, mps, or GPU:0 (translated to cuda:0)
+        #   device: cpu               # unified: cpu, cuda, cuda:N, GPU:N (plus mps); GPU:0 → cuda:0
         #   segment_size_sec: null    # null lets bundled conf stay default (16s)
         #   segment_hop_sec: null     # null lets bundled conf stay default (8s)
         #   weights_path: null        # null uses bundled checkpoint

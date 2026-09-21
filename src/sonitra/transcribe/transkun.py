@@ -12,18 +12,27 @@ from typing import Any
 from sonitra.notes import make_note
 from sonitra.transcribe.base import TranscriptionError, TranscriptionResult, checkpoint_identity
 from sonitra.transcribe.configs import TranskunTranscriberConfig
+from sonitra.transcribe.devices import resolve_torch_device
 from sonitra.transcribe.protocol import register_transcriber
 
 
 def _resolve_device(device: str) -> str:
-    """Map Basic Pitch ``GPU:*`` style strings to torch ``cuda:*``."""
-    low = device.lower()
-    if low == "gpu":
-        return "cuda"
-    if low.startswith("gpu:"):
-        suffix = device.split(":", 1)[1]
-        return f"cuda:{suffix}"
-    return device
+    """Map Basic Pitch ``GPU:*`` style strings to torch ``cuda:*``.
+
+    Thin wrapper over :func:`sonitra.transcribe.devices.resolve_torch_device`
+    kept so existing imports keep working; new code should use the shared
+    helper directly.
+    """
+    return resolve_torch_device(device)
+
+
+def _missing_dependency(module: str) -> TranscriptionError:
+    """TranscriptionError naming the module that failed and how to install it."""
+    return TranscriptionError(
+        f"transkun backend unavailable: no module named '{module}'. "
+        "In a repo checkout: `uv sync --locked --extra transkun --extra dev` "
+        "(GPU: `--extra transkun-gpu`). Standalone: `pip install 'sonitra[transkun]'`."
+    )
 
 
 def _notes_to_dicts(notes: Any) -> list[dict[str, Any]]:
@@ -112,39 +121,70 @@ class TranskunTranscriber:
         self._model: Any | None = None
         self._lock = threading.RLock()
 
+    def validate_device(self) -> tuple[str, bool]:
+        """Resolve the configured device and confirm it exists.
+
+        Returns (resolved_name, available). Raises TranscriptionError when an
+        accelerator was requested but is absent. CPU short-circuits with no
+        framework import.
+        """
+        resolved = _resolve_device(self.device)
+        low = resolved.lower()
+        if low in ("cpu", "cpu:0"):
+            return resolved, True
+        if not low.startswith("cuda"):
+            return resolved, True
+        try:
+            import torch
+        except ImportError as exc:
+            raise _missing_dependency("torch") from exc
+        if not torch.cuda.is_available():
+            raise TranscriptionError(
+                f"transkun device '{self.device}' resolved to '{resolved}' but CUDA is not available"
+            )
+        if ":" in resolved:
+            try:
+                idx = int(resolved.split(":", 1)[1])
+            except ValueError as exc:
+                raise TranscriptionError(
+                    f"transkun got unknown device {self.device!r}; "
+                    "use 'cpu', 'cuda', 'cuda:N' or 'GPU:N'."
+                ) from exc
+            try:
+                count = torch.cuda.device_count()
+            except Exception as exc:
+                raise TranscriptionError(
+                    f"transkun device '{self.device}' resolved to '{resolved}' but CUDA device count is unavailable: {exc}"
+                ) from exc
+            if not 0 <= idx < count:
+                raise TranscriptionError(
+                    f"transkun device '{self.device}' resolved to '{resolved}' but only {count} CUDA device(s) are available"
+                )
+        return resolved, True
+
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
+        # Fail fast on a missing accelerator; also the backstop for worker
+        # subprocesses and direct library use.
+        resolved, _available = self.validate_device()
         # lazy imports so torch is never touched unless this backend is used
         try:
             import torch
         except ImportError as exc:
-            raise TranscriptionError(
-                "transkun is not installed; install with `pip install sonitra[transkun]`"
-            ) from exc
-
-        # resolve device and validate CUDA availability before loading model
-        resolved = _resolve_device(self.device)
-        if resolved.startswith("cuda") and not torch.cuda.is_available():
-            raise TranscriptionError(
-                f"transkun device '{self.device}' resolved to '{resolved}' but CUDA is not available"
-            )
+            raise _missing_dependency("torch") from exc
 
         # lazy load of transkun package itself
         try:
             import importlib.resources as resources
             import moduleconf
         except ImportError as exc:
-            raise TranscriptionError(
-                "transkun is not installed; install with `pip install sonitra[transkun]`"
-            ) from exc
+            raise _missing_dependency("moduleconf") from exc
 
         # import needed helpers lazily
         try:
             # verify transkun installed; ModelTransformer is loaded via moduleconf
             import transkun  # noqa: F401
         except ImportError as exc:
-            raise TranscriptionError(
-                "transkun is not installed; install with `pip install sonitra[transkun]`"
-            ) from exc
+            raise _missing_dependency("transkun") from exc
 
         from sonitra.storage import read_audio_resampled
 
@@ -256,10 +296,13 @@ class TranskunTranscriber:
         except Exception:
             boundary_incomplete = 0
 
+        # device_available is what validate_device() reported (True here —
+        # a missing accelerator raises before any metadata is built).
         metadata: dict[str, Any] = {
             **checkpoint,
             "device": resolved,
             "requested_device": self.device,
+            "device_available": _available,
             "filtered_dropped": filtered_dropped,
             "note_events_total": raw_count,
             "notes_kept": len(notes),

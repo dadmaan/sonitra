@@ -35,7 +35,7 @@ transcription:
       conf_path: null            # null uses the bundled conf
 ```
 
-`enabled` and `name` come from the base class. `device` accepts `cuda`, `cuda:1`, `mps` and Basic Pitch style `GPU:0`. Sonitra translates `GPU:0` to `cuda:0` internally so users can copy the style used elsewhere in `config/source.yaml`.
+`enabled` and `name` come from the base class. `device` accepts the unified strings `cpu`, `cuda`, `cuda:N` and `GPU:N` (plus `mps` on torch backends). Each backend translates them at its boundary with the shared helpers in `src/sonitra/transcribe/devices.py` (`resolve_torch_device` maps `GPU:N` to `cuda:N`; `resolve_tf_device` maps `cuda` to `GPU:0`), so users write the same word everywhere. Any new backend must accept the same strings and translate via that module; anything else raises `TranscriptionError` naming the valid values.
 
 Add the new class to the `TranscriberConfig` union at the bottom of the file. That union is a discriminated union. The `type` field picks which class to validate. If you add a config class but forget the registry, or the other way round, `tests/test_transcriber_registry.py` fails. That test checks the two lists match.
 
@@ -106,7 +106,7 @@ try:
     import torch
 except ImportError as exc:
     raise TranscriptionError(
-        "transkun is not installed; install with `pip install sonitra[transkun]`"
+        "transkun is not installed; install with `pip install 'sonitra[transkun]'`"
     ) from exc
 ```
 
@@ -156,7 +156,7 @@ The checkpoint holds state dicts plus ints. `weights_only=True` is safer when av
 
 Use a scoped `torch.no_grad()` block for inference. Do not call `torch.set_grad_enabled(False)`. That call latches a process global and stays false after the method returns. It would silently disable autograd for any other torch code in the same worker. `torch.no_grad()` only affects the block. A test in `tests/test_transkun.py` checks that grad mode is still enabled after `transcribe`.
 
-Device handling must be strict. Translate `GPU:0` style to `cuda:0` first, then check:
+Device handling must be strict. Translate with the shared helper in `src/sonitra/transcribe/devices.py` first (`resolve_torch_device` for torch, `resolve_tf_device` for TensorFlow — `_resolve_device` in `transkun.py` is a thin wrapper over the shared torch helper kept for backwards compatibility), then check:
 
 ```python
 resolved = _resolve_device(self.device)
@@ -176,6 +176,7 @@ Every `TranscriptionResult` carries a `metadata` dict. The benchmark copies it i
 * `weights_sha256`: inside the same `checkpoint_identity` helper. Only present when the user set a custom `weights_path`. The helper hashes the file. On the default bundled path it does no I/O.
 * `device`: the resolved device actually used, for example `cuda:0`.
 * `requested_device`: the raw string from config, before translation.
+* `device_available`: `True` for `cpu` with no framework import; otherwise whether the requested accelerator exists (GPU list / `cuda.is_available()` plus `cuda:N` index bound).
 * `filtered_dropped`: notes the model returned that `make_note` dropped.
 * `note_events_total` and `notes_kept`: before and after the filter.
 * `boundary_incomplete`: notes with `hasOnset` or `hasOffset` false, counted but kept.

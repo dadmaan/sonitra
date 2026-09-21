@@ -490,6 +490,32 @@ def test_benchmark_skips_disabled_transcribers(
         run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
 
 
+def test_benchmark_preflight_raises_before_render(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sonitra.transcribe.base import TranscriptionError
+
+    class _FakeGpuTranscriber:
+        name = "fake-gpu"
+
+        def validate_device(self) -> tuple[str, bool]:
+            raise TranscriptionError("fake-gpu: no GPU is available")
+
+        def transcribe(self, audio_path: Path | str):  # pragma: no cover
+            raise AssertionError("transcribe must not run after preflight failure")
+
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _FakeGpuTranscriber()
+    )
+    with pytest.raises(TranscriptionError, match="fake-gpu"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+    assert not (tmp_path / "audio").exists()
+    assert not (tmp_path / "benchmark_results.jsonl").exists()
+
+
 def test_save_audio_true_keeps_condition_audio_dir(
     benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
 ) -> None:

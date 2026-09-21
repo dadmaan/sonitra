@@ -25,6 +25,7 @@ from sonitra.terminal import (
     FilesPerSecondColumn,
     NullBenchmarkProgress,
     RichBenchmarkProgress,
+    configure_framework_logging,
     effective_log_level,
     get_console,
     set_log_level,
@@ -136,6 +137,7 @@ def render(
     cfg = load_config(config)
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
+        configure_framework_logging(effective_log_level(cfg))
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
     audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
@@ -243,6 +245,7 @@ def transcribe(
     cfg = load_config(config)
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
+        configure_framework_logging(effective_log_level(cfg))
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
 
@@ -404,6 +407,7 @@ def evaluate(
         full_cfg = load_config(config)
         if not _CLI_VERBOSE:
             set_log_level(effective_log_level(full_cfg))
+            configure_framework_logging(effective_log_level(full_cfg))
         full_cfg.io.dataset = dataset
         section = full_cfg.evaluation
         eval_paths = resolve_corpus_paths(full_cfg, config_name=config.stem)
@@ -431,6 +435,7 @@ def evaluate(
             loaded_cfg = load_config(config)
             if not _CLI_VERBOSE:
                 set_log_level(effective_log_level(loaded_cfg))
+                configure_framework_logging(effective_log_level(loaded_cfg))
             section = loaded_cfg.evaluation
             eval_cfg = loaded_cfg
         else:
@@ -611,6 +616,7 @@ def benchmark(
     cfg = load_config(config)
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
+        configure_framework_logging(effective_log_level(cfg))
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
     audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
@@ -952,9 +958,9 @@ def main(
     console = get_console(quiet=quiet)
     setup_logging("DEBUG" if verbose else "INFO", console=console)
 
-    # Suppress TF/absl C++ logs (idempotent, respects user overrides). Set
-    # before any TensorFlow import; also inherited by benchmark pool workers.
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    # TF C++ logs follow the log level (respects user overrides). Set before
+    # any TensorFlow import; also inherited by benchmark pool workers.
+    configure_framework_logging("DEBUG" if verbose else "INFO")
     os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 

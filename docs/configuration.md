@@ -44,14 +44,16 @@ This section picks how Sonitra turns MIDI scores into sound, and whether it adds
 
 ## Transcription backends
 
-A transcriber turns audio back into notes. AMT means automatic music transcription, turning sound into a score. Basic Pitch is Spotify's free transcription tool and the default. Set `device` to `GPU:0` to run it on your graphics card. You need the `[gpu]` install on Linux x86_64 for that.
+A transcriber turns audio back into notes. AMT means automatic music transcription, turning sound into a score. Basic Pitch is Spotify's free transcription tool and the default. Set `device` to `cuda` (or `GPU:0` — both spellings work) to run it on your graphics card. Sonitra translates `cuda` to the TensorFlow name `GPU:0` internally. You need the `[gpu]` install on Linux x86_64 for that.
 
 | Backend | `type` value | Notes |
 |---|---|---|
-| Spotify Basic Pitch | `basic_pitch` | Installed by default; supports `device` field (default: `cpu`; set to `GPU:0` for GPU inference — requires `[gpu]` extras on Linux x86_64) |
-| TransKun | `transkun` | Piano only; requires `pip install sonitra[transkun]` (bundled 56 MB checkpoint, PyTorch). Supports `device` values `cpu`, `cuda`, `cuda:1`, `mps` and `GPU:0` (translated to `cuda:0` internally). See `config/source.yaml` commented block and `config/benchmark/transkun_baseline.yaml` |
+| Spotify Basic Pitch | `basic_pitch` | Installed by default; supports unified `device` values `cpu`, `cuda`, `cuda:N`, `GPU:N` (default: `cpu`; `cuda` is translated to TensorFlow's `GPU:0` internally — requires `[gpu]` extras on Linux x86_64) |
+| TransKun | `transkun` | Piano only; requires `pip install 'sonitra[transkun]'` (bundled 56 MB checkpoint, PyTorch). Supports `device` values `cpu`, `cuda`, `cuda:1`, `mps` and `GPU:0` (translated to `cuda:0` internally). See `config/source.yaml` commented block and `config/benchmark/transkun_baseline.yaml` |
 | Pre-exported MIDI | `precomputed` | Point at a directory of MIDI from external tools |
 | Any CLI tool | `external_command` | Template: `"tool transcribe {input} -o {output}"` |
+
+Separation `device` accepts the same unified strings (`cpu`, `cuda`, `cuda:N`, `GPU:N`); `GPU:0` is translated to torch `cuda:0` at the separator boundary.
 
 ## Built-in audio effects
 

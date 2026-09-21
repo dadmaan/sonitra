@@ -174,3 +174,18 @@ def test_protocol_top_level_is_light() -> None:
             assert line.startswith("    ") or line.startswith("\t"), (
                 f"basic_pitch import must be inside function, found top-level: {line!r}"
             )
+
+
+def test_validate_device_cpu_imports_no_framework() -> None:
+    code = (
+        "from sonitra.transcribe.basic_pitch import BasicPitchTranscriber; "
+        "from sonitra.transcribe.transkun import TranskunTranscriber; "
+        "import sys; "
+        "b=BasicPitchTranscriber(device='cpu'); b.validate_device(); "
+        "t=TranskunTranscriber(device='cpu'); t.validate_device(); "
+        "assert 'torch' not in sys.modules, 'torch imported by cpu validate_device'; "
+        "assert 'tensorflow' not in sys.modules, 'tensorflow imported by cpu validate_device'; "
+        "print('ok')"
+    )
+    result = _run_subprocess(code)
+    assert result.returncode == 0, f"cpu validate_device imported framework: stdout={result.stdout!r} stderr={result.stderr!r}"

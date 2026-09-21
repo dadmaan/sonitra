@@ -275,10 +275,13 @@ def test_basic_pitch_passes_knobs_to_predict(
     monkeypatch.setattr(inference_module, "predict", fake_predict)
 
     transcriber = BasicPitchTranscriber(melodia_trick=False, multiple_pitch_bends=True)
-    transcriber.transcribe(tmp_path / "dummy.wav")
+    result = transcriber.transcribe(tmp_path / "dummy.wav")
 
     assert captured["melodia_trick"] is False
     assert captured["multiple_pitch_bends"] is True
+    assert result.metadata["device"] == "cpu"
+    assert result.metadata["requested_device"] == "cpu"
+    assert result.metadata["device_available"] is True
 
 
 @pytest.mark.slow
@@ -332,3 +335,53 @@ def test_basic_pitch_raw_outputs_none_when_disabled(tmp_path: Path) -> None:
     result = transcriber.transcribe(audio_path)
 
     assert result.raw_outputs is None
+
+
+@pytest.mark.slow
+def test_basic_pitch_gpu_unavailable_raises() -> None:
+    pytest.importorskip("tensorflow")
+    import tensorflow as tf
+
+    if tf.config.list_physical_devices("GPU"):
+        pytest.skip("GPU is available, cannot test unavailable path")
+    from sonitra.transcribe.base import TranscriptionError
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    transcriber = BasicPitchTranscriber(device="cuda")
+    with pytest.raises(TranscriptionError):
+        transcriber.validate_device()
+
+
+@pytest.mark.slow
+def test_basic_pitch_model_loaded_once_per_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("basic_pitch")
+    import basic_pitch.inference as inference_module
+    import numpy as np
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    model_calls = {"n": 0}
+
+    class _CountingModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            model_calls["n"] += 1
+
+    fake_model_output = {
+        "onset": np.zeros((3, 88), np.float32),
+        "contour": np.zeros((3, 264), np.float32),
+        "note": np.zeros((3, 88), np.float32),
+    }
+
+    monkeypatch.setattr(inference_module, "Model", _CountingModel)
+    monkeypatch.setattr(
+        inference_module,
+        "predict",
+        lambda *args, **kwargs: (fake_model_output, None, []),
+    )
+
+    transcriber = BasicPitchTranscriber()
+    transcriber.transcribe(tmp_path / "a.wav")
+    transcriber.transcribe(tmp_path / "b.wav")
+    assert model_calls["n"] == 1

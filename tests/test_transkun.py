@@ -114,6 +114,35 @@ def test_resolve_device_gpu_variants() -> None:
     assert _resolve_device("cpu") == "cpu"
 
 
+def test_resolve_torch_device_shared_parity() -> None:
+    from sonitra.transcribe.devices import resolve_torch_device
+    from sonitra.transcribe.transkun import _resolve_device
+
+    for value in ("GPU:0", "gpu:1", "gpu", "cuda", "cuda:1", "mps", "cpu"):
+        assert resolve_torch_device(value) == _resolve_device(value)
+
+
+def test_resolve_tf_device_unified_strings() -> None:
+    from sonitra.transcribe.devices import resolve_tf_device
+
+    assert resolve_tf_device("cuda") == "GPU:0"
+    assert resolve_tf_device("CUDA:1") == "GPU:1"
+    assert resolve_tf_device("GPU:0") == "GPU:0"
+    assert resolve_tf_device("gpu:0") == "GPU:0"
+    assert resolve_tf_device("gpu") == "GPU:0"
+    assert resolve_tf_device("cpu") == "cpu"
+
+
+def test_resolve_tf_device_unknown_raises() -> None:
+    import pytest
+
+    from sonitra.transcribe.base import TranscriptionError
+    from sonitra.transcribe.devices import resolve_tf_device
+
+    with pytest.raises(TranscriptionError, match="unknown device"):
+        resolve_tf_device("mps")
+
+
 def test_notes_to_dicts_basic_and_sorted() -> None:
     from sonitra.transcribe.transkun import _notes_to_dicts
 
@@ -314,6 +343,8 @@ def test_transkun_transcribes_sine_tone(tmp_path: Path) -> None:
     assert result.transcriber == "transkun"
     assert result.metadata["package_version"] != "unknown"
     assert "device" in result.metadata
+    assert result.metadata["requested_device"] == "cpu"
+    assert result.metadata["device_available"] is True
     # notes may be empty on synthetic audio; but if present they must satisfy contract
     if result.notes:
         assert_notes_satisfy_contract(result.notes)
