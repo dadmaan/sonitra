@@ -303,3 +303,15 @@ def test_transkun_baseline_presets_pin_cpu_and_cuda() -> None:
 
     assert _devices(cpu_cfg) == {"basic_pitch": "cpu", "transkun": "cpu"}
     assert _devices(gpu_cfg) == {"basic_pitch": "cuda", "transkun": "cuda"}
+
+
+def test_transcription_numeric_defaults() -> None:
+    cfg = PipelineConfig.model_validate(_minimal_config_dict())
+    assert cfg.transcription.numeric_mode == "off"
+    assert cfg.transcription.gpu_memory_growth is False
+
+
+def test_transcription_rejects_unknown_key() -> None:
+    bad = {**_minimal_config_dict(), "transcription": {"bogus_key": 1}}
+    with pytest.raises(ConfigError):
+        PipelineConfig.model_validate(bad)
