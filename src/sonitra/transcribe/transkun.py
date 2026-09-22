@@ -5,6 +5,8 @@ Requires the optional ``transkun`` extra
 """
 from __future__ import annotations
 
+import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,8 @@ from sonitra.transcribe.base import TranscriptionError, TranscriptionResult, che
 from sonitra.transcribe.configs import TranskunTranscriberConfig
 from sonitra.transcribe.devices import resolve_torch_device
 from sonitra.transcribe.protocol import register_transcriber
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_device(device: str) -> str:
@@ -96,6 +100,53 @@ def _transkun_package_version() -> str:
         return "unknown"
 
 
+_NUMERIC_APPLIED: tuple[str, bool] | None = None
+
+
+def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
+    """Apply process-global torch numeric settings ahead of model load.
+
+    warn maps to ``warn_only=True`` with fallback to unconstrained when the
+    torch build lacks it; strict raises. TF32 is deterministic but less
+    accurate (~10 vs 23 mantissa bits), so it is off in both modes.
+    ``gpu_memory_growth`` is TF-only (torch already grows its cache);
+    accepted for a uniform section schema. Skips repeats per process.
+    """
+    global _NUMERIC_APPLIED
+    if _NUMERIC_APPLIED == (numeric_mode, gpu_memory_growth):
+        return
+    if numeric_mode == "off":
+        _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
+        return
+    import torch
+
+    failures: list[str] = []
+    try:
+        if numeric_mode == "warn":
+            try:
+                torch.use_deterministic_algorithms(True, warn_only=True)
+            except TypeError:
+                logger.warning(
+                    "transkun numeric_mode=warn: torch lacks warn_only; continuing unconstrained"
+                )
+        else:
+            torch.use_deterministic_algorithms(True)
+    except RuntimeError as exc:
+        failures.append(f"deterministic algorithms: {exc}")
+    try:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+    except AttributeError as exc:
+        failures.append(f"precision flags: {exc}")
+    _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
+    if failures:
+        message = "; ".join(failures)
+        if numeric_mode == "strict":
+            raise TranscriptionError(f"transkun strict numeric_mode failed: {message}")
+        logger.warning("transkun numeric settings fell back (%s)", message)
+
+
 class TranskunTranscriber:
     """TransKun piano transcription.
 
@@ -110,6 +161,8 @@ class TranskunTranscriber:
         segment_hop_sec: float | None = None,
         weights_path: Path | str | None = None,
         conf_path: Path | str | None = None,
+        numeric_mode: str = "off",
+        gpu_memory_growth: bool = False,
         name: str = "transkun",
     ) -> None:
         self.device = device
@@ -117,6 +170,14 @@ class TranskunTranscriber:
         self.segment_hop_sec = segment_hop_sec
         self.weights_path = Path(weights_path) if weights_path is not None else None
         self.conf_path = Path(conf_path) if conf_path is not None else None
+        mode = numeric_mode.lower() if isinstance(numeric_mode, str) else numeric_mode
+        if mode not in ("off", "warn", "strict"):
+            raise TranscriptionError(
+                f"transkun got unknown numeric_mode {numeric_mode!r}; "
+                "use 'off', 'warn' or 'strict'."
+            )
+        self.numeric_mode = mode
+        self.gpu_memory_growth = bool(gpu_memory_growth)
         self.name = name
         self._model: Any | None = None
         self._lock = threading.RLock()
@@ -171,6 +232,8 @@ class TranskunTranscriber:
             import torch
         except ImportError as exc:
             raise _missing_dependency("torch") from exc
+
+        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
 
         # lazy load of transkun package itself
         try:
@@ -303,6 +366,7 @@ class TranskunTranscriber:
             "device": resolved,
             "requested_device": self.device,
             "device_available": _available,
+            "numeric_mode": self.numeric_mode,
             "filtered_dropped": filtered_dropped,
             "note_events_total": raw_count,
             "notes_kept": len(notes),
@@ -327,5 +391,8 @@ def _build(cfg: TranskunTranscriberConfig) -> TranskunTranscriber:
         segment_hop_sec=cfg.segment_hop_sec,
         weights_path=cfg.weights_path,
         conf_path=cfg.conf_path,
+        numeric_mode=os.environ.get("SONITRA_NUMERIC_MODE", "off"),
+        gpu_memory_growth=os.environ.get("SONITRA_GPU_MEMORY_GROWTH", "").strip().lower()
+        in {"1", "true", "yes", "on"},
         name=cfg.name or "transkun",
     )

@@ -180,6 +180,8 @@ separation:
 transcription:
     output_dir: transcriptions
     max_workers: 1 # parallel audio files per transcriber; safe for any rendering mode
+    numeric_mode: "off" # framework determinism + precision: off | warn (fallback) | strict (raise); strict recommended for published runs
+    gpu_memory_growth: false # TF allocates GPU memory as needed; may change cuDNN algorithm choice, so it stays in the benchmark fingerprint
     transcribers:
         - type: basic_pitch # Spotify Basic Pitch — installed by default
           enabled: true

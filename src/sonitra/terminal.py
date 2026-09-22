@@ -117,6 +117,16 @@ def configure_framework_logging(level: str) -> None:
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = mapping.get(level.upper(), "1")
 
 
+def configure_onednn_opts(*, default: str = "0") -> None:
+    """Set TF_ENABLE_ONEDNN_OPTS unless the user already set it.
+
+    Single default source for the oneDNN flag (TF reads it at import, so
+    call before any lazy TF import and again after config load). Workers
+    inherit the env; setdefault keeps a user export winning.
+    """
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", default)
+
+
 def _format_file_field(midi_path: str, *, max_len: int = 40) -> str:
     """Shorten a worker's current file for the detail row's ``file`` column.
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -173,6 +173,8 @@ class TranscriptionSection(BaseModel):
     transcribers: list[TranscriberConfig] = Field(default_factory=list)
     output_dir: Path | str = "transcriptions"
     max_workers: int = 1
+    numeric_mode: Literal["off", "warn", "strict"] = "off"
+    gpu_memory_growth: bool = False
 
 
 class NoteMetricsSection(BaseModel):

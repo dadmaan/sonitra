@@ -26,6 +26,7 @@ from sonitra.terminal import (
     NullBenchmarkProgress,
     RichBenchmarkProgress,
     configure_framework_logging,
+    configure_onednn_opts,
     effective_log_level,
     get_console,
     set_log_level,
@@ -37,6 +38,20 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(name="sonitra")
 
 _CLI_VERBOSE = False
+
+
+def _apply_numeric_env(cfg: Any) -> None:
+    """Export transcription numeric settings for backend builders/workers.
+
+    Backends read SONITRA_NUMERIC_MODE / SONITRA_GPU_MEMORY_GROWTH at build
+    time; benchmark pool workers inherit the env via fork. setdefault keeps
+    an explicit user export winning over YAML.
+    """
+    os.environ.setdefault("SONITRA_NUMERIC_MODE", cfg.transcription.numeric_mode)
+    os.environ.setdefault(
+        "SONITRA_GPU_MEMORY_GROWTH",
+        "1" if cfg.transcription.gpu_memory_growth else "0",
+    )
 
 
 def _progress_enabled(cfg) -> bool:
@@ -138,6 +153,7 @@ def render(
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
         configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
     audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
@@ -246,6 +262,8 @@ def transcribe(
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
         configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
+    _apply_numeric_env(cfg)
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
 
@@ -408,6 +426,7 @@ def evaluate(
         if not _CLI_VERBOSE:
             set_log_level(effective_log_level(full_cfg))
             configure_framework_logging(effective_log_level(full_cfg))
+            configure_onednn_opts()
         full_cfg.io.dataset = dataset
         section = full_cfg.evaluation
         eval_paths = resolve_corpus_paths(full_cfg, config_name=config.stem)
@@ -436,6 +455,7 @@ def evaluate(
             if not _CLI_VERBOSE:
                 set_log_level(effective_log_level(loaded_cfg))
                 configure_framework_logging(effective_log_level(loaded_cfg))
+                configure_onednn_opts()
             section = loaded_cfg.evaluation
             eval_cfg = loaded_cfg
         else:
@@ -617,6 +637,8 @@ def benchmark(
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
         configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
+    _apply_numeric_env(cfg)
     _apply_dataset(cfg, dataset, config)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
     audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
@@ -1004,7 +1026,7 @@ def main(
     # TF C++ logs follow the log level (respects user overrides). Set before
     # any TensorFlow import; also inherited by benchmark pool workers.
     configure_framework_logging("DEBUG" if verbose else "INFO")
-    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    configure_onednn_opts()
 
 
 if __name__ == "__main__":
