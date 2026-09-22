@@ -119,7 +119,7 @@ uv sync --extra gpu
 
 This installs the 11 `nvidia-*` CUDA support wheels, pinned to the versions TensorFlow 2.15 asks for in its `and-cuda` extras. TensorFlow itself comes as a core need through Basic Pitch, so the `[gpu]` extra adds only the CUDA files. Sonitra does not use `tensorflow[and-cuda]` on its own, because that group needs `tensorrt-libs`, which lives only on NVIDIA's private package index.
 
-To use the graphics card, set `device: GPU:0` in the `transcription.transcribers` part of your config. The default is `cpu`. For GPU use inside Docker, see [docs/docker.md](docs/docker.md).
+To use the graphics card, set `device: GPU:0` in the `transcription.transcribers` part of your config. The default is `cpu`. The device changes low-level numeric results, so do not compare a CPU run with a GPU run in one study; see [docs/reproducibility.md](docs/reproducibility.md). For GPU use inside Docker, see [docs/docker.md](docs/docker.md).
 
 ## Datasets
 
@@ -195,7 +195,7 @@ See [docs/configuration.md](docs/configuration.md) for the full section guide, s
 
 ## Evaluation metrics
 
-Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table.
+Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table. Scores also depend on the device and the numeric mode; see [docs/reproducibility.md](docs/reproducibility.md).
 
 ## Statistical analysis
 

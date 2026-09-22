@@ -55,6 +55,8 @@ A transcriber turns audio back into notes. AMT means automatic music transcripti
 
 Separation `device` accepts the same unified strings (`cpu`, `cuda`, `cuda:N`, `GPU:N`); `GPU:0` is translated to torch `cuda:0` at the separator boundary.
 
+Numeric reproducibility is controlled per run by two `transcription` keys. Both stay in the benchmark fingerprint, so changing them invalidates resume. `numeric_mode` (`off` default, `warn`, `strict` — `strict` recommended for published runs) selects deterministic framework algorithms and disables TF32 precision shortcuts (TF32 is deterministic but less accurate than float32, about 10 versus 23 mantissa bits). `warn` falls back with a warning where a kernel has no deterministic implementation; `strict` raises instead. `gpu_memory_growth` (default `false`) lets TensorFlow allocate graphics memory as needed instead of grabbing it all at start; cuDNN algorithm choice can depend on workspace size, so it is treated as result-affecting. Both settings are process-global and reach benchmark workers through the environment; the effective `numeric_mode` is recorded per row in `transcriber_metadata`.
+
 ## Built-in audio effects
 
 You can add these effects under `pedalboard.effects`. Each effect has an `enabled` flag to turn it on or off. Pedalboard is the audio-effects library Sonitra uses.

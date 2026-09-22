@@ -121,10 +121,51 @@ needs two code changes. Extend the `bsed` entry's `extract_map` in
 `scripts/download_datasets.py` with an `annotations/` target. And add a reader under `evaluation/` that reads the CSV and npz alignment format instead of
 reading MIDI on its own.
 
+## Numeric reproducibility
+
+**Status:** `transcription.numeric_mode` is in place. The effect is measured
+on both neural backends, and `strict` removes the device-induced divergence
+at no material runtime cost. The default is still `off`.
+
+Sonitra exists to produce comparable numbers, and floating-point maths is not
+comparable across devices on its own. On `basic_pitch`, CPU and GPU disagreed
+on one note event out of 1781 on identical input, and changing the GPU batch
+size shifted note activations by up to 1.29e-02 against 8.05e-07 on CPU. A
+note activation is a probability; at an onset threshold of 0.5, a shift that
+size flips notes and so changes F1. A batch size is how many audio windows run
+through the model at once.
+
+`transcription.numeric_mode` (`off`, `warn` or `strict`; default `off`) is the
+remedy. It is process-global, it stays in the run fingerprint, and each backend
+records it in its per-row metadata. `warn` falls back without failing; `strict`
+raises. `config/benchmark/numerics_check.yaml` is a transcription-only methods
+preset for measuring the effect, not a model comparison.
+See [docs/reproducibility.md](docs/reproducibility.md).
+
+Measured on a 20-file `bsed` subset at `batch_size=1`: CPU against GPU
+changed 1 of 20 files on `basic_pitch` and 4 of 20 on `transkun`, the largest
+gap being frame F1 0.0069. The same variant run twice is exactly zero, and
+CPU against itself under a TensorFlow flag moved only one file's frame F1,
+by 8.8e-5. The largest gap is about 115 times smaller than the largest real
+condition effect in an existing degradation table (note onset F1 0.7922),
+which makes it a comparability note rather than a disqualifying one. With
+`strict` on both sides, divergence was exactly zero.
+
+Planned design:
+- Revisit the `off` default once deterministic runs are routine and their
+  cost is known at scale; the measured cost was within 5% on a 20-file subset.
+- Surface the device and numeric mode per published baseline row; the
+  provenance gap is recorded in [docs/reproducibility.md](docs/reproducibility.md).
+
 ## Parallel benchmark conditions on GPU
 
 **Status:** Blocked on TensorFlow GPU memory setup. `benchmark.max_workers`
 stays at 1 in every `config/benchmark/*.yaml` preset for now. TensorFlow is the math library Basic Pitch uses. `max_workers` sets how many tasks run at once.
+
+Delivered: the `transcription.gpu_memory_growth` flag from the planned design
+below now exists (`src/sonitra/config.py`). It defaults to `false`, so memory
+growth stays opt-in and `benchmark.max_workers` still stays at 1 until it is
+turned on and measured.
 
 `benchmark.max_workers` is the only setting that runs `sonitra benchmark` tasks at once. It
 uses a `ProcessPoolExecutor` over test setups (see `benchmark/runner.py`), not a thread

@@ -35,7 +35,7 @@ transcription:
       conf_path: null            # null uses the bundled conf
 ```
 
-`enabled` and `name` come from the base class. `device` accepts the unified strings `cpu`, `cuda`, `cuda:N` and `GPU:N` (plus `mps` on torch backends). Each backend translates them at its boundary with the shared helpers in `src/sonitra/transcribe/devices.py` (`resolve_torch_device` maps `GPU:N` to `cuda:N`; `resolve_tf_device` maps `cuda` to `GPU:0`), so users write the same word everywhere. Any new backend must accept the same strings and translate via that module; anything else raises `TranscriptionError` naming the valid values.
+`enabled` and `name` come from the base class. `device` accepts the unified strings `cpu`, `cuda`, `cuda:N` and `GPU:N` (plus `mps` on torch backends). Each backend translates them at its boundary with the shared helpers in `src/sonitra/transcribe/devices.py` (`resolve_torch_device` maps `GPU:N` to `cuda:N`; `resolve_tf_device` maps `cuda` to `GPU:0`), so users write the same word everywhere. Any new backend must accept the same strings and translate via that module; anything else raises `TranscriptionError` naming the valid values. A new backend must also honour the process-level numeric settings (`transcription.numeric_mode`, `gpu_memory_growth`) the same way: read the `SONITRA_NUMERIC_MODE` / `SONITRA_GPU_MEMORY_GROWTH` environment defaults in the builder, apply them inside the lazy-import block, and record the effective `numeric_mode` in `metadata`.
 
 Add the new class to the `TranscriberConfig` union at the bottom of the file. That union is a discriminated union. The `type` field picks which class to validate. If you add a config class but forget the registry, or the other way round, `tests/test_transcriber_registry.py` fails. That test checks the two lists match.
 
@@ -177,6 +177,7 @@ Every `TranscriptionResult` carries a `metadata` dict. The benchmark copies it i
 * `device`: the resolved device actually used, for example `cuda:0`.
 * `requested_device`: the raw string from config, before translation.
 * `device_available`: `True` for `cpu` with no framework import; otherwise whether the requested accelerator exists (GPU list / `cuda.is_available()` plus `cuda:N` index bound).
+* `numeric_mode`: the effective process-level setting (`off`, `warn`, `strict`) applied in the lazy-import block.
 * `filtered_dropped`: notes the model returned that `make_note` dropped.
 * `note_events_total` and `notes_kept`: before and after the filter.
 * `boundary_incomplete`: notes with `hasOnset` or `hasOffset` false, counted but kept.
