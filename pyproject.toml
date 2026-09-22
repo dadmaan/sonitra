@@ -29,6 +29,10 @@ dependencies = [
     "pydantic",
     "rich",
     "basic-pitch>=0.4.0,<0.5.0",
+    # Direct since 5a: the basic_pitch loader uses them explicitly
+    # (previously transitive via librosa).
+    "soundfile",
+    "soxr",
 ]
 
 [project.optional-dependencies]

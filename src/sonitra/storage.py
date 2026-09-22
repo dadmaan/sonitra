@@ -61,6 +61,45 @@ def read_audio_resampled(
     return np.asarray(audio, dtype=np.float32), sample_rate
 
 
+def read_audio_basic_pitch(
+    path: Path | str, target_sr: int = 22050
+) -> tuple[np.ndarray, int]:
+    """Load mono audio for basic_pitch, replicating librosa.load bit-for-bit.
+
+    soundfile.read(float32) → mean-to-mono → soxr HQ resample, matching
+    librosa.load(path, sr=target_sr, mono=True) on the pinned versions
+    without the per-process numba warmup. Owned by basic_pitch; the
+    pedalboard path above is untouched.
+    """
+    import math
+
+    import soundfile as sf
+    import soxr
+
+    input_path = Path(path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {input_path}")
+    data, native_sr = sf.read(str(input_path), dtype="float32", always_2d=False)
+    mono = data.T
+    if mono.ndim > 1:
+        mono = np.mean(mono, axis=tuple(range(mono.ndim - 1)))
+    mono = np.asarray(mono, dtype=np.float32)
+    if int(native_sr) == int(target_sr):
+        return mono, int(target_sr)
+    resampled = soxr.resample(
+        mono, in_rate=float(native_sr), out_rate=float(target_sr), quality="soxr_hq"
+    )
+    # librosa.load computes n_samples = ceil(n * target/native) and then
+    # fix_length()s to it; mirror that ratio arithmetic exactly.
+    ratio = float(target_sr) / float(native_sr)
+    want = int(math.ceil(mono.shape[-1] * ratio))
+    if resampled.shape[-1] > want:
+        resampled = resampled[..., :want]
+    elif resampled.shape[-1] < want:
+        resampled = np.pad(resampled, (0, want - resampled.shape[-1]))
+    return np.asarray(resampled, dtype=np.float32), int(target_sr)
+
+
 def derive_output_path(midi_path: Path | str, *, out_dir: Path | str, ext: str = ".wav") -> Path:
     midi = Path(midi_path)
     out_dir = Path(out_dir)

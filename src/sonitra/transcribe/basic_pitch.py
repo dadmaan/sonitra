@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from sonitra.notes import make_note
 from sonitra.transcribe.base import (
@@ -13,6 +17,8 @@ from sonitra.transcribe.base import (
 from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 from sonitra.transcribe.devices import resolve_tf_device
 from sonitra.transcribe.protocol import register_transcriber
+
+logger = logging.getLogger(__name__)
 
 
 def _basic_pitch_package_version() -> str:
@@ -30,6 +36,46 @@ def _basic_pitch_package_version() -> str:
                 return "unknown"
     except Exception:
         return "unknown"
+
+
+_NUMERIC_APPLIED: tuple[str, bool] | None = None
+
+
+def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
+    """Apply process-global TF numeric settings ahead of model load.
+
+    Skips when the same settings already applied in this process (TF raises
+    once the device is initialised). strict raises TranscriptionError on
+    failure; warn logs and falls back.
+    """
+    global _NUMERIC_APPLIED
+    if _NUMERIC_APPLIED == (numeric_mode, gpu_memory_growth):
+        return
+    import tensorflow as tf
+
+    failures: list[str] = []
+    if gpu_memory_growth:
+        try:
+            for gpu in tf.config.list_physical_devices("GPU"):
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as exc:
+            failures.append(f"memory growth: {exc}")
+    if numeric_mode != "off":
+        try:
+            tf.config.experimental.enable_op_determinism()
+        except (AttributeError, RuntimeError) as exc:
+            failures.append(f"op determinism: {exc}")
+        try:
+            # TF32 is deterministic but less accurate than float32.
+            tf.config.experimental.enable_tensor_float_32_execution(False)
+        except (AttributeError, RuntimeError) as exc:
+            failures.append(f"TF32 disable: {exc}")
+    _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
+    if failures:
+        message = "; ".join(failures)
+        if numeric_mode == "strict":
+            raise TranscriptionError(f"basic_pitch strict numeric_mode failed: {message}")
+        logger.warning("basic_pitch numeric settings fell back (%s)", message)
 
 
 class BasicPitchTranscriber:
@@ -56,6 +102,9 @@ class BasicPitchTranscriber:
         melodia_trick: bool = True,
         multiple_pitch_bends: bool = False,
         save_raw_outputs: bool = False,
+        numeric_mode: str = "off",
+        gpu_memory_growth: bool = False,
+        batch_size: int = 16,
         name: str = "basic_pitch",
     ) -> None:
         self.onset_threshold = float(onset_threshold)
@@ -67,6 +116,15 @@ class BasicPitchTranscriber:
         self.melodia_trick = melodia_trick
         self.multiple_pitch_bends = multiple_pitch_bends
         self.save_raw_outputs = save_raw_outputs
+        mode = numeric_mode.lower() if isinstance(numeric_mode, str) else numeric_mode
+        if mode not in ("off", "warn", "strict"):
+            raise TranscriptionError(
+                f"basic_pitch got unknown numeric_mode {numeric_mode!r}; "
+                "use 'off', 'warn' or 'strict'."
+            )
+        self.numeric_mode = mode
+        self.gpu_memory_growth = bool(gpu_memory_growth)
+        self.batch_size = int(batch_size)
         self.name = name
         self._model: Any | None = None
         self._lock = threading.RLock()
@@ -130,13 +188,42 @@ class BasicPitchTranscriber:
         try:
             import tensorflow as tf
             from basic_pitch import ICASSP_2022_MODEL_PATH
-            from basic_pitch.inference import Model, predict
+            from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP
+            import basic_pitch.note_creation as infer
+            from basic_pitch.inference import Model, unwrap_output
         except ImportError as exc:
             raise TranscriptionError(
                 "basic-pitch is not installed; it should be present after `pip install sonitra`."
             ) from exc
 
+        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
+
+        from sonitra.storage import read_audio_basic_pitch
+
         audio_path = Path(audio_path)
+        # Replicates basic_pitch.inference.predict internals (run_inference):
+        # same 30-frame overlap / hop geometry, same front zero-pad, same
+        # unwrap. Audio comes from read_audio_basic_pitch, which is
+        # bit-identical to the librosa.load call predict() would make.
+        n_overlapping_frames = 30
+        overlap_len = n_overlapping_frames * FFT_HOP
+        hop_size = AUDIO_N_SAMPLES - overlap_len
+        # CPU-only batching. GPU stays at batch 1 (Phase 2 decides GPU
+        # batching); batch 1 reproduces upstream per-window inference exactly.
+        effective_batch = self.batch_size if "cpu" in tf_device.lower() else 1
+
+        audio, _sample_rate = read_audio_basic_pitch(str(audio_path))
+        original_length = int(audio.shape[0])
+        padded = np.concatenate(
+            [np.zeros(overlap_len // 2, dtype=np.float32), np.asarray(audio, dtype=np.float32)]
+        )
+        windows = []
+        for i in range(0, padded.shape[0], hop_size):
+            window = padded[i : i + AUDIO_N_SAMPLES]
+            if window.shape[0] < AUDIO_N_SAMPLES:
+                window = np.pad(window, (0, AUDIO_N_SAMPLES - window.shape[0]))
+            windows.append(np.expand_dims(window, axis=-1))
+
         # Load the SavedModel once per instance; the lock matters because
         # `sonitra transcribe` shares one instance across a ThreadPool.
         # Built inside the device scope so placement matches the old per-call
@@ -146,16 +233,30 @@ class BasicPitchTranscriber:
                 if self._model is None:
                     self._model = Model(ICASSP_2022_MODEL_PATH)
                 model = self._model
-                model_output, _, note_events = predict(
-                    str(audio_path),
-                    model_or_model_path=model,
-                    onset_threshold=self.onset_threshold,
-                    frame_threshold=self.frame_threshold,
-                    minimum_note_length=self.minimum_note_length_ms,
-                    minimum_frequency=self.minimum_frequency_hz,
-                    maximum_frequency=self.maximum_frequency_hz,
-                    melodia_trick=self.melodia_trick,
+                output: dict[str, list[Any]] = {"note": [], "onset": [], "contour": []}
+                for start in range(0, len(windows), effective_batch):
+                    batch = np.stack(windows[start : start + effective_batch], axis=0)
+                    for key, value in model.predict(batch).items():
+                        output[key].append(value)
+                model_output = {
+                    key: unwrap_output(
+                        np.concatenate(output[key]), original_length, n_overlapping_frames
+                    )
+                    for key in output
+                }
+                min_note_len = int(
+                    round(self.minimum_note_length_ms / 1000.0 * (AUDIO_SAMPLE_RATE / FFT_HOP))
+                )
+                _, note_events = infer.model_output_to_notes(
+                    model_output,
+                    onset_thresh=self.onset_threshold,
+                    frame_thresh=self.frame_threshold,
+                    min_note_len=min_note_len,
+                    min_freq=self.minimum_frequency_hz,
+                    max_freq=self.maximum_frequency_hz,
                     multiple_pitch_bends=self.multiple_pitch_bends,
+                    melodia_trick=self.melodia_trick,
+                    midi_tempo=120,
                 )
         notes: list[dict[str, object]] = []
         for start, end, pitch, amplitude, _bends in note_events:
@@ -180,6 +281,7 @@ class BasicPitchTranscriber:
             "device": tf_device,
             "requested_device": self.device,
             "device_available": _available,
+            "numeric_mode": self.numeric_mode,
             "filtered_dropped": filtered_dropped,
             "note_events_total": len(note_events),
             "notes_kept": len(notes),
@@ -206,5 +308,9 @@ def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
         melodia_trick=cfg.melodia_trick,
         multiple_pitch_bends=cfg.multiple_pitch_bends,
         save_raw_outputs=cfg.save_raw_outputs,
+        batch_size=cfg.batch_size,
+        numeric_mode=os.environ.get("SONITRA_NUMERIC_MODE", "off"),
+        gpu_memory_growth=os.environ.get("SONITRA_GPU_MEMORY_GROWTH", "").strip().lower()
+        in {"1", "true", "yes", "on"},
         name=cfg.name or "basic_pitch",
     )

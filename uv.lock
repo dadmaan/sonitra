@@ -3109,6 +3109,8 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "scipy" },
+    { name = "soundfile" },
+    { name = "soxr" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -3190,6 +3192,8 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "scipy" },
+    { name = "soundfile" },
+    { name = "soxr" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'transkun'", specifier = "==2.12.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "sonitra", extra = "transkun" } },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'transkun'", specifier = "==2.12.1" },
     { name = "torch", marker = "extra == 'transkun-gpu'", specifier = "==2.12.1" },

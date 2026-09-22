@@ -26,6 +26,7 @@ class BasicPitchTranscriberConfig(_TranscriberBase):
     melodia_trick: bool = True            # HMM/melodia post-processing smoothing
     multiple_pitch_bends: bool = False    # allow overlapping same-pitch notes w/ glissando
     save_raw_outputs: bool = False        # Feature 2 gate: persist raw model outputs as CSV sidecar
+    batch_size: int = Field(default=16, ge=1)  # stacked-window inference batch, CPU only
 
 
 class ExternalCommandTranscriberConfig(_TranscriberBase):
