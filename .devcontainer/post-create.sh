@@ -32,5 +32,48 @@ if [ -d .venv ] && [ ! -x .venv/bin/python ]; then
 fi
 uv sync --locked "${SYNC_EXTRAS[@]}"
 
+# Verify the fork actually landed: uv sync exits 0 without swapping the torch
+# build across a fork switch, so check which build is installed via
+# torch.version.cuda (not torch.cuda.is_available(), which reflects GPU
+# visibility rather than the installed build).
+probe_torch_cuda() {
+    uv run --no-sync python -c 'try:
+    import torch
+    print(torch.version.cuda or "cpu")
+except ImportError:
+    print("missing")'
+}
+
+TORCH_CUDA="$(probe_torch_cuda)"
+if [ "$EXTRA" = "transkun-gpu" ]; then
+    if [ "$TORCH_CUDA" = "cpu" ] || [ "$TORCH_CUDA" = "missing" ]; then
+        if [ "$TORCH_CUDA" = "missing" ]; then
+            echo "post-create: torch is missing but the GPU fork was selected; reinstalling torch/torchaudio"
+        else
+            echo "post-create: torch is a CPU build but the GPU fork was selected; reinstalling torch/torchaudio"
+        fi
+        uv sync --locked "${SYNC_EXTRAS[@]}" --reinstall-package torch --reinstall-package torchaudio
+        TORCH_CUDA="$(probe_torch_cuda)"
+        if [ "$TORCH_CUDA" = "cpu" ] || [ "$TORCH_CUDA" = "missing" ]; then
+            echo "post-create: expected a CUDA torch build for EXTRA=transkun-gpu but found '${TORCH_CUDA}'; failing" >&2
+            exit 1
+        fi
+    fi
+else
+    if [ "$TORCH_CUDA" != "cpu" ]; then
+        if [ "$TORCH_CUDA" = "missing" ]; then
+            echo "post-create: torch is missing but the CPU fork was selected; reinstalling torch/torchaudio"
+        else
+            echo "post-create: torch is a CUDA build but the CPU fork was selected; reinstalling torch/torchaudio"
+        fi
+        uv sync --locked "${SYNC_EXTRAS[@]}" --reinstall-package torch --reinstall-package torchaudio
+        TORCH_CUDA="$(probe_torch_cuda)"
+        if [ "$TORCH_CUDA" != "cpu" ]; then
+            echo "post-create: expected a CPU torch build for EXTRA=transkun but found '${TORCH_CUDA}'; failing" >&2
+            exit 1
+        fi
+    fi
+fi
+
 # `--no-sync`: this check must not touch the environment it just built.
 uv run --no-sync python -c "import sonitra"
