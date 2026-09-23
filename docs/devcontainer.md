@@ -58,6 +58,42 @@ Safe ways to sync:
 - Run it by hand with the extras: `uv sync --locked --extra transkun --extra dev` (GPU: `--extra transkun-gpu --extra xla-ptx --extra dev`).
 - `uv run` is inexact. It installs what the default set needs and removes nothing, so `uv run python -m pytest` is safe. `uv run --no-sync` skips the check and mutates nothing. Avoid `uv run --exact`, which strips the extras.
 
+### Switching forks needs `--reinstall-package`
+
+A plain `uv sync` cannot move an existing venv from the CPU fork to the GPU fork. Both forks pin the same version (`torch==2.12.1`); only the build differs. The CPU wheel carries the `+cpu` local tag, and the PyPI CUDA wheel does not. A requirement with no local tag accepts any local tag, so `2.12.1+cpu` satisfies `==2.12.1`. uv checks the environment, decides it is already correct, prints `Would make no changes`, and leaves the CPU torch in place.
+
+The reverse direction is different. The CPU fork pins `torch==2.12.1+cpu`, which a CUDA build does not satisfy, so switching GPU to CPU normally swaps on its own.
+
+To switch by hand, force the swap:
+
+```bash
+# CPU fork
+uv sync --locked --extra transkun --extra dev \
+    --reinstall-package torch --reinstall-package torchaudio
+
+# GPU fork
+uv sync --locked --extra transkun-gpu --extra xla-ptx --extra dev \
+    --reinstall-package torch --reinstall-package torchaudio
+```
+
+A wrong build fails the preflight check with:
+
+```
+transkun device 'cuda' resolved to 'cuda' but the installed torch (2.12.1+cpu) is a CPU-only build. Reinstall the CUDA fork: `uv sync --locked --extra transkun-gpu --extra xla-ptx --extra dev --reinstall-package torch --reinstall-package torchaudio` (a plain sync will not swap the build: both forks pin the same version).
+```
+
+`torch.__version__` ends in `+cpu` when this fires. The older message, `transkun device 'cuda' resolved to 'cuda' but CUDA is not available`, now covers a different case: a real CUDA build that cannot see a GPU (a passthrough problem), not a wrong build.
+
+Check which build is installed:
+
+```bash
+uv run --no-sync python -c "import torch; print(torch.__version__, torch.version.cuda)"
+```
+
+`torch.version.cuda` is `None` on a CPU build and a version string (e.g. `13.0`) on a CUDA build.
+
+`.devcontainer/post-create.sh` detects a wrong build and re-runs the sync with these flags itself. The manual command above is therefore only needed for a hand-run `uv sync`. The venv at `/workspace/.venv` lives on the bind mount, so a rebuild does not repair a wrong build on its own: the create step re-runs the same lock and audits clean again.
+
 ## Run the tests
 
 ```bash
@@ -77,7 +113,7 @@ On a CPU devcontainer, the slow command gives 6 passed.
 - The venv lives on the `/workspace` mount and persists across rebuilds. The uv cache does not: it lives in the container layer and is lost on rebuild.
 - uv prints a hardlink warning during the sync because the cache and the venv are on different filesystems. The warning is harmless. Set `UV_LINK_MODE=copy` to silence it, at the cost of slower, larger writes.
 - On Windows, the devcontainer mounts the repo from the Windows filesystem through WSL2. That mount can make `uv sync` fail with I/O errors on deep file trees. See the WSL2 note in [README.md](../README.md).
-- A fresh venv sync downloads about 4.0 GB on the CPU fork and 6.9 GB on the GPU fork. A re-sync against an existing venv is small.
+- A fresh venv sync downloads about 4.0 GB on the CPU fork and 6.9 GB on the GPU fork. A re-sync against an existing venv is small, except a fork switch, which reinstalls torch and torchaudio and downloads about 3 GB.
 
 ## Troubleshooting
 

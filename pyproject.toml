@@ -46,7 +46,10 @@ transkun = [
     # package to be a direct member of that extra (transkun itself only
     # pulls torch transitively, which uv 0.7.8 rejects). Versions pinned to
     # the current lock so the CPU and CUDA forks differ by build only
-    # (+cpu vs CUDA), never by version.
+    # (+cpu vs CUDA), never by version. Because the forks share a version,
+    # a plain `uv sync` cannot swap the installed build across forks;
+    # `.devcontainer/post-create.sh` verifies the installed build for this
+    # reason.
     "torch==2.12.1",
     "torchaudio==2.11.0",
 ]

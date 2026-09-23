@@ -20,6 +20,7 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
 ```
 
 - `uv sync` is exact and strips packages the requested set does not name (`transkun`, `torch`, `pytest` among them); re-sync with `--extra ... --extra dev` or run `.devcontainer/post-create.sh` (see `docs/devcontainer.md`). `uv run` is inexact and safe; `--no-sync` mutates nothing.
+- Switching between the `transkun` (CPU) and `transkun-gpu` forks in an existing venv needs `--reinstall-package torch --reinstall-package torchaudio`; the GPU fork's specifier has no local segment, so a plain `uv sync` can audit the environment as correct and keep the old build.
 - Without `uv`: `python -m pytest tests/`.
 - Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
 - No linter or type-checker config; pytest is the quality gate.
