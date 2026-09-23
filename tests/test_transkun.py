@@ -459,3 +459,48 @@ def test_transkun_cuda_unavailable_raises(tmp_path: Path) -> None:
     transcriber = TranskunTranscriber(device="cuda")
     with pytest.raises(TranscriptionError):
         transcriber.transcribe(path)
+
+
+def test_transkun_cpu_build_error_names_the_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    import types
+
+    from sonitra.transcribe.base import TranscriptionError
+    from sonitra.transcribe.transkun import TranskunTranscriber
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.__version__ = "2.12.1+cpu"
+    fake_torch.version = types.SimpleNamespace(cuda=None)
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    transcriber = TranskunTranscriber(device="cuda")
+    with pytest.raises(TranscriptionError) as exc_info:
+        transcriber.validate_device()
+    message = str(exc_info.value)
+    assert "2.12.1+cpu" in message
+    assert "CPU-only build" in message
+    assert "--reinstall-package torch" in message
+    assert "CUDA is not available" not in message
+
+
+def test_transkun_cuda_build_without_device_keeps_availability_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import types
+
+    from sonitra.transcribe.base import TranscriptionError
+    from sonitra.transcribe.transkun import TranskunTranscriber
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.__version__ = "2.12.1"
+    fake_torch.version = types.SimpleNamespace(cuda="13.0")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    transcriber = TranskunTranscriber(device="cuda")
+    with pytest.raises(TranscriptionError) as exc_info:
+        transcriber.validate_device()
+    message = str(exc_info.value)
+    assert "CUDA is not available" in message
+    assert "CPU-only build" not in message
+    assert "--reinstall-package" not in message

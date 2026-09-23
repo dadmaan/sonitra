@@ -200,6 +200,14 @@ class TranskunTranscriber:
         except ImportError as exc:
             raise _missing_dependency("torch") from exc
         if not torch.cuda.is_available():
+            if getattr(torch.version, "cuda", None) is None:
+                raise TranscriptionError(
+                    f"transkun device '{self.device}' resolved to '{resolved}' but the installed "
+                    f"torch ({torch.__version__}) is a CPU-only build. Reinstall the CUDA fork: "
+                    "`uv sync --locked --extra transkun-gpu --extra xla-ptx --extra dev "
+                    "--reinstall-package torch --reinstall-package torchaudio` "
+                    "(a plain sync will not swap the build: both forks pin the same version)."
+                )
             raise TranscriptionError(
                 f"transkun device '{self.device}' resolved to '{resolved}' but CUDA is not available"
             )
