@@ -61,6 +61,19 @@ python scripts/export_regression_table.py \
 
 Without `--metadata-csv` the table has no `meta.*` columns and the script stops with an explanation. See [datasets.md](datasets.md#joining-dataset-metadata-into-a-benchmark-export) for how the join works.
 
+### Restricting to one dataset split
+
+Public piano transcription models are commonly trained on MAESTRO's official train split, so a headline number should come from the held-out test split, not the full corpus. Add `--split` to keep only the rows for named split values (repeatable; `--split-column` picks a different metadata column, default `split`, as in MAESTRO and GAPS):
+
+```bash
+python scripts/export_regression_table.py \
+  --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI \
+  --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --split test
+```
+
+This writes `regression_table_split-test.csv` in `--work-dir`, leaving the unfiltered `regression_table.csv` untouched.
+
 ### Composition year (optional enrichment)
 
 `meta.year` is MAESTRO's contest year, from 2004 to 2018. It marks the recording batch, not when the music was written. `misc/MAESTRO_comp_year.txt` holds an AI-compiled year when each work was finished. Use it when your question is about the age of the music, not the recording date. It spans 1612-2006 across 60 composers. 27 of 60 composers have works in more than one composition year. For the other 33 it never changes within a composer, so the main result mostly compares composers. Your true sample is closer to 60 than 8932.
