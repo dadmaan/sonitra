@@ -1,7 +1,24 @@
-"""Left-join a delimited annotation table onto a dataset metadata CSV.
+r"""Left-join a delimited annotation table onto a dataset metadata CSV.
 
 Rows match on a composite key; unmatched rows get blank cells. Annotation
 quoting is disabled by default so stray quotes cannot merge rows.
+
+Examples:
+    # add MAESTRO composition years, joined on composer + title
+    python scripts/enrich_metadata.py \
+        --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+        --annotations misc/MAESTRO_comp_year.txt --annotations-delimiter '|' \
+        --on canonical_composer=Composer --on canonical_title=Piece \
+        --add Year=composition_year \
+        --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv
+
+    # same join, but fail if any row finds no match
+    python scripts/enrich_metadata.py \
+        --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+        --annotations misc/MAESTRO_comp_year.txt --annotations-delimiter '|' \
+        --on canonical_composer=Composer --on canonical_title=Piece \
+        --add Year=composition_year --require-full-coverage \
+        --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-composition-year.csv
 """
 
 from __future__ import annotations
@@ -301,7 +318,9 @@ def write_provenance(path: Path, payload: Dict[str, object]) -> None:
 
 
 def _parse_args(argv: List[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--metadata", required=True, type=Path,
         help="Base dataset metadata CSV (RFC4180).",

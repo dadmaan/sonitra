@@ -3,6 +3,16 @@
 
 Writes per-config results and cross-config summaries to
 ``corpus/<dataset>/eval_results/``.
+
+Examples:
+    # quick trial: one preset, 5 random files
+    python scripts/run_transcribe_eval.py --dataset maestro-v3 --config pedalboard_baseline --limit 5
+
+    # every preset in config/examples/ against a dataset
+    python scripts/run_transcribe_eval.py --dataset maestro-v3
+
+    # re-transcribe and re-score already-rendered audio, two presets in parallel
+    python scripts/run_transcribe_eval.py --dataset maestro-v3 --skip-render --jobs 2
 """
 
 from __future__ import annotations
@@ -48,7 +58,7 @@ _PYTHON: list[str] = _resolve_python()
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render, transcribe and evaluate all configs against the corpus."
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "--dataset",

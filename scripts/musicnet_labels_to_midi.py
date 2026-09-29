@@ -3,6 +3,16 @@
 Writes one MIDI file per recording (1 tick = 1 sample) plus a metadata CSV with
 a JSON provenance sidecar. An existing score-MIDI tree in the output directory
 is only replaced when ``--replace-score-midi`` is given.
+
+Examples:
+    # count notes and files without writing anything
+    python scripts/musicnet_labels_to_midi.py --dry-run
+
+    # convert corpus/musicnet/annotations/labels/ to midi/ + metadata/musicnet.csv
+    python scripts/musicnet_labels_to_midi.py
+
+    # move an old score-MIDI tree out of midi/ first, then convert
+    python scripts/musicnet_labels_to_midi.py --replace-score-midi
 """
 
 from __future__ import annotations
@@ -303,7 +313,9 @@ def _handle_replace_score_midi(
 
 
 def _parse_args(argv: List[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--corpus-root",
         default=Path("corpus"),

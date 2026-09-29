@@ -5,6 +5,16 @@ Reads the baseline condition of allowlisted benchmark runs under a corpus
 root and rewrites the generated block between the doc's markers. Models with
 no qualifying run are named in a note rather than shown as empty rows. The
 corpus is untracked, so this is a local maintainer command, not a CI gate.
+
+Examples:
+    # preview the generated table without touching the doc
+    python scripts/export_model_baselines.py --stdout
+
+    # rewrite the generated block in docs/model-cards.md
+    python scripts/export_model_baselines.py
+
+    # exit 1 if the doc's table is stale
+    python scripts/export_model_baselines.py --check
 """
 from __future__ import annotations
 
@@ -249,7 +259,9 @@ def _collect(
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--corpus-root", type=Path, default=REPO / "corpus")
     parser.add_argument("--doc", type=Path, default=REPO / "docs" / "model-cards.md")
     parser.add_argument(

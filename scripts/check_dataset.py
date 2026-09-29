@@ -4,6 +4,16 @@ Reports recordings that pair with no MIDI file or several, unreadable or unusual
 MIDI, and ignored files; exits 1 on any error. Recordings whose names differ
 from their MIDI file only by case or separators can be renamed safely via
 ``--plan`` / ``--apply``.
+
+Examples:
+    # check a dataset for pairing and MIDI problems
+    python scripts/check_dataset.py --dataset maestro-v3
+
+    # write the safe renames to a CSV for review
+    python scripts/check_dataset.py --dataset maestro-v3 --plan renames.csv
+
+    # apply the reviewed renames (writes renames.undo.csv)
+    python scripts/check_dataset.py --dataset maestro-v3 --apply renames.csv
 """
 
 from __future__ import annotations
@@ -508,15 +518,8 @@ def apply_plan(plan_path: Path, recordings_dir: Path) -> Path:
 
 def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=__doc__.split("\n\n")[0],
+        description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Usage:\n"
-            "    python scripts/check_dataset.py --dataset my-dataset\n"
-            "    python scripts/check_dataset.py --dataset my-dataset --plan renames.csv\n"
-            "    python scripts/check_dataset.py --dataset my-dataset --apply renames.csv\n"
-            "    python scripts/check_dataset.py --dataset my-dataset --input-type midi\n"
-        ),
     )
     parser.add_argument("--dataset", required=True, help="Dataset folder name under --corpus-root.")
     parser.add_argument("--corpus-root", type=Path, default=Path("corpus"), help="Default: corpus")

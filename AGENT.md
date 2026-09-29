@@ -62,5 +62,6 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
   - A one-line summary, plus at most a few short lines on essential behaviour.
   - Understandable without external context: no references to plans, phases, tickets, upstream code or other files unless needed to use the module.
   - No usage examples, flag lists, output schemas or design history; put those in `--help`, function docstrings, comments or `docs/`.
+  - Exception: `scripts/*.py` docstrings end with an `Examples:` block of 2–4 copy-paste commands (`# comment` above each, repo-root paths, raw `r"""` when a line continues with `\`). The parser prints it via `description=__doc__` + `RawDescriptionHelpFormatter`; `tests/test_script_examples.py` checks flags and `--help` output.
 - **No plan-relative references**: inline comments, docstrings, config comments and docs must be self-explanatory without the plan. Never cite "Phase N", "Step N", lane/arm labels ("2a", "3e", "P5"), tickets, or "this phase" — state the reason instead (e.g. "GPU stays at batch 1: batched-GPU throughput is unmeasured", not "Phase 2 decides").
 - Keep this file concise: add only essential facts an agent cannot quickly derive from the code.

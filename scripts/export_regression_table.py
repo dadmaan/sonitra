@@ -1,7 +1,24 @@
-"""Flatten a ``sonitra benchmark`` run into a regression-ready CSV.
+r"""Flatten a ``sonitra benchmark`` run into a regression-ready CSV.
 
 One row per (condition, transcriber, file), with every metric and config
-override as its own column; a metadata CSV can optionally be joined on.
+override as its own column; a metadata CSV can optionally be joined on, and
+rows can be restricted to the dataset splits (e.g. ``test``) it labels.
+
+Examples:
+    # flatten a run to <work-dir>/regression_table.csv
+    python scripts/export_regression_table.py \
+        --work-dir corpus/maestro-v3/benchmark/<run>
+
+    # join dataset metadata (adds meta.* columns)
+    python scripts/export_regression_table.py \
+        --work-dir corpus/maestro-v3/benchmark/<run> \
+        --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+        --output corpus/maestro-v3/benchmark/<run>/regression_table_with_metadata.csv
+
+    # keep only the test split (writes regression_table_split-test.csv)
+    python scripts/export_regression_table.py \
+        --work-dir corpus/maestro-v3/benchmark/<run> \
+        --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv --split test
 """
 
 from __future__ import annotations
@@ -243,7 +260,9 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--work-dir", required=True, type=Path,
         help="A sonitra benchmark output directory (contains the results JSONL "

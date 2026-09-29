@@ -4,6 +4,19 @@
 Runs on the Python standard library alone; with ``rich`` and a terminal it adds
 an interactive picker and live progress. Interrupted downloads resume on the
 next run; ``--force`` starts over.
+
+Examples:
+    # list available datasets
+    python scripts/download_datasets.py --list
+
+    # download one dataset (MAESTRO v3 MIDI + metadata, ~57 MB)
+    python scripts/download_datasets.py maestro-v3-midi
+
+    # download everything, four at a time
+    python scripts/download_datasets.py --all --jobs 4
+
+    # re-download a dataset from scratch
+    python scripts/download_datasets.py maestro-v3-midi --force
 """
 
 from __future__ import annotations
@@ -2611,21 +2624,8 @@ def _positive_int(value: str) -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download AMT benchmark datasets into the Sonitra corpus directory.",
+        description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="\n".join(
-            [
-                "Examples:",
-                "  python scripts/download_datasets.py --list",
-                "  python scripts/download_datasets.py --notes",
-                "  python scripts/download_datasets.py maestro-v3-midi",
-                "  python scripts/download_datasets.py bsed",
-                "  python scripts/download_datasets.py --all",
-                "  python scripts/download_datasets.py --all --jobs 4",
-                "  python scripts/download_datasets.py maestro-v3-midi --force",
-                "  python scripts/download_datasets.py  (interactive picker on a TTY)",
-            ]
-        ),
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
