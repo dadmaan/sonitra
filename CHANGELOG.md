@@ -2,8 +2,7 @@
 
 All notable changes to the Sonitra project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
@@ -12,272 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/export_model_baselines.py`: refreshes the measured-baselines table in `docs/model-cards.md` from real benchmark runs. Reads the baseline condition of allowlisted runs (`--runs`, comma-separated run-name prefixes, default `piano_only,guitar_only`) under `--corpus-root` (default `corpus/`), pairing each run's `summary.json` with its sibling `config.yaml` — `render_pipeline.input_type` there is authoritative, never the run directory name. Models with no qualifying run are named in a note rather than shown as empty rows. `--doc` (default `docs/model-cards.md`) is the write target; the script refuses to write when `--doc` resolves inside `--corpus-root`. `--stdout` previews the generated block without writing it; `--check` verifies the doc is current and exits non-zero when stale (mutually exclusive with `--stdout`); `corpus/` is untracked, so `--check` is a local maintainer command, not a CI gate. Covered by `tests/test_export_model_baselines.py` (26 tests). `docs/model-cards.md` was restructured around this script: all four transcription backends (`basic_pitch`, `transkun`, `precomputed`, `external_command`) now get a card, plus a new applicability matrix (corpus vs. model, instrument-scope axes), per-model output-fidelity notes, and the generated baselines table. Documented in `docs/model-cards.md`, `docs/cli.md`, and `AGENT.md`.
 - TransKun piano transcription backend (`transkun==2.0.1`, MIT, Transformer encoder into neural semi-CRF, 56 MB bundled checkpoint, `transcription` `type: transkun`): new `src/sonitra/transcribe/transkun.py` (`TranskunTranscriber` driven by `TranskunTranscriberConfig` in `src/sonitra/transcribe/configs.py` with `device` default `cpu` accepting `cuda`, `cuda:1`, `mps` and `GPU:0` translated via `_resolve_device` to `cuda:0`, `segment_size_sec`/`segment_hop_sec` `null` to keep the bundled `.conf` truth of 16 s / 8 s, and optional `weights_path`/`conf_path` overrides, `threading.RLock` guarded lazy model cache shared when `transcription.max_workers > 1` and harmless for benchmark per-condition separate processes, lazy `torch`/`transkun`/`moduleconf` imports inside `transcribe` with `TranscriptionError` carrying `pip install sonitra[transkun]`, `importlib.resources` for `transkun/pretrained/2.0.pt` and `2.0.conf`, `torch.load` with `weights_only=True` fallback, scoped `torch.no_grad()` never `set_grad_enabled(False)` so grad mode stays enabled after the call, `cuda` request with no CUDA raises rather than silent fallback, audio at required 44.1 kHz via new `src/sonitra/storage.py:read_audio_resampled` using `pedalboard.AudioFile(path).resampled_to(44100)` for ffmpeg-free `wav`/`flac`/`mp3` handling where storage is the reusable site, `_notes_to_dicts` routing all notes through `make_note` so `pitch` is already real MIDI without `+21` where `targetMIDIPitch = [-64, -67] + range(21, 108+1)` means -64/-67 are pedal control events filtered before the call and `test_notes_to_dicts_no_pitch_offset` proves 21 stays 21 and 108 stays 108 where +21 would be a silent catastrophic shift, sorted by `(start_sec, pitch)` and keeping `hasOnset`/`hasOffset` boundary notes for upstream parity, `metadata` via `checkpoint_identity` with `package_version` always and `weights_sha256` only on custom `weights_path` plus `device` actually used, `requested_device`, `filtered_dropped`, `note_events_total`, `notes_kept`, `boundary_incomplete`), `@register_transcriber("transkun")` and the new lazy line in `src/sonitra/transcribe/protocol.py:make_transcriber`, commented `transkun` block in `config/source.yaml` and new runnable `config/benchmark/transkun_baseline.yaml` (Basic Pitch plus TransKun side by side, `sonitra benchmark --config config/benchmark/transkun_baseline.yaml --dataset test --limit 2 --seed 123`). Verbose entries already in `AGENT.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `README.md` and `docs/configuration.md` for this change. Covered by `tests/test_transkun.py` (config defaults, `extra="forbid"` via `ConfigError`, discriminator, `_resolve_device` variants, `_notes_to_dicts` basic/sorted/pedal/pitch-offset/contract/boundary/pitch-range, `read_audio_resampled` wav exact/flac resample/mp3 padding/missing plus `slow` inference on sine, grad-mode still enabled, `flac`/`mp3` backends, short audio and determinism and `cuda` unavailable raises) and `tests/test_transcriber_registry.py` now expecting four backends plus `tests/helpers.py::assert_notes_satisfy_contract` as the acceptance gate. Documented in new `docs/adding-a-transcriber.md` (the pitch-index, sample rate, licence, metadata, thread-safety and contract guide with TransKun as the worked example rather than a synthetic skeleton) and new `docs/model-cards.md` (Basic Pitch and TransKun cards with plain `(Author et al., Venue Year)` citations, specs tables, MAESTRO overlap note and 44.1 kHz vs 22.05 kHz control note).
 
-- GAPS (Guitar-Aligned Performance Scores v1.1; Riley et al., ISMIR 2024)
-  dataset support for the `sonitra benchmark` path:
-  `python scripts/download_datasets.py gaps-full` fetches 404 long-form
-  classical-guitar recordings (~23 h, 48 kHz/16-bit/stereo WAV) plus aligned
-  MIDI, MusicXML, syncpoints, and the metadata CSV (~15.3 GB) into
-  `corpus/gaps/{recordings,midi,annotations/musicxml,annotations/syncpoints,metadata}/`,
-  and `config/benchmark/gaps_test.yaml` runs a four-condition smoke test over
-  them. `gaps-midi` fetches only the 404 MIDI references and the metadata CSV
-  (~3 MB) into the same `corpus/gaps/`, enough for MIDI-input runs; its
-  sources are verbatim copies of `gaps-full`'s at the same pinned revision, so
-  `gaps-full` run afterwards checks each MIDI file and skips it when it is
-  already on disk at the listed size, downloading any missing or truncated
-  file (everything when none is present). Each `hf_tree` source prints a
-  `[key] subdir: N already present, M downloaded` line so the re-use is
-  visible. No conversion step: GAPS ships note-level ground truth as `.mid`
-  already aligned to the audio timeline, at sounding (not written) pitch, with
-  stems identical to the audio. All 404 recordings are kept unfiltered —
-  the published split (300 files) and the `f-measure >= 0.75` rule (also 300)
-  overlap in only 250, and `f-measure` conflates bad alignment with hard
-  audio, so filtering on it would delete the most acoustically adverse
-  recordings; `meta.split` and `meta.f-measure` reach a benchmark export for
-  downstream filtering. See `.local/notes/TODO/gaps.md` for the interpretation
-  caveats (notated offsets, ~0.90 ceiling that cancels in baseline deltas,
-  constant velocity 100, absent `dtw.*`, three unpaired upstream orphans).
-- `hf_tree` source kind in `scripts/download_datasets.py`, for
-  Hugging-Face-hosted datasets that ship as loose files with no downloadable
-  archive (GAPS is 1,617 such files). `_hf_list_tree(repo, revision, subdir)`
-  pages the HF tree API following `Link: …; rel="next"`, and
-  `_download_hf_tree` fetches each listed file passing `patterns` into
-  `target_subdir/<basename>` via the existing `_download_file` (retries +
-  `Range` resume) with `.part` + `os.replace`. Resume is size-based: a file
-  already on disk at the listed size is skipped, still counting toward
-  progress, so an interrupted fetch re-costs only what it had not finished;
-  `--force` bypasses the skip. Revisions pin to a commit SHA, never `main`,
-  so an upstream release cannot silently change a published benchmark.
-  Registry specs gained a `note` field naming the instrument, what the set
-  holds, and the task it was made for, checked against each dataset's
-  official page or paper; keys sharing a `corpus_subdir` share one note, and
-  tests enforce both. Notes live on their own page, one row per dataset, so
-  the main table stays compact: type `n` in the interactive picker to switch
-  to it (Enter returns), or run `--notes`; `--list` points to `--notes`. The
-  script stays standard-library-only — no `huggingface_hub` dependency.
-  Covered by new tests in `tests/test_download_datasets.py`; documented in
-  `docs/datasets.md`, `config/benchmark/README.md`, `ROADMAP.md`, and
-  `AGENT.md`
-- `fluidsynth.program` config (GM 0–127, default `null`): `null` inherits
-  the source MIDI's program when the file carries exactly one distinct
-  `program_change`, a number forces that program and overrides the file,
-  and multi-timbral files (two or more distinct programs) keep the
-  SoundFont's default preset with a once-per-`MidiSource` warning telling
-  the user to set `fluidsynth.program`. `parse_midi(..., return_meta=True)`
-  now surfaces `programs` (sorted distinct list); `FluidSynth` writes it as
-  a channel-0 `program_change` before the first note, and `make_synth`
-  threads the config value at both construction sites. GuitarSet MIDI input
-  now renders with program 24 (Acoustic Guitar nylon) instead of piano;
-  MAESTRO output is byte-identical. Covered by new tests in
-  `tests/test_source.py` plus additions to `test_midi_reader`,
-  `test_fluid_synth(_bpm)`, `test_synth_protocol`, and
-  `test_config_new_fields`; documented in `config/source.yaml`,
-  `docs/configuration.md`, and `AGENT.md`
-- `scripts/enrich_metadata.py`: dataset-agnostic enrichment that left-joins
-  any delimited annotation table onto any dataset metadata CSV on a
-  composite key, producing an enriched CSV for the unchanged
-  `export_regression_table.py --metadata-csv` flow. First use joins
-  `misc/MAESTRO_comp_year.txt` (AI-compiled composition year per work,
-  `Composer|Piece|Year`) onto MAESTRO metadata
-  (`--on canonical_composer=Composer --on canonical_title=Piece
-  --add Year=composition_year`), so the regression table gains
-  `meta.composition_year` — the age of the music, distinct from MAESTRO's
-  competition/recording-batch `meta.year`. Join keys are stripped tuples
-  (never pasted strings); annotation quoting is disabled by default (the
-  comp-year file has unbalanced quotes) with `--annotations-quotechar` to
-  opt into RFC4180; unmatched rows get blank cells; `--require-full-coverage`
-  exits non-zero on partial coverage; `--output` never clobbers `--metadata`;
-  every run writes `<output>.provenance.json` (input SHA-256s, argv,
-  coverage, duplicate-key counts). Covered by
-  `tests/test_enrich_metadata.py` (27 tests) and documented in
-  `AGENT.md` plus a new `docs/statistical-analysis.md` subsection
-- Mixed-effects benchmark analysis: `scripts/run_mixed_effects_analysis.py`
-  fits a beta mixed-effects model (`note.onset_f1 ~ condition + duration +
-  performance_year + (1 | song) + (1 | composer)`, logit link) to a regression table
-  exported by `scripts/export_regression_table.py --metadata-csv`, separating
-  each condition's effect on transcription accuracy from the difficulty of the
-  individual pieces. The fit runs in R (`scripts/mixed_effects_analysis.R`,
-  `glmmTMB`) driven as a subprocess; Python owns input validation, provenance,
-  and reporting. Requires R with `glmmTMB`/`jsonlite` (`--rscript` /
-  `$SONITRA_RSCRIPT` override the interpreter). Outputs `regression_analysis/`
-  next to the input CSV (`model_summary.txt`, `fixed_effects.csv`,
-  `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`). Model spec
-  is copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R` — do
-  not improve
-- Mixed-effects covariate models: `scripts/run_mixed_effects_analysis.py`
-  gains a generic `--covariate COL` (plus `--covariate-transform
-  none|center|center-scale`, `--covariate-divisor N` default `100`, and
-  `--interact-with-condition`) fitting the nested set `base` ->
-  `<covariate>` -> `<covariate>_x_condition`. First use is
-  `--covariate meta.composition_year`. Competition year is renamed
-  `year` -> `performance_year` (CSV columns unchanged); `center-scale` is a
-  fixed divisor (default `/100`, per century), not an SD, so estimates stay
-  comparable across reruns. Every model fits on one complete-case subset with
-  raised optimizer limits (`iter.max`/`eval.max` 10000) after a convergence
-  fix (the interaction previously reported an unconverged AIC `-59344.33`
-  vs `-59410.55` converged); outputs add `model_comparison.csv`,
-  `models/<label>/` per-model artifacts, and `model_meta.json` additions
-   (`primary_model`, `models`, `covariate`, `n_complete`,
-   `n_dropped_covariate`); `--dry-run` lists the model set. The pre-covariate
-   R spec is preserved byte-identical as
-   `scripts/mixed_effects_analysis_LEGACY.R` for provenance
-- `docs/statistical-analysis.md`: new page documenting the model, R
-  requirements, input prep, and run steps; linked from `README.md`,
-  `docs/cli.md`, and `docs/datasets.md`
-- Docker CPU/GPU/devcontainer images now install R + `glmmTMB` + `jsonlite` so
-  the analysis runs without extra setup; gated by a new `INSTALL_R` build arg
-  (default `1`) on the two `docker/Dockerfile` stages and threaded through
-  `docker/docker-compose.yml` (set `INSTALL_R=0` in `.env` to drop ~400 MB).
-  The two images ship different R/glmmTMB versions (Debian R 4.5 / glmmTMB
-  1.1.10 vs Ubuntu 22.04 R 4.1.2 / glmmTMB 1.1.2.3); both fit the same model but
-  estimates need not agree to the last digit, so don't mix results across
-  images — each run records exact versions in `model_meta.json`
-- `pyproject.toml`: new `requires_r` pytest marker for tests needing an R
-  install with `glmmTMB` (skipped when absent)
-- Benchmark timing recording, always on (no new config keys): each
-  `benchmark_results.jsonl` record gains per-cell wall-clock
-  `render_seconds`, `separate_seconds`, `transcribe_seconds`, and
-  `evaluate_seconds` (NaN when a stage does not apply, e.g. separation
-  disabled). `summary.json` gains a `timing` block with the overall run
-  time, a host fingerprint for cross-machine comparison (`cpu_model`,
-  `cpu_count`, `ram_bytes`, `gpu`, `os`, `python`, and installed
-  `packages` versions), and per-condition stage totals with
-  per-transcriber transcribe/evaluate times. `summary` rows stay
-  metrics-only so process time is never conflated with evaluation metrics
-- `sonitra benchmark` CLI: new "Benchmark timing (seconds)" table — one row
-  per condition showing wall/render/separate/transcribe/evaluate seconds —
-  rendered after the summary table (shown only when timing data exists)
-- `renders.jsonl` manifest entries now record real per-file render
-  wall-clock in `elapsed_seconds` (previously hardcoded to `0.0`),
-  benefiting `sonitra render`, the API worker, and benchmark render
-  aggregates
-- `scripts/download_datasets.py`: downloads now resume from partial files
-  via HTTP `Range` requests (partials are kept under
-  `<output-dir>/.downloads/` instead of being deleted on failure), retry up
-  to 4 times with 3/10/30 s backoff on transient errors (timeouts, resets,
-  408/429/5xx), validate the received size against `Content-Length`, send a
-  `User-Agent` header, and use a 60 s socket timeout so stalled connections
-  fail visibly instead of hanging
-- `scripts/download_datasets.py`: per-source completion markers under
-  `<output-dir>/.downloads/` — a dataset counts as present only when all of
-  its sources are marked complete (legacy dirs-non-empty check kept as a
-  fallback for pre-existing corpora), so a failed download/extraction can no
-  longer silently mark a dataset as "already present"
-- `scripts/download_datasets.py`: atomic extraction — each archive member is
-  written to a `.part` file and moved into place only after the copy
-  completes, so a corrupt/truncated member never leaves a bad file at its
-  final path; `file`-kind sources use the same `.part` + rename pattern
-- `scripts/download_datasets.py`: new `--force` flag to discard
-  markers/partials and re-download a dataset from scratch; disk-space
-  preflight aborts before downloading when the output filesystem lacks room
-  (declared size + 5% headroom)
-- Benchmark output is now self-describing: every `summary.json` row (and
-  every `degradation` row) carries its condition's `overrides` dict — defined
-  even for conditions with zero successful files, since every record in a
-  `(condition, transcriber)` group is written from the same frozen
-  `Condition.overrides` (taken from the group's first record, which
-  silently wins if a fingerprint-less resume ever mixed overrides within a
-  group). `degradation` passes the row's own overrides through undiffed —
-  never diffed against the baseline's. `run_benchmark` also writes a
-  `config.yaml` snapshot of the fully-resolved `PipelineConfig` to `work_dir`
-  on every run, including resumes, so a run's exact settings are reproducible
-- `scripts/export_regression_table.py`: flattens a benchmark run's
-  `benchmark_results.jsonl` into a per-file regression-ready CSV — one row
-  per `(condition, transcriber, file)` with every evaluation metric and every
-  config override as its own column. `pedalboard.effects.<N>.<param>`
-  override columns are labeled by effect type
-  (`override.pedalboard.effects.<N>_<Type>.<param>`) when the run's
-  `config.yaml` snapshot is present, falling back to raw dotted paths for
-  older runs without one; NaN metrics are written as empty cells, matching
-  the existing JSONL→CSV convention. Optionally left-joins a dataset's
-  metadata CSV (`--metadata-csv` / `--metadata-join-column`, matched by file
-  basename) with every other column added as `meta.<column>` — dataset
-  agnostic, since datasets don't share a composer/work vocabulary (MAESTRO's
-  metadata has `midi_filename`; MusicNet's has `movement`/`ensemble`)
-- `config/benchmark/paper_experiments/`: paper-run degradation studies —
-  `piano_only.yaml` (moved from `config/benchmark/20260814_experiment/`,
-  header stripped, `save_audio` now `false`) and new `guitar_only.yaml`
-  (amp/cabinet/slapback/room chain); both run in audio-input mode
-- `scripts/download_datasets.py`: new `guitarset-mic` / `guitarset-mix`
-  registry entries — 360 GuitarSet acoustic-guitar excerpts each (Xi et al.,
-  ISMIR 2018; Zenodo 3371780; CC BY 4.0), sharing
-  `corpus_subdir: "guitarset"` so either key alone yields a usable dataset
-  and both together give 720 recordings in one `recordings/` dir (the
-  mic-vs-pickup-mix factor). Each entry fetches `annotation.zip` plus its
-  own audio zip, routing `.jams` to the new `annotations/` target and `.wav`
-  to `recordings/` (deliberately nothing to `midi/`, which the converter
-  populates); 6-channel hex-pickup stems deferred (see `ROADMAP.md`).
-  Covered by `tests/test_download_datasets.py` and documented in
-  `docs/datasets.md`
-- `scripts/download_datasets.py`: new `guitarset-full` registry entry — the
-  one-run equivalent of `guitarset-mic` + `guitarset-mix` (annotation.zip
-  once + both audio zips, 3 sources, ~1.3 GB → 360 JAMS + 720 WAVs sharing
-  `corpus/guitarset/`). Every successful GuitarSet download now prints the
-  mandatory next steps (`guitarset_jams_to_midi.py --dry-run`, then convert,
-  then `guitarset_test.yaml` benchmark) via `_guitarset_next_steps()` —
-  printed from `main()` after the rich Live exits so both plain and rich
-  paths share one site. Auto-running the converter was deliberately not done:
-  the downloader is stdlib-only by contract (usable before the project env
-  exists) while the converter needs `sonitra.midi_writer`, and `midi/` must
-  stay a converter-owned signal for `_is_already_present`. Covered by
-  `tests/test_download_datasets.py` and documented in `docs/datasets.md`
-- `scripts/guitarset_jams_to_midi.py`: new converter turning GuitarSet JAMS
-  ground truth into MIDI references — reads
-  `corpus/guitarset/annotations/*.jams`, writes 360 unsuffixed
-  `corpus/guitarset/midi/*.mid` plus `metadata/guitarset.csv` (join column
-  `midi_filename`) and a `<csv>.provenance.json` audit trail. Merges the six
-  per-string `note_midi` blocks selected by `data_source` (never position),
-  tolerates both JAMS `data` layouts, rounds float pitch to semitones,
-  constant `--velocity` (default 100), guards pitch to 0–127 and skips
-  non-positive durations (both counted), reports unison counts with opt-in
-  `--dedupe-unisons`, tempo 120 BPM, `--dry-run` / `--overwrite` and
-  output-never-clobbers-input guard mirroring `enrich_metadata.py`. Covered
-  by `tests/test_guitarset_jams_to_midi.py` and documented in
-  `docs/datasets.md` and `.local/notes/TODO/guitarset.md`
-- `config/benchmark/guitarset_test.yaml`: GuitarSet smoke test (4
-  conditions: baseline + `no_reverb` + two `wet_level` sweep values),
-  copied from `benchmark_test.yaml` with `input_type: audio`,
-  `io.dataset: guitarset`, inert `fluidsynth.soundfont_path: null`, and
-  `dtw.enabled: false` (DTW is already skipped in audio mode per
-  `benchmark/runner.py:757`, so `true` would only log a warning). Run with
-  `sonitra benchmark --config config/benchmark/guitarset_test.yaml --dataset
-  guitarset --limit 2`; listed in `config/benchmark/README.md`
-- `scripts/export_regression_table.py`: new `recording`
-  (`Path(source_path).stem`) and `source_path` columns in `build_rows`,
-  emitted only when `record.source_path` is not None, with both added to
-  `_IDENTITY_COLUMNS` — so two audio-mode records sharing one `midi_path`
-  (e.g. GuitarSet `_mic` / `_mix`) produce distinguishable rows while
-  MIDI-mode exports (no `source_path`) are byte-identical to today's. The
-  metadata join stays keyed on `song`, so one excerpt row joins to both of
-  its recordings. Covered by `tests/test_export_regression_table.py`
-- `src/sonitra/midi_writer.py`: `write_midi` gains an optional `program`
-  (0–127) written as a `program_change` on channel 0 before the first note;
-  `None` (default) keeps the previous note-only output. Out-of-range values
-  raise `ValueError`. `scripts/guitarset_jams_to_midi.py` writes GM 24
-  (Acoustic Guitar nylon, matching GuitarSet's instrument) by default so
-  players no longer fall back to piano — playback timbre only,
-  `parse_midi`/metrics ignore it; `--program N` overrides, `--no-program`
-  restores note-only files, out-of-range `--program` exits non-zero, and the
-  resolved value is recorded in `<csv>.provenance.json`. Covered by
-  `tests/test_midi_writer.py` and `tests/test_guitarset_jams_to_midi.py`
-- `docs/custom-datasets.md`: how to benchmark your own MIDI files, or MIDI
-  plus matching recordings — the `corpus/<name>/{midi,recordings,metadata}/`
-  layout, switching to audio-input mode (`render_pipeline.input_type: audio`,
-  `evaluation.dtw.enabled: false`), the file-naming rule the token-prefix
-  pairing needs (with tested good/bad names), and a pre-run checklist
-  (one GM program, no drum tracks, unique names, no nested symlinked folders).
-  Linked from `README.md`, `docs/datasets.md`, and `docs/configuration.md`
-- `scripts/check_dataset.py`: pre-run check for a custom dataset folder.
-  Reports recordings that pair with no MIDI file or several (via
-  `sonitra.corpus.pair_audio_to_reference` itself), MIDI names that can never
-  pair, several programs, drum-channel notes, empty/unreadable MIDI, ignored
-  file endings, recordings left in `audio/`, and skipped nested symlinks; exits
-  1 on any error. Proposes renames only for case/separator mismatches that the
-  pairing code confirms, writes them to a reviewable CSV (`--plan`), and applies
-  them all-or-nothing with an undo plan (`--apply`). Covered by
-  `tests/test_check_dataset.py`
-- `sonitra.corpus.PairingResult.ambiguous`: maps each ambiguously matched
-  recording to its candidate MIDI files (previously only the log said which
-  unpaired files were ambiguous). Covered by `tests/test_audio_corpus.py`
+- GAPS (Guitar-Aligned Performance Scores v1.1; Riley et al., ISMIR 2024) dataset support for the `sonitra benchmark` path: `python scripts/download_datasets.py gaps-full` fetches 404 long-form classical-guitar recordings (~23 h, 48 kHz/16-bit/stereo WAV) plus aligned MIDI, MusicXML, syncpoints, and the metadata CSV (~15.3 GB) into `corpus/gaps/{recordings,midi,annotations/musicxml,annotations/syncpoints,metadata}/`, and `config/benchmark/gaps_test.yaml` runs a four-condition smoke test over them. `gaps-midi` fetches only the 404 MIDI references and the metadata CSV (~3 MB) into the same `corpus/gaps/`, enough for MIDI-input runs; its sources are verbatim copies of `gaps-full`'s at the same pinned revision, so `gaps-full` run afterwards checks each MIDI file and skips it when it is already on disk at the listed size, downloading any missing or truncated file (everything when none is present). Each `hf_tree` source prints a `[key] subdir: N already present, M downloaded` line so the re-use is visible. No conversion step: GAPS ships note-level ground truth as `.mid` already aligned to the audio timeline, at sounding (not written) pitch, with stems identical to the audio. All 404 recordings are kept unfiltered — the published split (300 files) and the `f-measure >= 0.75` rule (also 300) overlap in only 250, and `f-measure` conflates bad alignment with hard audio, so filtering on it would delete the most acoustically adverse recordings; `meta.split` and `meta.f-measure` reach a benchmark export for downstream filtering. See `.local/notes/TODO/gaps.md` for the interpretation caveats (notated offsets, ~0.90 ceiling that cancels in baseline deltas, constant velocity 100, absent `dtw.*`, three unpaired upstream orphans).
+- `hf_tree` source kind in `scripts/download_datasets.py`, for Hugging-Face-hosted datasets that ship as loose files with no downloadable archive (GAPS is 1,617 such files). `_hf_list_tree(repo, revision, subdir)` pages the HF tree API following `Link: …; rel="next"`, and `_download_hf_tree` fetches each listed file passing `patterns` into `target_subdir/<basename>` via the existing `_download_file` (retries + `Range` resume) with `.part` + `os.replace`. Resume is size-based: a file already on disk at the listed size is skipped, still counting toward progress, so an interrupted fetch re-costs only what it had not finished; `--force` bypasses the skip. Revisions pin to a commit SHA, never `main`, so an upstream release cannot silently change a published benchmark. Registry specs gained a `note` field naming the instrument, what the set holds, and the task it was made for, checked against each dataset's official page or paper; keys sharing a `corpus_subdir` share one note, and tests enforce both. Notes live on their own page, one row per dataset, so the main table stays compact: type `n` in the interactive picker to switch to it (Enter returns), or run `--notes`; `--list` points to `--notes`. The script stays standard-library-only — no `huggingface_hub` dependency. Covered by new tests in `tests/test_download_datasets.py`; documented in `docs/datasets.md`, `config/benchmark/README.md`, `ROADMAP.md`, and `AGENT.md`
+- `fluidsynth.program` config (GM 0–127, default `null`): `null` inherits the source MIDI's program when the file carries exactly one distinct `program_change`, a number forces that program and overrides the file, and multi-timbral files (two or more distinct programs) keep the SoundFont's default preset with a once-per-`MidiSource` warning telling the user to set `fluidsynth.program`. `parse_midi(..., return_meta=True)` now surfaces `programs` (sorted distinct list); `FluidSynth` writes it as a channel-0 `program_change` before the first note, and `make_synth` threads the config value at both construction sites. GuitarSet MIDI input now renders with program 24 (Acoustic Guitar nylon) instead of piano; MAESTRO output is byte-identical. Covered by new tests in `tests/test_source.py` plus additions to `test_midi_reader`, `test_fluid_synth(_bpm)`, `test_synth_protocol`, and `test_config_new_fields`; documented in `config/source.yaml`, `docs/configuration.md`, and `AGENT.md`
+- `scripts/enrich_metadata.py`: dataset-agnostic enrichment that left-joins any delimited annotation table onto any dataset metadata CSV on a composite key, producing an enriched CSV for the unchanged `export_regression_table.py --metadata-csv` flow. First use joins `misc/MAESTRO_comp_year.txt` (AI-compiled composition year per work, `Composer|Piece|Year`) onto MAESTRO metadata (`--on canonical_composer=Composer --on canonical_title=Piece --add Year=composition_year`), so the regression table gains `meta.composition_year` — the age of the music, distinct from MAESTRO's competition/recording-batch `meta.year`. Join keys are stripped tuples (never pasted strings); annotation quoting is disabled by default (the comp-year file has unbalanced quotes) with `--annotations-quotechar` to opt into RFC4180; unmatched rows get blank cells; `--require-full-coverage` exits non-zero on partial coverage; `--output` never clobbers `--metadata`; every run writes `<output>.provenance.json` (input SHA-256s, argv, coverage, duplicate-key counts). Covered by `tests/test_enrich_metadata.py` (27 tests) and documented in `AGENT.md` plus a new `docs/statistical-analysis.md` subsection
+- Mixed-effects benchmark analysis: `scripts/run_mixed_effects_analysis.py` fits a beta mixed-effects model (`note.onset_f1 ~ condition + duration + performance_year + (1 | song) + (1 | composer)`, logit link) to a regression table exported by `scripts/export_regression_table.py --metadata-csv`, separating each condition's effect on transcription accuracy from the difficulty of the individual pieces. The fit runs in R (`scripts/mixed_effects_analysis.R`, `glmmTMB`) driven as a subprocess; Python owns input validation, provenance, and reporting. Requires R with `glmmTMB`/`jsonlite` (`--rscript` / `$SONITRA_RSCRIPT` override the interpreter). Outputs `regression_analysis/` next to the input CSV (`model_summary.txt`, `fixed_effects.csv`, `random_effects_{song,composer}.csv`, `model_meta.json`, `fit.R`). Model spec is copied verbatim from `misc/SONITRA-mixed-effects-regresion-model.R` — do not improve
+- Mixed-effects covariate models: `scripts/run_mixed_effects_analysis.py` gains a generic `--covariate COL` (plus `--covariate-transform none|center|center-scale`, `--covariate-divisor N` default `100`, and `--interact-with-condition`) fitting the nested set `base` -> `<covariate>` -> `<covariate>_x_condition`. First use is `--covariate meta.composition_year`. Competition year is renamed `year` -> `performance_year` (CSV columns unchanged); `center-scale` is a fixed divisor (default `/100`, per century), not an SD, so estimates stay comparable across reruns. Every model fits on one complete-case subset with raised optimizer limits (`iter.max`/`eval.max` 10000) after a convergence fix (the interaction previously reported an unconverged AIC `-59344.33` vs `-59410.55` converged); outputs add `model_comparison.csv`, `models/<label>/` per-model artifacts, and `model_meta.json` additions (`primary_model`, `models`, `covariate`, `n_complete`, `n_dropped_covariate`); `--dry-run` lists the model set. The pre-covariate R spec is preserved byte-identical as `scripts/mixed_effects_analysis_LEGACY.R` for provenance
+- `docs/statistical-analysis.md`: new page documenting the model, R requirements, input prep, and run steps; linked from `README.md`, `docs/cli.md`, and `docs/datasets.md`
+- Docker CPU/GPU/devcontainer images now install R + `glmmTMB` + `jsonlite` so the analysis runs without extra setup; gated by a new `INSTALL_R` build arg (default `1`) on the two `docker/Dockerfile` stages and threaded through `docker/docker-compose.yml` (set `INSTALL_R=0` in `.env` to drop ~400 MB). The two images ship different R/glmmTMB versions (Debian R 4.5 / glmmTMB 1.1.10 vs Ubuntu 22.04 R 4.1.2 / glmmTMB 1.1.2.3); both fit the same model but estimates need not agree to the last digit, so don't mix results across images — each run records exact versions in `model_meta.json`
+- `pyproject.toml`: new `requires_r` pytest marker for tests needing an R install with `glmmTMB` (skipped when absent)
+- Benchmark timing recording, always on (no new config keys): each `benchmark_results.jsonl` record gains per-cell wall-clock `render_seconds`, `separate_seconds`, `transcribe_seconds`, and `evaluate_seconds` (NaN when a stage does not apply, e.g. separation disabled). `summary.json` gains a `timing` block with the overall run time, a host fingerprint for cross-machine comparison (`cpu_model`, `cpu_count`, `ram_bytes`, `gpu`, `os`, `python`, and installed `packages` versions), and per-condition stage totals with per-transcriber transcribe/evaluate times. `summary` rows stay metrics-only so process time is never conflated with evaluation metrics
+- `sonitra benchmark` CLI: new "Benchmark timing (seconds)" table — one row per condition showing wall/render/separate/transcribe/evaluate seconds — rendered after the summary table (shown only when timing data exists)
+- `renders.jsonl` manifest entries now record real per-file render wall-clock in `elapsed_seconds` (previously hardcoded to `0.0`), benefiting `sonitra render`, the API worker, and benchmark render aggregates
+- `scripts/download_datasets.py`: downloads now resume from partial files via HTTP `Range` requests (partials are kept under `<output-dir>/.downloads/` instead of being deleted on failure), retry up to 4 times with 3/10/30 s backoff on transient errors (timeouts, resets, 408/429/5xx), validate the received size against `Content-Length`, send a `User-Agent` header, and use a 60 s socket timeout so stalled connections fail visibly instead of hanging
+- `scripts/download_datasets.py`: per-source completion markers under `<output-dir>/.downloads/` — a dataset counts as present only when all of its sources are marked complete (legacy dirs-non-empty check kept as a fallback for pre-existing corpora), so a failed download/extraction can no longer silently mark a dataset as "already present"
+- `scripts/download_datasets.py`: atomic extraction — each archive member is written to a `.part` file and moved into place only after the copy completes, so a corrupt/truncated member never leaves a bad file at its final path; `file`-kind sources use the same `.part` + rename pattern
+- `scripts/download_datasets.py`: new `--force` flag to discard markers/partials and re-download a dataset from scratch; disk-space preflight aborts before downloading when the output filesystem lacks room (declared size + 5% headroom)
+- Benchmark output is now self-describing: every `summary.json` row (and every `degradation` row) carries its condition's `overrides` dict — defined even for conditions with zero successful files, since every record in a `(condition, transcriber)` group is written from the same frozen `Condition.overrides` (taken from the group's first record, which silently wins if a fingerprint-less resume ever mixed overrides within a group). `degradation` passes the row's own overrides through undiffed — never diffed against the baseline's. `run_benchmark` also writes a `config.yaml` snapshot of the fully-resolved `PipelineConfig` to `work_dir` on every run, including resumes, so a run's exact settings are reproducible
+- `scripts/export_regression_table.py`: flattens a benchmark run's `benchmark_results.jsonl` into a per-file regression-ready CSV — one row per `(condition, transcriber, file)` with every evaluation metric and every config override as its own column. `pedalboard.effects.<N>.<param>` override columns are labeled by effect type (`override.pedalboard.effects.<N>_<Type>.<param>`) when the run's `config.yaml` snapshot is present, falling back to raw dotted paths for older runs without one; NaN metrics are written as empty cells, matching the existing JSONL→CSV convention. Optionally left-joins a dataset's metadata CSV (`--metadata-csv` / `--metadata-join-column`, matched by file basename) with every other column added as `meta.<column>` — dataset agnostic, since datasets don't share a composer/work vocabulary (MAESTRO's metadata has `midi_filename`; MusicNet's has `movement`/`ensemble`)
+- `config/benchmark/paper_experiments/`: paper-run degradation studies — `piano_only.yaml` (moved from `config/benchmark/20260814_experiment/`, header stripped, `save_audio` now `false`) and new `guitar_only.yaml` (amp/cabinet/slapback/room chain); both run in audio-input mode
+- `scripts/download_datasets.py`: new `guitarset-mic` / `guitarset-mix` registry entries — 360 GuitarSet acoustic-guitar excerpts each (Xi et al., ISMIR 2018; Zenodo 3371780; CC BY 4.0), sharing `corpus_subdir: "guitarset"` so either key alone yields a usable dataset and both together give 720 recordings in one `recordings/` dir (the mic-vs-pickup-mix factor). Each entry fetches `annotation.zip` plus its own audio zip, routing `.jams` to the new `annotations/` target and `.wav` to `recordings/` (deliberately nothing to `midi/`, which the converter populates); 6-channel hex-pickup stems deferred (see `ROADMAP.md`). Covered by `tests/test_download_datasets.py` and documented in `docs/datasets.md`
+- `scripts/download_datasets.py`: new `guitarset-full` registry entry — the one-run equivalent of `guitarset-mic` + `guitarset-mix` (annotation.zip once + both audio zips, 3 sources, ~1.3 GB → 360 JAMS + 720 WAVs sharing `corpus/guitarset/`). Every successful GuitarSet download now prints the mandatory next steps (`guitarset_jams_to_midi.py --dry-run`, then convert, then `guitarset_test.yaml` benchmark) via `_guitarset_next_steps()` — printed from `main()` after the rich Live exits so both plain and rich paths share one site. Auto-running the converter was deliberately not done: the downloader is stdlib-only by contract (usable before the project env exists) while the converter needs `sonitra.midi_writer`, and `midi/` must stay a converter-owned signal for `_is_already_present`. Covered by `tests/test_download_datasets.py` and documented in `docs/datasets.md`
+- `scripts/guitarset_jams_to_midi.py`: new converter turning GuitarSet JAMS ground truth into MIDI references — reads `corpus/guitarset/annotations/*.jams`, writes 360 unsuffixed `corpus/guitarset/midi/*.mid` plus `metadata/guitarset.csv` (join column `midi_filename`) and a `<csv>.provenance.json` audit trail. Merges the six per-string `note_midi` blocks selected by `data_source` (never position), tolerates both JAMS `data` layouts, rounds float pitch to semitones, constant `--velocity` (default 100), guards pitch to 0–127 and skips non-positive durations (both counted), reports unison counts with opt-in `--dedupe-unisons`, tempo 120 BPM, `--dry-run` / `--overwrite` and output-never-clobbers-input guard mirroring `enrich_metadata.py`. Covered by `tests/test_guitarset_jams_to_midi.py` and documented in `docs/datasets.md` and `.local/notes/TODO/guitarset.md`
+- `config/benchmark/guitarset_test.yaml`: GuitarSet smoke test (4 conditions: baseline + `no_reverb` + two `wet_level` sweep values), copied from `benchmark_test.yaml` with `input_type: audio`, `io.dataset: guitarset`, inert `fluidsynth.soundfont_path: null`, and `dtw.enabled: false` (DTW is already skipped in audio mode per `benchmark/runner.py:757`, so `true` would only log a warning). Run with `sonitra benchmark --config config/benchmark/guitarset_test.yaml --dataset guitarset --limit 2`; listed in `config/benchmark/README.md`
+- `scripts/export_regression_table.py`: new `recording` (`Path(source_path).stem`) and `source_path` columns in `build_rows`, emitted only when `record.source_path` is not None, with both added to `_IDENTITY_COLUMNS` — so two audio-mode records sharing one `midi_path` (e.g. GuitarSet `_mic` / `_mix`) produce distinguishable rows while MIDI-mode exports (no `source_path`) are byte-identical to today's. The metadata join stays keyed on `song`, so one excerpt row joins to both of its recordings. Covered by `tests/test_export_regression_table.py`
+- `src/sonitra/midi_writer.py`: `write_midi` gains an optional `program` (0–127) written as a `program_change` on channel 0 before the first note; `None` (default) keeps the previous note-only output. Out-of-range values raise `ValueError`. `scripts/guitarset_jams_to_midi.py` writes GM 24 (Acoustic Guitar nylon, matching GuitarSet's instrument) by default so players no longer fall back to piano — playback timbre only, `parse_midi`/metrics ignore it; `--program N` overrides, `--no-program` restores note-only files, out-of-range `--program` exits non-zero, and the resolved value is recorded in `<csv>.provenance.json`. Covered by `tests/test_midi_writer.py` and `tests/test_guitarset_jams_to_midi.py`
+- `docs/custom-datasets.md`: how to benchmark your own MIDI files, or MIDI plus matching recordings — the `corpus/<name>/{midi,recordings,metadata}/` layout, switching to audio-input mode (`render_pipeline.input_type: audio`, `evaluation.dtw.enabled: false`), the file-naming rule the token-prefix pairing needs (with tested good/bad names), and a pre-run checklist (one GM program, no drum tracks, unique names, no nested symlinked folders). Linked from `README.md`, `docs/datasets.md`, and `docs/configuration.md`
+- `scripts/check_dataset.py`: pre-run check for a custom dataset folder. Reports recordings that pair with no MIDI file or several (via `sonitra.corpus.pair_audio_to_reference` itself), MIDI names that can never pair, several programs, drum-channel notes, empty/unreadable MIDI, ignored file endings, recordings left in `audio/`, and skipped nested symlinks; exits 1 on any error. Proposes renames only for case/separator mismatches that the pairing code confirms, writes them to a reviewable CSV (`--plan`), and applies them all-or-nothing with an undo plan (`--apply`). Covered by `tests/test_check_dataset.py`
+- `sonitra.corpus.PairingResult.ambiguous`: maps each ambiguously matched recording to its candidate MIDI files (previously only the log said which unpaired files were ambiguous). Covered by `tests/test_audio_corpus.py`
 - `musicnet-midi` and `musicnet-full` registry split (replacing the single `musicnet` key): `musicnet-midi` fetches 330 score-time MIDI + `musicnet_metadata.csv` (~4 MB) into `midi/` + `metadata/` for MIDI-input runs; `musicnet-full` fetches those plus `musicnet.tar.gz` (recordings + per-note label CSVs) into `recordings/` + `annotations/labels/` + `annotations/score_midi/` + `metadata/` (~10.6 GB) for audio-input runs; both share `corpus/musicnet/` (picker 5–6) and `superseded_by: ["musicnet-full"]` makes `musicnet-full` presence imply `musicnet-midi`; verified sizes/md5; `next_steps` points to `scripts/musicnet_labels_to_midi.py` + `config/benchmark/musicnet_test.yaml`; covered by `tests/test_download_datasets.py` and documented in `docs/datasets.md`, `config/benchmark/README.md`, `ROADMAP.md`, `AGENT.md`
 - `scripts/musicnet_labels_to_midi.py`: converter from MusicNet label CSVs to aligned MIDI — reads `annotations/labels/**/*.csv` (`*_labels/<id>.csv`, 320 train + 10 test), writes one `midi/<id>.mid` per id (sample-exact `ticks_per_beat = sample_rate // 2`, 120 BPM, 1 tick = 1 sample; `round(t*sr)==sample`) plus `metadata/musicnet.csv` (`midi_filename`, `id`, `split`, every `musicnet_metadata.csv` column, `score_midi_filename`, counts `n_notes`/`n_programs`/`programs`/`labels_end_sec`/`unisons_detected`/`same_channel_overlaps`) and `<csv>.provenance.json`; `program = instrument − 1`, constant `--velocity` (100), flags `--no-program`/`--dedupe-unisons`/`--overwrite`/`--dry-run`/`--replace-score-midi` (takes over `midi/`, moves/deletes score tree into `annotations/score_midi/`), validates even `sample_rate ≤ 65534`, counts `invalid_value`/`non_positive_duration`/`out_of_range_pitch`/`invalid_instrument`, fail-soft per file; covered by `tests/test_musicnet_labels_to_midi.py` and `tests/test_midi_writer.py`
 - `src/sonitra/midi_writer.py`: `write_multi_program_midi(notes, path, *, ticks_per_beat=480, tempo_bpm=120.0, write_programs=True)` — each distinct `program` gets its own channel in ascending program order skipping ch 9, `program_change` at t=0, >15 programs raises `ValueError`; factored via `_collect_note_events` so `write_midi` stays byte-identical (golden sha256 test added); `src/sonitra/unisons.py` (`count_unisons`, `dedupe_unisons`, `_UNISON_ONSET_TOLERANCE_SEC = 0.05`) is the pitch-only unison definition moved from `scripts/guitarset_jams_to_midi.py` (that script re-exports the names, incl. `_UNISON_ONSET_TOLERANCE_SEC`); covered by `tests/test_midi_writer.py` and `tests/test_guitarset_jams_to_midi.py`
@@ -305,38 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `musicnet` → `musicnet-full` with no alias (as `maestro-v3` in v0.3.0); label CSVs moved from `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/*_labels/`; score MIDI for `-full` moved from `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/`; `musicnet-midi` (new, `superseded_by: ["musicnet-full"]`) puts the score MIDI in `midi/` so existing configs work without the 11 GB download. Migration: move `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/` and `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/` (or let `scripts/musicnet_labels_to_midi.py --replace-score-midi` do the second move). Otherwise `musicnet-full`'s legacy presence check (every target dir non-empty) fails and it re-downloads ~10.6 GB; file-level skip-by-size saves the writes, not the download. `midi/` is now converter-owned for `musicnet-full` (as for GuitarSet)
 - **BREAKING:** download records replace per-key `.downloads/<key>.*.ok` markers: `<corpus_subdir>/.sources/<source_id>.json` (`version`, `source_id`, `origin`, `files` map) with `satisfied`/`stale`/`none` states (memoized), file-level skip for every kind, `superseded_by` presence, and run-scoped `--force`; separate concurrent processes on one output dir remain unsupported. Legacy markers/partials are treated as incomplete and `*.part` is adopted; `.downloads/` now holds only in-progress partials (a complete dataset still leaves nothing behind, as before)
 - **BREAKING:** `render_pipeline.bpm` meaning change: now host tempo only (DawDreamer `set_bpm` for tempo-synced plugins and FluidSynth's temporary-MIDI tick grid, which at `bpm: 1` has a 125 ms grid); notes follow each MIDI file's own tempo map. See Fixed below for re-render warning; configs stay valid (default 120) and `config/source.yaml` comment corrected (omitting the key gives 120, not “derived from MIDI”)
-- `README.md`, `ROADMAP.md`, and `docs/` (except `docs/abstract.md`):
-  rewritten in plain language and polished for human tone — shorter
-  active sentences, jargon defined at first use, AI-writing patterns
-  removed. No commands, flags, paths, config keys, or metric definitions
-  changed
-- Agent guidance moved from `CLAUDE.md` to `AGENT.md` (`CLAUDE.md` is now a
-  one-line pointer); wording generalised from Claude Code to coding agents
-- `scripts/run_mixed_effects_analysis.py`: default input table renamed from
-  `regression_table_with_metadata.csv` to `regression_table.csv` to match
-  `export_regression_table.py` output
+- `README.md`, `ROADMAP.md`, and `docs/` (except `docs/abstract.md`): rewritten in plain language and polished for human tone — shorter active sentences, jargon defined at first use, AI-writing patterns removed. No commands, flags, paths, config keys, or metric definitions changed
+- Agent guidance moved from `CLAUDE.md` to `AGENT.md` (`CLAUDE.md` is now a one-line pointer); wording generalised from Claude Code to coding agents
+- `scripts/run_mixed_effects_analysis.py`: default input table renamed from `regression_table_with_metadata.csv` to `regression_table.csv` to match `export_regression_table.py` output
 - `.gitignore`: ignore `misc/` local workspace
-- `config/benchmark/gaps_test.yaml`: smoke test now runs in MIDI-input
-  mode (`input_type: midi`) with a concrete `fluidsynth.soundfont_path`
-  (`/usr/share/sounds/sf2/default-GM.sf2`) instead of audio-input mode
-  where the SoundFont was `null` and inert; the GAPS corpus is now
-  fetched via `gaps-midi` (MIDI only, ~3 MB) or `gaps-full` (adds
-  recordings, ~15.3 GB). `AGENT.md` now notes `guitarset_test` as
-  MIDI-input and corrects the GAPS duration from 14 h to ~23 h
-- `pyproject.toml` now declares the licence as an SPDX identifier
-  (`AGPL-3.0-or-later`), previously omitted; the README licence section
-  notes third-party GPLv3 components (`pedalboard`, `dawdreamer`) and
-  dataset licences, which Sonitra's licence does not cover
+- `config/benchmark/gaps_test.yaml`: smoke test now runs in MIDI-input mode (`input_type: midi`) with a concrete `fluidsynth.soundfont_path` (`/usr/share/sounds/sf2/default-GM.sf2`) instead of audio-input mode where the SoundFont was `null` and inert; the GAPS corpus is now fetched via `gaps-midi` (MIDI only, ~3 MB) or `gaps-full` (adds recordings, ~15.3 GB). `AGENT.md` now notes `guitarset_test` as MIDI-input and corrects the GAPS duration from 14 h to ~23 h
+- `pyproject.toml` now declares the licence as an SPDX identifier (`AGPL-3.0-or-later`), previously omitted; the README licence section notes third-party GPLv3 components (`pedalboard`, `dawdreamer`) and dataset licences, which Sonitra's licence does not cover
 - `src/sonitra/evaluation/types.py:notes_from_dicts` now validates via `make_note` — dropping zero/negative-duration notes, clamping velocity/start, raising on out-of-range pitch, and returning a sorted list
 - `src/sonitra/transcribe/configs.py:BasicPitchTranscriberConfig.minimum_note_length_ms` now validated `ge=0`
 - `src/sonitra/transcribe/basic_pitch.py` now builds notes via `make_note` (dropping non-positive durations instead of clamping to `0.0` and keeping them) and emits provenance (`package_version`, `device`, `filtered_dropped` etc.) via `checkpoint_identity`; `BasicPitchTranscriber` and `Evaluation` paths now share the same filter so scored estimates and written MIDI no longer diverge
 - `src/sonitra/midi_writer.py:write_transcription_outputs` now dispatches through the `backend_type`-keyed writer registry (`_get_raw_writer`) instead of hard-coding `write_raw_outputs`; `_collect_note_events` gains a typed `channel_for_note` callable annotation
 - `pyproject.toml` `slow` marker description expanded to cover `transkun` in addition to `basic-pitch`
-- `pedalboard` capped at `>=0.9.24,<0.9.25` (was `!=0.9.25`): 0.9.25's
-  manylinux x86_64 wheel dies with SIGILL on CPUs without AVX-512, and no
-  later release has been checked there yet, so the cap blocks every future
-  release until `import pedalboard` succeeds on such a CPU. `uv.lock`
-  relocked (pedalboard 0.9.23 → 0.9.24, plus the `transkun` extra)
+- `pedalboard` capped at `>=0.9.24,<0.9.25` (was `!=0.9.25`): 0.9.25's manylinux x86_64 wheel dies with SIGILL on CPUs without AVX-512, and no later release has been checked there yet, so the cap blocks every future release until `import pedalboard` succeeds on such a CPU. `uv.lock` relocked (pedalboard 0.9.23 → 0.9.24, plus the `transkun` extra)
 - `src/sonitra/transcribe/basic_pitch.py` now caches the `basic_pitch.inference.Model(ICASSP_2022_MODEL_PATH)` once per instance under a `threading.RLock` (mirroring `TranskunTranscriber._model`/`_lock`), built inside the `tf.device(tf_device)` scope so placement matches the old per-call path load and passed as `model_or_model_path` to `predict`; the lock serialises the shared instance used by `sonitra transcribe` with `transcription.max_workers > 1` (benchmark per-condition subprocesses unaffected). Covered by `tests/test_transcribers.py::test_basic_pitch_model_loaded_once_per_run` (monkeypatched `Model` call counter, two `transcribe` calls → one construction)
 - `docs/model-cards.md`: new `**Numeric reproducibility.**` paragraphs in the Basic Pitch and TransKun cards, outside the generated baselines block, state that published numbers are comparable only within one device and one numeric mode and record the measured gaps (Basic Pitch: 1781 vs 1780 note events on identical input, batch-size activation shift 1.29e-02 vs 8.05e-07; TransKun: 4/20 files on `bsed`, largest frame F1 0.0069, exactly 0 divergence under `strict`), and the paragraph introducing the measured baselines now adds the device and `transcription.numeric_mode` dependency ("They also depend on the device and on `transcription.numeric_mode`."); `README.md` GPU paragraph (`device: GPU:0`) and evaluation-metrics paragraph now link to `docs/reproducibility.md`.
 - `ROADMAP.md`: new `## Numeric reproducibility` section next to `## Parallel benchmark conditions on GPU` (status, the device and batch-size finding, the `off`/`warn`/`strict` remedy, pointers to `config/benchmark/numerics_check.yaml` and `docs/reproducibility.md`, and a `Planned design:` list), and `## Parallel benchmark conditions on GPU` now records the delivered `transcription.gpu_memory_growth` flag (`src/sonitra/config.py`, default `false`, memory growth stays opt-in and `benchmark.max_workers` stays 1 until it is turned on and measured).
@@ -344,294 +85,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- MIDI-input rendering now follows each file's own tempo map instead of
-  stretching notes by `first_tempo / render_pipeline.bpm`. `MidiSource.load`
-  passes notes exactly as `parse_midi` returns them; `render_pipeline.bpm`
-  is now the host tempo only (DawDreamer `set_bpm` for tempo-synced plugins
-  and FluidSynth's temporary-MIDI tick grid, which at `bpm: 1` has a 125 ms
-  grid). Results change for any non-120 BPM file: `corpus/test` `piano2`
-  (80 BPM), `piano3` (150 BPM), `piano4` (110 BPM), `tests/fixtures/test_polyphonic.mid`
-  (90 BPM), MusicNet (300 of 323 score MIDIs are not at 120 BPM, 291 change
-  tempo mid-file), and E-GMD. MAESTRO, BSED, GAPS and GuitarSet are all at
-  120 BPM and are unaffected. Users must **re-render** existing audio: with
-  `io`/`render_pipeline.overwrite: false` (`config/source.yaml:33`) the
-  pipeline would otherwise reuse warped renders silently (`pipeline.py:92, :276`).
-  The DTW metric stays consistent, because it compares the render with a
-  re-synthesis of a transcription of that same render
-- `sonitra render|transcribe|evaluate|benchmark --help`: the `--dataset` help
-  text named the pre-dataset-first layout (`corpus/midi/{dataset}/`, outputs
-  under `corpus/{subdir}/{dataset}/`); it now says inputs and outputs live
-  under `corpus/{dataset}/` and that the flag overrides `io.dataset`. Covered
-  by `tests/test_cli.py`
-- `scripts/download_datasets.py`: failed downloads are now visible — the rich
-  display no longer swallows per-dataset errors (each failure prints
-  `[error] <name>: <message>` to stderr during the run, with a final
-  done/skipped/failed tally after the display exits), and rich's Live no
-  longer redirects stderr so messages also reach `2>` redirects
+- MIDI-input rendering now follows each file's own tempo map instead of stretching notes by `first_tempo / render_pipeline.bpm`. `MidiSource.load` passes notes exactly as `parse_midi` returns them; `render_pipeline.bpm` is now the host tempo only (DawDreamer `set_bpm` for tempo-synced plugins and FluidSynth's temporary-MIDI tick grid, which at `bpm: 1` has a 125 ms grid). Results change for any non-120 BPM file: `corpus/test` `piano2` (80 BPM), `piano3` (150 BPM), `piano4` (110 BPM), `tests/fixtures/test_polyphonic.mid` (90 BPM), MusicNet (300 of 323 score MIDIs are not at 120 BPM, 291 change tempo mid-file), and E-GMD. MAESTRO, BSED, GAPS and GuitarSet are all at 120 BPM and are unaffected. Users must **re-render** existing audio: with `io`/`render_pipeline.overwrite: false` (`config/source.yaml:33`) the pipeline would otherwise reuse warped renders silently (`pipeline.py:92, :276`). The DTW metric stays consistent, because it compares the render with a re-synthesis of a transcription of that same render
+- `sonitra render|transcribe|evaluate|benchmark --help`: the `--dataset` help text named the pre-dataset-first layout (`corpus/midi/{dataset}/`, outputs under `corpus/{subdir}/{dataset}/`); it now says inputs and outputs live under `corpus/{dataset}/` and that the flag overrides `io.dataset`. Covered by `tests/test_cli.py`
+- `scripts/download_datasets.py`: failed downloads are now visible — the rich display no longer swallows per-dataset errors (each failure prints `[error] <name>: <message>` to stderr during the run, with a final done/skipped/failed tally after the display exits), and rich's Live no longer redirects stderr so messages also reach `2>` redirects
 - `scripts/export_regression_table.py` / `sonitra.corpus`: metadata join now supports `--metadata-match token-prefix` (exact first, then unique token-prefix via `match_token_prefix`, same logic as audio-to-MIDI pairing) so MusicNet score MIDI stems (`1727_schubert_op114_2`) correctly join to `musicnet_metadata.csv` ids (`1727`); `exact` mode now suggests `token-prefix` when unmatched; the previous `load_metadata_join` keying on `Path(id).stem` never matched for MusicNet and is now fixed; `match_token_prefix` is extracted as a pure function (`sonitra.corpus`) for reuse without duplicating the descending-`k` loop; `pair_audio_to_reference` behavior, logging, and tests are unchanged. Covered by `tests/test_export_regression_table.py` and `tests/test_audio_corpus.py`
 - `scripts/download_datasets.py`: parallel downloads are now race-free (per-download-key locks in `_Coordinator` with one-lock-at-a-time no-deadlock guarantee, distinct `*.<source_id>.part` temp names so concurrent writers never share a temp and `os.replace` is atomic, failure memo, cancel event stopping queue workers and chunk loop); shared-source file-level skip now applies to every kind (`hf_tree`/`file`/`zip`/`targz` members already on disk at size are not rewritten, with `[key] label: N already present, M downloaded/extracted` summary), `superseded_by` pruning and record-based presence fix the `guitarset-full` after `guitarset-mic` missing-mix bug for new corpora (legacy corpora without records keep the coarse every-target-dir-non-empty fallback, documented; `--force` the superseding key), `MAESTRO --all` no longer fetches the 120 GB zip twice, and `--force` partial sweep no longer deletes sibling jobs' in-flight files; existing signatures (`_extract_archive`, `_download_hf_tree`, `_download_file`, `_download_one`, `_run_rich`/`_run_plain`, `_check_disk_space` preflight via `_bytes_needed`) stay compat for tests. Covered by `tests/test_download_datasets.py`
 - `src/sonitra/transcribe/basic_pitch.py` and `src/sonitra/evaluation/types.py:notes_from_dicts` now drop zero/negative-duration notes instead of keeping a `duration_sec == 0.0` phantom that was scored (inflating `len(estimate)` for precision, occupying one frame cell, and able to match onset) while `midi_writer._collect_note_events` dropped it — so the scored estimate and the written MIDI under `transcriptions/` diverged in `sonitra benchmark` (standalone `sonitra evaluate` re-parses from disk and already filtered). Fix makes the producer enforce the contract; `notes_from_dicts` also drops via `make_note` so any upstream source is guarded. See `.local/notes/TODO/basic_pitch_zero_duration_notes.md`
 - `src/sonitra/benchmark/runner.py:_audio_metric_values` is now pinned through the canonical contract (`normalise_notes`) — the sole metric input that bypassed `notes_from_dicts`. A zero-duration phantom is now dropped before `duration` computation and `synth.render`, velocity/start are clamped and sorted, and bad pitch raises, exactly as the symbolic path. See `tests/test_audio_metric_values.py` and `.local/notes/TODO/basic_pitch_zero_duration_notes.md` Resolution
 - `src/sonitra/notes.py:make_note` no longer lets NaN/+-Inf `duration_sec` or `start_sec` slip through: a bare `float()` cast defeated the `<= 0.0`/`< 0.0` comparisons that gate the drop/clamp (`nan <= 0` and `inf < 0` are both `False`), so a NaN duration was kept as-is and a NaN/`-inf` start was silently clamped to `0.0` — breaking the documented sorted-by-`(start_sec, pitch)` guarantee with nothing raised. Non-finite pitch, velocity, `start_sec` and `duration_sec` now all raise `ValueError` uniformly (pitch already did for NaN; `+-Inf` pitch and `+-Inf` velocity previously raised an uncaught `OverflowError` instead). `src/sonitra/midi_writer.py:_collect_note_events` (the other inline reimplementation of the contract, used by `write_midi`/`write_multi_program_midi`) gets the same finite guard on `velocity`/`start_sec`/`duration_sec`. Both raise from the same per-note/per-file boundary that already aborts on an out-of-range pitch, so existing fail-soft batch loops (`cli.py transcribe`/`evaluate`, `benchmark/runner.py`, `scripts/musicnet_labels_to_midi.py`, `scripts/guitarset_jams_to_midi.py`) already catch it per file/pair and continue — no new tunable, no new catch sites needed. `src/sonitra/midi_reader.py:parse_midi` is unchanged: MIDI tick arithmetic on positive finite deltas cannot produce a non-finite time. Covered by new `tests/test_notes.py` and additions to `tests/test_midi_writer.py`
 - `docker/Dockerfile` `runtime-gpu`: runs `/app/.venv` on the matched CPython 3.11.16 copied from `python:3.11-slim-bookworm`, replacing jammy's apt `python3.11` 3.11.0rc1, a pre-release that predates `sys.get_int_max_str_digits`. `import torch._dynamo` failed there with `AttributeError: module 'sys' has no attribute 'get_int_max_str_digits'`; TransKun reaches dynamo through `torch.utils.checkpoint`, so only TransKun broke while basic_pitch, TensorFlow and `torch.cuda` all worked. Copying the builder's own `python:3.11-slim` tag is a dead end: its trixie build needs GLIBC 2.38, while bookworm's Debian 12 build runs on jammy's 2.35. A build-time check fails the build if the copied interpreter and `/app/.venv/pyvenv.cfg` disagree on the 3.11 patch release. The CPU image is unchanged. Verified after the fix: transkun `status: "succeeded"` in both benchmark condition orders on `device: cuda`, TensorFlow 2.15 and torch coexist and both see the GPU in both import orders, pedalboard 0.9.24 in both images, and `summary.json` records `python: 3.11.16`. Documented in `docs/docker.md`
-- GPU devcontainer ran the wrong Python: bare `sonitra` hit the pip
-  `--user` site with no torch, while torch 2.12.1 and transkun 2.0.1 sat
-  in `/workspace/.venv`. `.devcontainer/Dockerfile` now sets
-  `ENV PATH="/workspace/.venv/bin:$PATH"` (the devcontainer twin of
-  `docker/Dockerfile:219`), and `devcontainer.json` points
-  `python.defaultInterpreterPath` at `/workspace/.venv/bin/python`, so
-  bare `sonitra` and `python` run the synced venv. This takes effect on
-  Rebuild Container. The shell skips a missing folder, so the pip site
-  still works when the sync fails. Missing-dependency errors in
-  `src/sonitra/transcribe/transkun.py` now name the real module
-  (`torch`, `moduleconf`, or `transkun`) through `_missing_dependency`,
-  with a copy-pasteable `pip install 'sonitra[transkun]'` (quoted
-  brackets, so zsh does not treat them as a file pattern).
-  `src/sonitra/separation/demucs_separator.py:31` gets the same quoting.
-  `config/benchmark/transkun_baseline.yaml` sets transkun `device: cuda`
-  (was `cpu`), with a comment that the preset assumes a CUDA host and
-  `_resolve_device` raises rather than falling back. Documented in
-  `docs/devcontainer.md`
-- Device strings are now unified across AMT backends: users write `cpu`,
-  `cuda`, `cuda:N` or `GPU:N` everywhere. `src/sonitra/transcribe/devices.py`
-  holds the shared translators (`resolve_torch_device`, `resolve_tf_device`);
-  `transkun._resolve_device` is now a thin wrapper over the shared torch
-  helper (existing imports keep working). `basic_pitch` translates at its
-  boundary (`cuda` → TensorFlow's `GPU:0`), so the previous
-  `ValueError: Unknown attribute 'cuda'` from `tf.device` is gone and any
-  future backend follows the same rule (documented in
-  `docs/adding-a-transcriber.md`, `docs/configuration.md`). Unknown strings
-  raise `TranscriptionError` naming the valid values. `tests/test_separation.py`
-  now matches the quoted `pip install 'sonitra[demucs]'` hint
+- GPU devcontainer ran the wrong Python: bare `sonitra` hit the pip `--user` site with no torch, while torch 2.12.1 and transkun 2.0.1 sat in `/workspace/.venv`. `.devcontainer/Dockerfile` now sets `ENV PATH="/workspace/.venv/bin:$PATH"` (the devcontainer twin of `docker/Dockerfile:219`), and `devcontainer.json` points `python.defaultInterpreterPath` at `/workspace/.venv/bin/python`, so bare `sonitra` and `python` run the synced venv. This takes effect on Rebuild Container. The shell skips a missing folder, so the pip site still works when the sync fails. Missing-dependency errors in `src/sonitra/transcribe/transkun.py` now name the real module (`torch`, `moduleconf`, or `transkun`) through `_missing_dependency`, with a copy-pasteable `pip install 'sonitra[transkun]'` (quoted brackets, so zsh does not treat them as a file pattern). `src/sonitra/separation/demucs_separator.py:31` gets the same quoting. `config/benchmark/transkun_baseline.yaml` sets transkun `device: cuda` (was `cpu`), with a comment that the preset assumes a CUDA host and `_resolve_device` raises rather than falling back. Documented in `docs/devcontainer.md`
+- Device strings are now unified across AMT backends: users write `cpu`, `cuda`, `cuda:N` or `GPU:N` everywhere. `src/sonitra/transcribe/devices.py` holds the shared translators (`resolve_torch_device`, `resolve_tf_device`); `transkun._resolve_device` is now a thin wrapper over the shared torch helper (existing imports keep working). `basic_pitch` translates at its boundary (`cuda` → TensorFlow's `GPU:0`), so the previous `ValueError: Unknown attribute 'cuda'` from `tf.device` is gone and any future backend follows the same rule (documented in `docs/adding-a-transcriber.md`, `docs/configuration.md`). Unknown strings raise `TranscriptionError` naming the valid values. `tests/test_separation.py` now matches the quoted `pip install 'sonitra[demucs]'` hint
 - GPU devcontainer supplies TensorFlow's runtime PTX toolchain in the venv: new `pyproject.toml` `xla-ptx` extra (`nvidia-cuda-nvcc-cu12==12.2.140`, Linux x86_64 only, no `[tool.uv] conflicts` entry since it has one source) puts `bin/ptxas` and `nvvm/libdevice/libdevice.10.bc` on TF's own `<site-packages>/nvidia/cuda_nvcc` search path (a file lookup `LD_LIBRARY_PATH` cannot supply; TF 2.15 wheels carry cubins only to sm_75 so newer GPUs JIT every kernel_gen/XLA op). `.devcontainer/post-create.sh` keeps `--print-extra` single-valued via split `EXTRA`/`SYNC_EXTRAS`, syncing `--extra transkun-gpu --extra xla-ptx --extra dev` on the GPU fork only (CPU sync carries no 21 MB toolchain). `.devcontainer/Dockerfile` appends `export PATH="/workspace/.venv/bin:$PATH"` to `/home/node/.profile` after Debian's stock `$HOME/.local/bin` block so the venv wins in login bash too (`/etc/profile.d` would lose). `uv.lock` relocked with `uv 0.7.8` (`uv lock --check` passes; package already hashed). `docker/Dockerfile` unchanged (`runtime-gpu` already ships `/usr/local/cuda`); no `XLA_FLAGS` ENV. Documented in `docs/devcontainer.md` (three-extra GPU fork, why `xla-ptx`, login-bash line)
-- Benchmark presets are truthful again: `config/benchmark/transkun_baseline.yaml` is `device: cpu` on both transcribers (was `cuda`, unrunnable on a CPU host since transkun raises rather than falling back) with a pointer to the new `config/benchmark/transkun_baseline_gpu.yaml` twin (`device: cuda` on both, CUDA-host header, both backends raise rather than silently using CPU; keeps `melodia_trick: true`, `multiple_pitch_bends: false`, `save_raw_outputs: false` for `tests/test_config.py:269-289` auto-discovery). `config/benchmark/README.md` mapping table gains both rows. Provenance contract from `docs/adding-a-transcriber.md:171-181` now holds on both backends: `basic_pitch` reports resolved `device` (was raw), plus `requested_device` and `device_available` (`True` for `cpu` with no import, else GPU/`cuda` availability plus index bound);   `transkun` keeps `device`/`requested_device` and adds `device_available`. `separation.device` accepts the unified vocabulary via `resolve_torch_device` at the `demucs.api.Separator` construction site (`GPU:0` → `cuda:0`; `cpu`/`cuda`/`cuda:N` unaffected) and `devices.py` docstring no longer claims demucs already speaks torch names. Docs (`docs/configuration.md`, `docs/model-cards.md` device rows, `config/source.yaml`, `adding-a-transcriber.md` key list) updated. Covered by `tests/test_separation.py::test_demucs_device_translated` (`patch.dict(sys.modules)` stub asserts `cuda:0`), `tests/test_config.py::test_transkun_baseline_presets_pin_cpu_and_cuda`, and metadata-key assertions in `tests/test_transcribers.py` (monkeypatched `predict`) plus `tests/test_transkun.py`
+- Benchmark presets are truthful again: `config/benchmark/transkun_baseline.yaml` is `device: cpu` on both transcribers (was `cuda`, unrunnable on a CPU host since transkun raises rather than falling back) with a pointer to the new `config/benchmark/transkun_baseline_gpu.yaml` twin (`device: cuda` on both, CUDA-host header, both backends raise rather than silently using CPU; keeps `melodia_trick: true`, `multiple_pitch_bends: false`, `save_raw_outputs: false` for `tests/test_config.py:269-289` auto-discovery). `config/benchmark/README.md` mapping table gains both rows. Provenance contract from `docs/adding-a-transcriber.md:171-181` now holds on both backends: `basic_pitch` reports resolved `device` (was raw), plus `requested_device` and `device_available` (`True` for `cpu` with no import, else GPU/`cuda` availability plus index bound); `transkun` keeps `device`/`requested_device` and adds `device_available`. `separation.device` accepts the unified vocabulary via `resolve_torch_device` at the `demucs.api.Separator` construction site (`GPU:0` → `cuda:0`; `cpu`/`cuda`/`cuda:N` unaffected) and `devices.py` docstring no longer claims demucs already speaks torch names. Docs (`docs/configuration.md`, `docs/model-cards.md` device rows, `config/source.yaml`, `adding-a-transcriber.md` key list) updated. Covered by `tests/test_separation.py::test_demucs_device_translated` (`patch.dict(sys.modules)` stub asserts `cuda:0`), `tests/test_config.py::test_transkun_baseline_presets_pin_cpu_and_cuda`, and metadata-key assertions in `tests/test_transcribers.py` (monkeypatched `predict`) plus `tests/test_transkun.py`
 - Benchmark timing is attributable per backend again: `sonitra benchmark` prints a second table, `Benchmark timing by transcriber (seconds)`, with one row per `(condition, transcriber)` sourced from the existing `timing.conditions[].per_transcriber` roll-up in `summary.json` (sums over succeeded runs; no schema change, no re-run needed). `wall`/`render`/`separate` stay on the condition table since a condition stopwatch and per-file shared costs cannot be split per backend, and files without `per_transcriber` skip the second table. Covered by the extended `tests/test_cli_audio.py` timing tests
 
 ## [0.3.0] - 2026-08-14
 
 ### Added
 
-- Five new `pedalboard`-backed filter effect types available under
-  `pedalboard.effects`: `HighpassFilter`, `LowpassFilter`, `HighShelfFilter`,
-  `LowShelfFilter`, `PeakFilter`.
-- Four new benchmark scenario studies under `config/benchmark/`: `old_recording/` (vintage 78rpm shellac,
-  early reel-to-reel tape, and AM radio broadcast chains — phase-1
-  bandwidth-and-dynamics ablations at two severities against a common
-  baseline),
-  `telephone_channel/` (voice-channel bandwidth + AGC — ITU-T G.722 wideband
-  VoIP, ITU-T G.711 narrowband PSTN, land-mobile-radio intercom; 4
-  conditions), `venue_acoustics/` (RT60-calibrated `Reverb` ablation —
-  studio, recital hall, symphony hall, cathedral; 5 conditions), and
-  `rotary_speaker/` (Leslie rotary-speaker chorale/tremolo character via
-  `Chorus`; 3 conditions). Config-and-documentation only, no `src/sonitra/`
-  changes.
-- `docker/Dockerfile` runtime stage: `tmux` installed for interactive
-  `docker exec` terminal sessions into running containers
-- `docker/Dockerfile`: `HOST_UID`/`HOST_GID` build args (default `1000`)
-  baked into the non-root `sonitra` user and passed through from `.env` via
-  `docker-compose.yml`, so bind-mounted repo directories keep host ownership
-  on native Linux; the entrypoint now only `chown`s a directory when its
-  top-level ownership doesn't already match `sonitra`. `/app/.venv/bin`
-  added to `PATH` so `sonitra`/`uvicorn` work directly in `docker exec`
-  sessions
-- `BasicPitchTranscriberConfig` gains `melodia_trick` (default `true`, HMM/
-  melodia post-processing smoothing) and `multiple_pitch_bends` (default
-  `false`) knobs, forwarded to `basic_pitch.inference.predict()`. Note:
-  `multiple_pitch_bends: true` changes note eventing only — the `bends`
-  tuples are still dropped and `midi_writer.py` writes no pitch-wheel
-  messages, so glissando curves are not represented in the output MIDI
-  (documented limitation).
-- New `save_raw_outputs` flag (default `false`) on the `basic_pitch`
-  transcriber: when enabled, the model's raw onset/contour/note probability
-  maps (currently discarded by `transcribe()`) are persisted as a wide
-  441-column piano-roll CSV (`<stem>.model_outputs.csv`, one row per model
-  frame, `time_sec` derived from `basic_pitch.note_creation.
-  model_frames_to_time`) next to each transcribed MIDI, via the new
-  `write_transcription_outputs`/`write_raw_outputs` helpers in
-  `midi_writer.py`
-- `scripts/download_datasets.py`: interactive dataset picker backed by a rich
-  table (number, key, name, size, target path, and present/missing status;
-  prompt accepts comma-separated numbers, `all`, or `q`) when run without
-  arguments on a real terminal; `--jobs N` for downloading up to N selected
-  datasets concurrently (default 1 = serial); `--list` now renders a rich table
-  when available. Falls back gracefully to the previous stdlib-only behaviour
-  (plain-text `--list`, original error message) when `rich` is unavailable or
-  stdin is not a TTY
-- `scripts/download_datasets.py`: added the Beethoven Symphony Excerpt Dataset
-  (BSED) v1.0; the single `zip_strip_prefix` extraction generalised into an
-  `extract_map` of `(zip_prefix, target_subdir)` pairs so a dataset can route
-  different zip subfolders to different corpus subdirs — BSED splits into
-  `midi/` and `recordings/` (the latter deliberately distinct from `audio/`,
-  reserved for the pipeline's own rendered output)
-- `benchmark.save_audio` (default `true`) and `benchmark.resume` (default
-  `false`) config knobs: `save_audio: false` deletes a condition's rendered
-  audio (and separated stems) right after that condition's transcription and
-  evaluation finish, bounding peak disk usage to roughly one condition
-  instead of the whole sweep (results, summaries, and transcriptions are
-  always kept). `resume: true` continues a stopped run by treating every
-  `(condition, file, transcriber)` triple already recorded — succeeded,
-  failed, or `render_failed` — as done and only computing what is missing; a
-  config fingerprint is stored next to `benchmark_results.jsonl` and compared
-  on resume, so a config edit that would change what a condition or record
-  means raises an error instead of silently mixing results
-- `observability.log_level` (validated root-logger override, takes precedence
-  over `render_pipeline.log_level`) and `observability.progress` (default `true`;
-  master switch for live CLI progress bars) config fields
-- New `sonitra.terminal` module: rich console singleton, idempotent rich
-  logging setup, effective-log-level resolution, per-file speed column, and a
-  `BenchmarkProgress` protocol with `Null`/`Rich` implementations;
-  `RichBenchmarkProgress` renders a header (device chips, worker pids,
-  failures), a sweep bar, and one row per pool worker under a single `Live`
-- Benchmark run now streams `WorkerEvent` records for each `(file,
-  transcriber)` cell through a multiprocessing queue so live progress works
-  in parallel mode; worker fd 1/2 are redirected to per-worker log files
-  (`<work_dir>/logs/`) so TF C++ output cannot corrupt the shared terminal
-- `RichBenchmarkProgress` worker rows now show the current pipeline stage
-  (`render`, optional `separate`, `transcribe`) alongside
-  `condition × transcriber`, in both serial and parallel mode;
-  `WorkerEvent` gains a `stage` field and a new `status == "stage"` value
-  for these non-cell-boundary transitions, carried by the existing
-  worker-event queue with no new plumbing.
-- `RichBenchmarkProgress` worker rows now split into two adjacent Progress rows
-  per pool worker: a coloured header row (pid, condition, transcriber, stage,
-  device — each field individually styled) with no bar, and an indented detail
-  row underneath (file, progress bar, M-of-N, elapsed), fixing illegible
-  line-wrapping on narrow terminals where the previous single combined row would
-  overflow. Condition/transcriber names and file paths are escaped before going
-  through Rich markup so `[`/`]` characters in user-authored benchmark YAML or
-  filesystem paths can't raise `MarkupError` or mis-render.
-- `render`, `transcribe`, `evaluate`, `benchmark`, `init`, and `serve` CLI
-  output beautified with `rich`: per-file progress bars, failure tables, and
-  benchmark summary/degradation tables; new global `--verbose`/`--quiet`
-  flags; `pipeline.on_file_done` wired into the render progress bar; TF/
-  absl/basic-pitch logging silenced so backends cannot corrupt the display.
-  Adds `rich` to the core dependencies
-- `--limit`/`--seed` CLI flags on `sonitra transcribe` and `sonitra
-  evaluate`, mirroring the existing `render`/`benchmark` flags; `evaluate`
-  samples only reference files with matching estimates so `--limit N` means
-  at most N evaluated pairs, staying coherent after a limited
-  render/transcribe run
-- Audio-input benchmark mode: `render_pipeline.input_type: audio` reads
-  source recordings directly from `{corpus_root}/{dataset}/recordings/` (new
-  `CorpusPaths.recordings`), skipping synthesis entirely. New
-  `sonitra.corpus` module (`discover_midi_files`, `discover_audio_files`,
-  `pair_audio_to_reference` — deterministic token-prefix pairing of
-  recordings to reference MIDIs) and `sonitra.source` module
-  (`SourceProtocol` with `MidiSource`/`AudioSource`, `make_source` factory;
-  `load()` returns the real sample rate, the source file's own rate in audio
-  mode). Audio-mode benchmark cells are (recording × transcriber) and
-  `evaluation.dtw` is skipped (re-synthesised audio vs a real recording is
-  not meaningful); conditions/sweeps may not override
-  `render_pipeline.input_type` (validated once at setup). `ManifestEntry`
-  and `BenchmarkRecord` gain a `source_path` field naming the recording in
-  audio mode (`midi_path` always stays the reference MIDI)
-- `scripts/download_datasets.py`: new datasets — `maestro-v3-midi`/`-wav`/
-  `-full` (the old `maestro-v3` key is renamed), `musicnet`, and
-  `e-gmd-midi`/`e-gmd-full` (drum dataset, download-only); entries can pull
-  from multiple URLs and both `.zip` and `.tar.gz`, routing members to
-  `midi/`, `recordings/`, or the new `metadata/` by prefix/extension rules
-- API render worker discovers audio files (`.wav`/`.flac`/`.mp3`) instead of
-  only `.mid` when the active config is in audio mode
+- Five new `pedalboard`-backed filter effect types available under `pedalboard.effects`: `HighpassFilter`, `LowpassFilter`, `HighShelfFilter`, `LowShelfFilter`, `PeakFilter`.
+- Four new benchmark scenario studies under `config/benchmark/`: `old_recording/` (vintage 78rpm shellac, early reel-to-reel tape, and AM radio broadcast chains — phase-1 bandwidth-and-dynamics ablations at two severities against a common baseline), `telephone_channel/` (voice-channel bandwidth + AGC — ITU-T G.722 wideband VoIP, ITU-T G.711 narrowband PSTN, land-mobile-radio intercom; 4 conditions), `venue_acoustics/` (RT60-calibrated `Reverb` ablation — studio, recital hall, symphony hall, cathedral; 5 conditions), and `rotary_speaker/` (Leslie rotary-speaker chorale/tremolo character via `Chorus`; 3 conditions). Config-and-documentation only, no `src/sonitra/` changes.
+- `docker/Dockerfile` runtime stage: `tmux` installed for interactive `docker exec` terminal sessions into running containers
+- `docker/Dockerfile`: `HOST_UID`/`HOST_GID` build args (default `1000`) baked into the non-root `sonitra` user and passed through from `.env` via `docker-compose.yml`, so bind-mounted repo directories keep host ownership on native Linux; the entrypoint now only `chown`s a directory when its top-level ownership doesn't already match `sonitra`. `/app/.venv/bin` added to `PATH` so `sonitra`/`uvicorn` work directly in `docker exec` sessions
+- `BasicPitchTranscriberConfig` gains `melodia_trick` (default `true`, HMM/ melodia post-processing smoothing) and `multiple_pitch_bends` (default `false`) knobs, forwarded to `basic_pitch.inference.predict()`. Note: `multiple_pitch_bends: true` changes note eventing only — the `bends` tuples are still dropped and `midi_writer.py` writes no pitch-wheel messages, so glissando curves are not represented in the output MIDI (documented limitation).
+- New `save_raw_outputs` flag (default `false`) on the `basic_pitch` transcriber: when enabled, the model's raw onset/contour/note probability maps (currently discarded by `transcribe()`) are persisted as a wide 441-column piano-roll CSV (`<stem>.model_outputs.csv`, one row per model frame, `time_sec` derived from `basic_pitch.note_creation. model_frames_to_time`) next to each transcribed MIDI, via the new `write_transcription_outputs`/`write_raw_outputs` helpers in `midi_writer.py`
+- `scripts/download_datasets.py`: interactive dataset picker backed by a rich table (number, key, name, size, target path, and present/missing status; prompt accepts comma-separated numbers, `all`, or `q`) when run without arguments on a real terminal; `--jobs N` for downloading up to N selected datasets concurrently (default 1 = serial); `--list` now renders a rich table when available. Falls back gracefully to the previous stdlib-only behaviour (plain-text `--list`, original error message) when `rich` is unavailable or stdin is not a TTY
+- `scripts/download_datasets.py`: added the Beethoven Symphony Excerpt Dataset (BSED) v1.0; the single `zip_strip_prefix` extraction generalised into an `extract_map` of `(zip_prefix, target_subdir)` pairs so a dataset can route different zip subfolders to different corpus subdirs — BSED splits into `midi/` and `recordings/` (the latter deliberately distinct from `audio/`, reserved for the pipeline's own rendered output)
+- `benchmark.save_audio` (default `true`) and `benchmark.resume` (default `false`) config knobs: `save_audio: false` deletes a condition's rendered audio (and separated stems) right after that condition's transcription and evaluation finish, bounding peak disk usage to roughly one condition instead of the whole sweep (results, summaries, and transcriptions are always kept). `resume: true` continues a stopped run by treating every `(condition, file, transcriber)` triple already recorded — succeeded, failed, or `render_failed` — as done and only computing what is missing; a config fingerprint is stored next to `benchmark_results.jsonl` and compared on resume, so a config edit that would change what a condition or record means raises an error instead of silently mixing results
+- `observability.log_level` (validated root-logger override, takes precedence over `render_pipeline.log_level`) and `observability.progress` (default `true`; master switch for live CLI progress bars) config fields
+- New `sonitra.terminal` module: rich console singleton, idempotent rich logging setup, effective-log-level resolution, per-file speed column, and a `BenchmarkProgress` protocol with `Null`/`Rich` implementations; `RichBenchmarkProgress` renders a header (device chips, worker pids, failures), a sweep bar, and one row per pool worker under a single `Live`
+- Benchmark run now streams `WorkerEvent` records for each `(file, transcriber)` cell through a multiprocessing queue so live progress works in parallel mode; worker fd 1/2 are redirected to per-worker log files (`<work_dir>/logs/`) so TF C++ output cannot corrupt the shared terminal
+- `RichBenchmarkProgress` worker rows now show the current pipeline stage (`render`, optional `separate`, `transcribe`) alongside `condition × transcriber`, in both serial and parallel mode; `WorkerEvent` gains a `stage` field and a new `status == "stage"` value for these non-cell-boundary transitions, carried by the existing worker-event queue with no new plumbing.
+- `RichBenchmarkProgress` worker rows now split into two adjacent Progress rows per pool worker: a coloured header row (pid, condition, transcriber, stage, device — each field individually styled) with no bar, and an indented detail row underneath (file, progress bar, M-of-N, elapsed), fixing illegible line-wrapping on narrow terminals where the previous single combined row would overflow. Condition/transcriber names and file paths are escaped before going through Rich markup so `[`/`]` characters in user-authored benchmark YAML or filesystem paths can't raise `MarkupError` or mis-render.
+- `render`, `transcribe`, `evaluate`, `benchmark`, `init`, and `serve` CLI output beautified with `rich`: per-file progress bars, failure tables, and benchmark summary/degradation tables; new global `--verbose`/`--quiet` flags; `pipeline.on_file_done` wired into the render progress bar; TF/ absl/basic-pitch logging silenced so backends cannot corrupt the display. Adds `rich` to the core dependencies
+- `--limit`/`--seed` CLI flags on `sonitra transcribe` and `sonitra evaluate`, mirroring the existing `render`/`benchmark` flags; `evaluate` samples only reference files with matching estimates so `--limit N` means at most N evaluated pairs, staying coherent after a limited render/transcribe run
+- Audio-input benchmark mode: `render_pipeline.input_type: audio` reads source recordings directly from `{corpus_root}/{dataset}/recordings/` (new `CorpusPaths.recordings`), skipping synthesis entirely. New `sonitra.corpus` module (`discover_midi_files`, `discover_audio_files`, `pair_audio_to_reference` — deterministic token-prefix pairing of recordings to reference MIDIs) and `sonitra.source` module (`SourceProtocol` with `MidiSource`/`AudioSource`, `make_source` factory; `load()` returns the real sample rate, the source file's own rate in audio mode). Audio-mode benchmark cells are (recording × transcriber) and `evaluation.dtw` is skipped (re-synthesised audio vs a real recording is not meaningful); conditions/sweeps may not override `render_pipeline.input_type` (validated once at setup). `ManifestEntry` and `BenchmarkRecord` gain a `source_path` field naming the recording in audio mode (`midi_path` always stays the reference MIDI)
+- `scripts/download_datasets.py`: new datasets — `maestro-v3-midi`/`-wav`/ `-full` (the old `maestro-v3` key is renamed), `musicnet`, and `e-gmd-midi`/`e-gmd-full` (drum dataset, download-only); entries can pull from multiple URLs and both `.zip` and `.tar.gz`, routing members to `midi/`, `recordings/`, or the new `metadata/` by prefix/extension rules
+- API render worker discovers audio files (`.wav`/`.flac`/`.mp3`) instead of only `.mid` when the active config is in audio mode
 
 ### Changed
 
-- **BREAKING:** the `pipeline` config section is renamed to
-  `render_pipeline` (`extra="forbid"` rejects the old key); the new
-  `render_pipeline.input_type` field (`midi` | `audio`, default `midi`)
-  selects MIDI synthesis vs direct audio input, and in audio mode the
-  synth-backend field requirements are skipped since the synth is never
-  constructed
+- **BREAKING:** the `pipeline` config section is renamed to `render_pipeline` (`extra="forbid"` rejects the old key); the new `render_pipeline.input_type` field (`midi` | `audio`, default `midi`) selects MIDI synthesis vs direct audio input, and in audio mode the synth-backend field requirements are skipped since the synth is never constructed
 
-- All six `config/benchmark/*.yaml` presets now set `device: GPU:0` on their
-  `basic_pitch` transcriber (previously unset, defaulting to `cpu` — so
-  Basic Pitch ran CPU inference even inside a working GPU container), and
-  raise `transcription.max_workers` and `evaluation.max_workers` from 1 to 4.
-  `render_pipeline.max_workers` and `benchmark.max_workers` stay at 1, each with an
-  inline comment recording why: the former is only honoured for the
-  `pedalboard_instrument` synth backend, and the latter spawns a process pool
-  whose workers would each need their own GPU memory allocation.
-- `README.md` condensed from ~490 to ~210 lines: the Docker quick-start now
-  lives alongside Linux/macOS/Windows under Installation instead of appearing
-  after "Data and plugins"; detailed reference material (Docker, VST3/preset/
-  SoundFont setup, full CLI flags, configuration tables, evaluation metrics,
-  Python API, REST API, datasets) moved to individual pages under `docs/`,
-  linked from the corresponding condensed README section
-- **BREAKING:** `docker/docker-compose.yml` and `docker/docker-compose.gpu.yml` merged
-  into a single `docker/docker-compose.yml` with two Compose profiles: `sonitra`
-  (`--profile cpu`) and `sonitra-gpu` (`--profile gpu`, tagged `sonitra:gpu`), sharing
-  common config via a YAML anchor. A profile must now always be passed — there is no
-  profile-less default — so the CPU and GPU containers can never both start at once and
-  collide on port 8000. `docker/docker-compose.gpu.yml` is removed; all `README.md`
-  Docker invocations updated to include `--profile cpu`/`--profile gpu`.
-- `README.md`: GPU setup section rewritten to document the `nvidia-*` CUDA wheel
-  approach with an explanation of why `tensorflow[and-cuda]` does not work; Docker
-  CLI commands now use `--no-sync` to prevent dependency re-resolution inside the
-  container; WSL2 note generalized from "TensorFlow's deep CUDA headers" to
-  "packages with deeply nested file trees"
-- `docker/Dockerfile` GPU extras comment updated to reference `pyproject.toml`'s
-  `[gpu]` extra instead of the removed `tensorflow[and-cuda]` workaround
+- All six `config/benchmark/*.yaml` presets now set `device: GPU:0` on their `basic_pitch` transcriber (previously unset, defaulting to `cpu` — so Basic Pitch ran CPU inference even inside a working GPU container), and raise `transcription.max_workers` and `evaluation.max_workers` from 1 to 4. `render_pipeline.max_workers` and `benchmark.max_workers` stay at 1, each with an inline comment recording why: the former is only honoured for the `pedalboard_instrument` synth backend, and the latter spawns a process pool whose workers would each need their own GPU memory allocation.
+- `README.md` condensed from ~490 to ~210 lines: the Docker quick-start now lives alongside Linux/macOS/Windows under Installation instead of appearing after "Data and plugins"; detailed reference material (Docker, VST3/preset/ SoundFont setup, full CLI flags, configuration tables, evaluation metrics, Python API, REST API, datasets) moved to individual pages under `docs/`, linked from the corresponding condensed README section
+- **BREAKING:** `docker/docker-compose.yml` and `docker/docker-compose.gpu.yml` merged into a single `docker/docker-compose.yml` with two Compose profiles: `sonitra` (`--profile cpu`) and `sonitra-gpu` (`--profile gpu`, tagged `sonitra:gpu`), sharing common config via a YAML anchor. A profile must now always be passed — there is no profile-less default — so the CPU and GPU containers can never both start at once and collide on port 8000. `docker/docker-compose.gpu.yml` is removed; all `README.md` Docker invocations updated to include `--profile cpu`/`--profile gpu`.
+- `README.md`: GPU setup section rewritten to document the `nvidia-*` CUDA wheel approach with an explanation of why `tensorflow[and-cuda]` does not work; Docker CLI commands now use `--no-sync` to prevent dependency re-resolution inside the container; WSL2 note generalized from "TensorFlow's deep CUDA headers" to "packages with deeply nested file trees"
+- `docker/Dockerfile` GPU extras comment updated to reference `pyproject.toml`'s `[gpu]` extra instead of the removed `tensorflow[and-cuda]` workaround
 
 ### Fixed
 
-- `sonitra/terminal.py`: `on_worker_event`'s fallback branch called
-  `logger.warning(...)` with no `logger` ever defined in the module —
-  latent `NameError` on any unrecognized `WorkerEvent.status`. Added the
-  missing module-level `logger = logging.getLogger(__name__)`.
-- `docker/Dockerfile` GPU image (`sonitra-gpu` service, `runtime-gpu` target):
-  rebuilt on an `nvidia/cuda:12.2.2-devel-ubuntu22.04` base with CUDA/cuDNN
-  installed system-wide via apt, replacing the pip `nvidia-*-cu12` wheel
-  approach. The wheel approach hit a reproducible TensorFlow 2.15 bug where
-  `tf.config.list_physical_devices('GPU')` returns `[]` and TF logs "Could not
-  find cuda drivers on your machine" even though the NVIDIA driver, Container
-  Toolkit passthrough, and a raw `dlopen`/`cuInit()` of `libcuda.so.1` all
-  succeed (see upstream tensorflow/tensorflow#62412, reproduced there with an
-  exactly-matched driver/CUDA version — not a version-skew issue). `docker
-  -compose.yml`'s `sonitra` (CPU) and `sonitra-gpu` services now set an
-  explicit `target:` (`runtime`/`runtime-gpu`) since the Dockerfile gained a
-  third stage. `pyproject.toml`'s `[gpu]` extra is unchanged and still
-  available for bare-metal (non-Docker) installs.
-- `docker/Dockerfile` builder stage: `scripts/` directory was never copied
-  into the image, so `scripts/run_transcribe_eval.py` (the batch runner) was
-  missing at runtime; now copied alongside `src/` and `config/`
-- `[gpu]` optional extras: `tensorflow[and-cuda]==2.15.0` replaced with 11
-  `nvidia-*` CUDA runtime wheels. The former dependency transitively required
-  `tensorrt-libs==8.6.1` from NVIDIA's private PyPI (not available on the public
-  index), causing `uv sync --extra gpu` / `pip install ".[gpu]"` to fail on Linux
-  x86_64. The `nvidia-*` wheels are available on the standard PyPI, pinned to the
-  same versions TF 2.15 declares as its `and-cuda` extras, and are equivalent
-  for GPU inference.
-- `docker/Dockerfile`: `/app` directory now explicitly `chown`'d to `sonitra` at
-  build time, fixing the `PermissionError: [Errno 13] Permission denied:
-  'renders.jsonl'` when writing the default manifest path as a non-root user
-- `docker/Dockerfile` and `docker/entrypoint.sh`: entrypoint rewritten to run
-  as root temporarily so it can `chown` bind-mounted directories (`/app/corpus`,
-  `/app/output`, `/app/config`) to the `sonitra` user, then step down via `gosu`
-  for security; this fixes permission errors on Docker Desktop for Windows and
-  macOS where host directories are mounted as root inside the container
-- `sonitra evaluate --config --dataset`: estimate output directory now
-  resolved by the transcriber's backend type when its optional `name` field
-  is unset, instead of crashing with `PosixPath / None` (mirrors how
-  `transcribe` names its output directories)
-- `sonitra benchmark` with `benchmark.max_workers: 1` (serial mode): backends
-  that print directly to stdout (e.g. `basic-pitch`'s bare `print()` in
-  `predict()`) were writing straight to the terminal and corrupting the Rich
-  `Live` progress display's cursor tracking, so the display never visibly
-  updated during the run and only rendered once, stale, at exit. Serial-mode
-  condition processing now redirects stdout/stderr to `<work_dir>/logs/
-  serial.log` while a display is active, mirroring the fd-redirection pool
-  workers already got; `sonitra.terminal.get_console()` now pins its `file`
-  to `sys.stdout` at construction time so the display itself keeps writing to
-  the real terminal regardless of this redirection
-- `RichBenchmarkProgress`'s outer `Live` now sets `transient=True`, so the
-  header/progress rows are cleared on exit instead of being left behind as a
-  permanent, truncated last frame (visible as stray `pid N · condition ·
-  file…` lines after a parallel-mode benchmark run finished)
-- `sonitra benchmark` summary/degradation tables now list conditions in the
-  order they're declared in `benchmark.conditions`/`benchmark.sweeps`,
-  regardless of which condition happened to finish first in parallel mode
-  (`benchmark.max_workers > 1` gathers results via `as_completed`, which is
-  nondeterministic); a new `order_by_condition()` helper in `benchmark/
-  results.py` restores declared order after aggregation
+- `sonitra/terminal.py`: `on_worker_event`'s fallback branch called `logger.warning(...)` with no `logger` ever defined in the module — latent `NameError` on any unrecognized `WorkerEvent.status`. Added the missing module-level `logger = logging.getLogger(__name__)`.
+- `docker/Dockerfile` GPU image (`sonitra-gpu` service, `runtime-gpu` target): rebuilt on an `nvidia/cuda:12.2.2-devel-ubuntu22.04` base with CUDA/cuDNN installed system-wide via apt, replacing the pip `nvidia-*-cu12` wheel approach. The wheel approach hit a reproducible TensorFlow 2.15 bug where `tf.config.list_physical_devices('GPU')` returns `[]` and TF logs "Could not find cuda drivers on your machine" even though the NVIDIA driver, Container Toolkit passthrough, and a raw `dlopen`/`cuInit()` of `libcuda.so.1` all succeed (see upstream tensorflow/tensorflow#62412, reproduced there with an exactly-matched driver/CUDA version — not a version-skew issue). `docker -compose.yml`'s `sonitra` (CPU) and `sonitra-gpu` services now set an explicit `target:` (`runtime`/`runtime-gpu`) since the Dockerfile gained a third stage. `pyproject.toml`'s `[gpu]` extra is unchanged and still available for bare-metal (non-Docker) installs.
+- `docker/Dockerfile` builder stage: `scripts/` directory was never copied into the image, so `scripts/run_transcribe_eval.py` (the batch runner) was missing at runtime; now copied alongside `src/` and `config/`
+- `[gpu]` optional extras: `tensorflow[and-cuda]==2.15.0` replaced with 11 `nvidia-*` CUDA runtime wheels. The former dependency transitively required `tensorrt-libs==8.6.1` from NVIDIA's private PyPI (not available on the public index), causing `uv sync --extra gpu` / `pip install ".[gpu]"` to fail on Linux x86_64. The `nvidia-*` wheels are available on the standard PyPI, pinned to the same versions TF 2.15 declares as its `and-cuda` extras, and are equivalent for GPU inference.
+- `docker/Dockerfile`: `/app` directory now explicitly `chown`'d to `sonitra` at build time, fixing the `PermissionError: [Errno 13] Permission denied: 'renders.jsonl'` when writing the default manifest path as a non-root user
+- `docker/Dockerfile` and `docker/entrypoint.sh`: entrypoint rewritten to run as root temporarily so it can `chown` bind-mounted directories (`/app/corpus`, `/app/output`, `/app/config`) to the `sonitra` user, then step down via `gosu` for security; this fixes permission errors on Docker Desktop for Windows and macOS where host directories are mounted as root inside the container
+- `sonitra evaluate --config --dataset`: estimate output directory now resolved by the transcriber's backend type when its optional `name` field is unset, instead of crashing with `PosixPath / None` (mirrors how `transcribe` names its output directories)
+- `sonitra benchmark` with `benchmark.max_workers: 1` (serial mode): backends that print directly to stdout (e.g. `basic-pitch`'s bare `print()` in `predict()`) were writing straight to the terminal and corrupting the Rich `Live` progress display's cursor tracking, so the display never visibly updated during the run and only rendered once, stale, at exit. Serial-mode condition processing now redirects stdout/stderr to `<work_dir>/logs/ serial.log` while a display is active, mirroring the fd-redirection pool workers already got; `sonitra.terminal.get_console()` now pins its `file` to `sys.stdout` at construction time so the display itself keeps writing to the real terminal regardless of this redirection
+- `RichBenchmarkProgress`'s outer `Live` now sets `transient=True`, so the header/progress rows are cleared on exit instead of being left behind as a permanent, truncated last frame (visible as stray `pid N · condition · file…` lines after a parallel-mode benchmark run finished)
+- `sonitra benchmark` summary/degradation tables now list conditions in the order they're declared in `benchmark.conditions`/`benchmark.sweeps`, regardless of which condition happened to finish first in parallel mode (`benchmark.max_workers > 1` gathers results via `as_completed`, which is nondeterministic); a new `order_by_condition()` helper in `benchmark/ results.py` restores declared order after aggregation
 
 ## [0.2.0] - 2026-07-01
 
@@ -797,12 +311,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonitra` binary is available on PATH after `pip install -e .`
 - API integration test now passes with the fixed default config
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
-- Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve
-  the relative subpath from the corpus root in all output paths. Two files in different
-  subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no
-  longer overwrite each other on disk or silently cross-pair during evaluation.
-  (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to
-  `None` so all existing flat-corpus workflows are unaffected.)
+- Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve the relative subpath from the corpus root in all output paths. Two files in different subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no longer overwrite each other on disk or silently cross-pair during evaluation. (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to `None` so all existing flat-corpus workflows are unaffected.)
 
 [Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.3.0
