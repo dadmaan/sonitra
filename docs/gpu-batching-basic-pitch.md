@@ -45,37 +45,37 @@ The report splits wall time into parts. Load time (t_load) covers audio reading 
 Long input e2e medians in seconds for batch 1 to 64:
 
 | Batch | CPU e2e | CUDA e2e |
-| --- | --- | --- |
-| 1 | 6.38 | 4.51 |
-| 2 | 5.26 | 4.39 |
-| 4 | 4.72 | 4.14 |
-| 8 | 4.47 | 3.89 |
-| 16 | 4.12 | 3.89 |
-| 32 | 4.32 | 4.09 |
-| 64 | 4.34 | 4.23 |
+| ----- | ------- | -------- |
+| 1     | 6.38    | 4.51     |
+| 2     | 5.26    | 4.39     |
+| 4     | 4.72    | 4.14     |
+| 8     | 4.47    | 3.89     |
+| 16    | 4.12    | 3.89     |
+| 32    | 4.32    | 4.09     |
+| 64    | 4.34    | 4.23     |
 
 Short set sums in seconds over 20 files per pass for batch 1 to 64:
 
 | Batch | CPU sum | CUDA sum |
-| --- | --- | --- |
-| 1 | 5.59 | 2.99 |
-| 2 | 4.04 | 2.70 |
-| 4 | 3.42 | 2.47 |
-| 8 | 3.15 | 2.41 |
-| 16 | 2.84 | 2.64 |
-| 32 | 2.91 | 2.53 |
-| 64 | 2.71 | 2.53 |
+| ----- | ------- | -------- |
+| 1     | 5.59    | 2.99     |
+| 2     | 4.04    | 2.70     |
+| 4     | 3.42    | 2.47     |
+| 8     | 3.15    | 2.41     |
+| 16    | 2.84    | 2.64     |
+| 32    | 2.91    | 2.53     |
+| 64    | 2.71    | 2.53     |
 
 Compute time fell as batch grew, then it flattened. Load time stayed near 1.26 to 1.30 s on the long input. Post time stayed near 2.2 to 2.3 s on the long input. Post time took 57 to 59 percent of e2e. That share caps the gain from faster compute.
 
 ## Head to head
 
-| Setting | e2e median (min, max) in seconds | t_infer median in seconds |
-| --- | --- | --- |
-| CUDA batch 8 | 3.887 (3.784, 3.987) | 0.38 |
-| CUDA batch 16 | 3.886 (3.823, 4.043) | 0.38 |
-| CPU batch 16 | 4.117 (4.106, 4.265) | 0.70 |
-| CUDA batch 1 | 4.514 (4.436, 4.527) | 0.95 |
+| Setting       | e2e median (min, max) in seconds | t_infer median in seconds |
+| ------------- | -------------------------------- | ------------------------- |
+| CUDA batch 8  | 3.887 (3.784, 3.987)             | 0.38                      |
+| CUDA batch 16 | 3.886 (3.823, 4.043)             | 0.38                      |
+| CPU batch 16  | 4.117 (4.106, 4.265)             | 0.70                      |
+| CUDA batch 1  | 4.514 (4.436, 4.527)             | 0.95                      |
 
 GPU batch 8 beat CPU batch 16 by 1.059x. The medians were 3.887 s against 4.117 s. Ranges did not overlap.
 
@@ -106,14 +106,14 @@ MB means megabytes.
 Peak graphics memory on the long input by batch:
 
 | Batch | Peak GPU memory in MB |
-| --- | --- |
-| 1 | 75 |
-| 2 | 95 |
-| 4 | 157 |
-| 8 | 279 |
-| 16 | 525 |
-| 32 | 1016 |
-| 64 | 1998 |
+| ----- | --------------------- |
+| 1     | 75                    |
+| 2     | 95                    |
+| 4     | 157                   |
+| 8     | 279                   |
+| 16    | 525                   |
+| 32    | 1016                  |
+| 64    | 1998                  |
 
 Peak memory grew with batch size. Batch 8 used 279 MB. Batch 64 used 1998 MB. No setting ran out of memory.
 
