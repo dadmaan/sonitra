@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from sonitra.config import (
     ConfigError,
     EffectsChain,
+    InputType,
     PipelineConfig,
     SynthBackend,
     default_config_path,
@@ -274,18 +277,23 @@ def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
     found = {p.relative_to(config_dir).parts[0] for p in runnable}
     assert found == {"benchmark", "examples"}, found
 
+    checked = 0
     for path in runnable:
         cfg = load_config(path)
-        basic_pitch = next(
+        # TransKun-only presets (tk_*) have no basic_pitch block to check.
+        for basic_pitch in (
             t for t in cfg.transcription.transcribers if t.type == "basic_pitch"
-        )
-        assert basic_pitch.melodia_trick is True, path
-        assert basic_pitch.multiple_pitch_bends is False, path
-        relative = path.relative_to(config_dir)
-        if relative.parts[0] == "examples":
-            assert basic_pitch.save_raw_outputs is True, path
-        else:
-            assert basic_pitch.save_raw_outputs is False, path
+        ):
+            checked += 1
+            assert basic_pitch.melodia_trick is True, path
+            assert basic_pitch.multiple_pitch_bends is False, path
+            relative = path.relative_to(config_dir)
+            if relative.parts[0] == "examples":
+                assert basic_pitch.save_raw_outputs is True, path
+            else:
+                assert basic_pitch.save_raw_outputs is False, path
+    # Most presets run basic_pitch; guard against the filter matching nothing.
+    assert checked >= len(runnable) // 2, (checked, len(runnable))
 
     # The annotated reference documents all three knobs at the text level.
     source_text = (config_dir / "source.yaml").read_text()
@@ -315,3 +323,139 @@ def test_transcription_rejects_unknown_key() -> None:
     bad = {**_minimal_config_dict(), "transcription": {"bogus_key": 1}}
     with pytest.raises(ConfigError):
         PipelineConfig.model_validate(bad)
+
+
+def test_source_yaml_documents_io_filter_keys_and_no_selection_block() -> None:
+    text = default_config_path().read_text()
+    cfg = load_config(default_config_path())
+    assert cfg.io.metadata_csv is None
+    assert cfg.io.where == {}
+    assert cfg.io.sample is None
+    assert not re.search(r"^selection:", text, re.M)
+    for key in ("metadata_csv", "join_column", "where", "sample", "n", "seed"):
+        assert re.search(rf"^[#\s]+{key}:", text, re.M), key
+    for key in ("metadata_csv", "join_column", "where", "sample"):
+        assert re.search(rf"^\s+#?\s*{key}:", text, re.M), key
+
+
+_PAPER_EXPERIMENTS = (
+    Path(__file__).resolve().parent.parent / "config" / "benchmark" / "paper_experiments"
+)
+# bp_* run basic_pitch, as piano_only.yaml does; tk_* are the TransKun twins.
+_MAESTRO_TEST_AUDIO = _PAPER_EXPERIMENTS / "bp_piano_only_maestro_test_audio.yaml"
+_MAESTRO_TEST_MIDI = _PAPER_EXPERIMENTS / "bp_piano_only_maestro_test_midi.yaml"
+_TK_MAESTRO_TEST_AUDIO = _PAPER_EXPERIMENTS / "tk_piano_only_maestro_test_audio.yaml"
+_TK_MAESTRO_TEST_MIDI = _PAPER_EXPERIMENTS / "tk_piano_only_maestro_test_midi.yaml"
+
+
+def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    for key, value in data.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            flat.update(_flatten(value, path))
+        else:
+            flat[path] = value
+    return flat
+
+
+def _differing_keys(base: dict[str, Any], other: dict[str, Any]) -> set[str]:
+    return {key for key in set(base) | set(other) if base.get(key) != other.get(key)}
+
+
+def test_maestro_test_presets_select_test_split() -> None:
+    cases = (
+        (_MAESTRO_TEST_AUDIO, InputType.AUDIO),
+        (_MAESTRO_TEST_MIDI, InputType.MIDI),
+    )
+    for path, expected_input in cases:
+        cfg = load_config(path)
+        assert cfg.io.dataset == "maestro-v3", path
+        assert cfg.io.metadata_csv == "maestro-v3.0.0.csv", path
+        assert cfg.io.join_column == "midi_filename", path
+        assert cfg.io.where == {"split": ["test"]}, path
+        assert cfg.io.sample is None, path
+        assert cfg.benchmark.benchmark_dir is None, path
+        assert cfg.render_pipeline.input_type == expected_input, path
+
+
+def test_maestro_test_presets_differ_from_piano_only_only_by_io_filter() -> None:
+    base = _flatten(
+        load_config(_PAPER_EXPERIMENTS / "piano_only.yaml").model_dump(mode="json")
+    )
+
+    audio = _flatten(load_config(_MAESTRO_TEST_AUDIO).model_dump(mode="json"))
+    audio_diff = _differing_keys(base, audio)
+    assert {
+        key for key in audio_diff if not key.startswith("io.where.")
+    } == {"io.dataset", "io.metadata_csv"}
+    assert "io.where.split" in audio_diff
+
+    midi = _flatten(load_config(_MAESTRO_TEST_MIDI).model_dump(mode="json"))
+    midi_diff = _differing_keys(base, midi)
+    assert {
+        key for key in midi_diff if not key.startswith("io.where.")
+    } == {"io.dataset", "io.metadata_csv", "render_pipeline.input_type"}
+    assert "io.where.split" in midi_diff
+
+
+def test_transkun_maestro_test_presets_differ_from_basic_pitch_twin_only_by_transcriber() -> None:
+    pairs = (
+        (_TK_MAESTRO_TEST_AUDIO, _MAESTRO_TEST_AUDIO),
+        (_TK_MAESTRO_TEST_MIDI, _MAESTRO_TEST_MIDI),
+    )
+    for tk_path, bp_path in pairs:
+        tk_cfg = load_config(tk_path)
+        assert [t.type for t in tk_cfg.transcription.transcribers] == ["transkun"], tk_path
+        assert tk_cfg.io.where == {"split": ["test"]}, tk_path
+        assert tk_cfg.io.sample is None, tk_path
+        assert tk_cfg.benchmark.benchmark_dir is None, tk_path
+        diff = _differing_keys(
+            _flatten(load_config(bp_path).model_dump(mode="json")),
+            _flatten(tk_cfg.model_dump(mode="json")),
+        )
+        # Worker count may differ: TransKun and basic_pitch load different
+        # models, so GPU memory per worker differs.
+        assert diff - {"benchmark.max_workers"} == {"transcription.transcribers"}, tk_path
+
+
+_TK_MAESTRO_TRAIN_PROBE_AUDIO = (
+    _PAPER_EXPERIMENTS / "tk_piano_only_maestro_train_probe_audio.yaml"
+)
+_TK_MAESTRO_TRAIN_PROBE_MIDI = (
+    _PAPER_EXPERIMENTS / "tk_piano_only_maestro_train_probe_midi.yaml"
+)
+
+
+def test_transkun_train_probes_sample_train_split() -> None:
+    cases = (
+        (_TK_MAESTRO_TRAIN_PROBE_AUDIO, InputType.AUDIO),
+        (_TK_MAESTRO_TRAIN_PROBE_MIDI, InputType.MIDI),
+    )
+    for path, expected_input in cases:
+        cfg = load_config(path)
+        assert cfg.io.dataset == "maestro-v3", path
+        assert cfg.io.metadata_csv == "maestro-v3.0.0.csv", path
+        assert cfg.io.join_column == "midi_filename", path
+        assert cfg.io.where == {"split": ["train"]}, path
+        assert cfg.io.sample is not None, path
+        assert cfg.io.sample.n == 177, path
+        assert cfg.io.sample.seed == 0, path
+        assert cfg.render_pipeline.input_type == expected_input, path
+        assert [t.type for t in cfg.transcription.transcribers] == ["transkun"], path
+
+
+def test_transkun_train_probes_differ_from_test_twin_only_by_io_filter() -> None:
+    pairs = (
+        (_TK_MAESTRO_TRAIN_PROBE_AUDIO, _TK_MAESTRO_TEST_AUDIO),
+        (_TK_MAESTRO_TRAIN_PROBE_MIDI, _TK_MAESTRO_TEST_MIDI),
+    )
+    for probe_path, twin_path in pairs:
+        probe = _flatten(load_config(probe_path).model_dump(mode="json"))
+        twin = _flatten(load_config(twin_path).model_dump(mode="json"))
+        # Flattened, the sample becomes io.sample.n / io.sample.seed.
+        assert _differing_keys(twin, probe) == {
+            "io.where.split",
+            "io.sample.n",
+            "io.sample.seed",
+        }, probe_path
