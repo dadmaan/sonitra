@@ -58,7 +58,7 @@ def _manifest_path_kwargs(source_path: Path, cfg: PipelineConfig) -> Dict[str, s
     refactor) and ``source_path`` is unset. In audio mode the pipeline layer
     only knows the recording it read -- not any benchmark-level reference
     pairing -- so ``midi_path`` stays ``""`` and ``source_path`` carries the
-    recording path (see ``ManifestEntry`` docstring / Phase 3 plan).
+    recording path (see ``ManifestEntry`` docstring).
     """
     if cfg.render_pipeline.input_type == InputType.AUDIO:
         return {"midi_path": "", "source_path": str(source_path)}

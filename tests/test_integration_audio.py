@@ -32,7 +32,7 @@ def _add_recording(
 
 def _audio_pipeline_config(corpus_root: Path) -> PipelineConfig:
     # fluidsynth is a required enum value only -- the synth is never
-    # constructed for `input_type: audio` (Phase 1), so no `fluidsynth:`
+    # constructed for `input_type: audio`, so no `fluidsynth:`
     # section is needed.
     return PipelineConfig.model_validate(
         {
@@ -93,7 +93,7 @@ def test_benchmark_audio_mode_end_to_end_oracle(tmp_path: Path, audio_corpus_dir
 
     # Seed a precomputed ("oracle") lookup dir: a perfect transcription for
     # each recording, keyed by the recording's own stem (orthogonal to the
-    # §2.3 reference-pairing scheme -- see tests/test_benchmark_audio.py).
+    # reference-pairing scheme -- see tests/test_benchmark_audio.py).
     precomputed_dir = tmp_path / "precomputed"
     precomputed_dir.mkdir()
     import shutil

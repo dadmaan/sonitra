@@ -208,8 +208,8 @@ class BasicPitchTranscriber:
         n_overlapping_frames = 30
         overlap_len = n_overlapping_frames * FFT_HOP
         hop_size = AUDIO_N_SAMPLES - overlap_len
-        # CPU-only batching. GPU stays at batch 1 (Phase 2 decides GPU
-        # batching); batch 1 reproduces upstream per-window inference exactly.
+        # CPU-only batching. GPU stays at batch 1: batched-GPU throughput is
+        # unmeasured; batch 1 reproduces upstream per-window inference exactly.
         effective_batch = self.batch_size if "cpu" in tf_device.lower() else 1
 
         audio, _sample_rate = read_audio_basic_pitch(str(audio_path))

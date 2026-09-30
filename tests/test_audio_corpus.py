@@ -75,7 +75,7 @@ def _p(*names: str) -> list[Path]:
 
 
 def test_pair_bsed_audio_to_midi() -> None:
-    """§2.3 worked example: 3 recordings of the same excerpt all pair to the
+    """Worked example: 3 recordings of the same excerpt all pair to the
     single reference MIDI that shares the excerpt-id token prefix."""
     audio_paths = _p(
         "BSED-01_1_Beethoven_Op021-01_Karajan1963.wav",
@@ -113,7 +113,7 @@ def test_pair_token_comparison_is_case_sensitive() -> None:
 
 
 def test_pair_descends_through_zero_match_levels() -> None:
-    """Verbatim §2.3 worked example: k descends from len(A) through several
+    """Verbatim worked example: k descends from len(A) through several
     zero-candidate levels (a longer decoy reference forces the start at
     k=5) before landing a unique match at k=1."""
     audio_paths = _p("BSED-01_1_Beethoven_Op021-01_Karajan1963.wav")
@@ -201,7 +201,7 @@ def test_pair_is_deterministic() -> None:
 
 
 # ---------------------------------------------------------------------------
-# match_token_prefix (pure extracted helper — Phase 5)
+# match_token_prefix (pure extracted helper)
 # ---------------------------------------------------------------------------
 
 

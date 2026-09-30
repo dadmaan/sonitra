@@ -78,8 +78,8 @@ def dummy_silent_audio() -> np.ndarray:
 def audio_corpus_dir(tmp_path: Path) -> Path:
     """Tmp corpus tree with ``midi/`` reference files and ``recordings/`` audio.
 
-    Recordings are named ``piece_<n>_<performer>.wav`` so they pair (§2.3's
-    token-prefix rule) to their reference ``piece_<n>.mid``.
+    Recordings are named ``piece_<n>_<performer>.wav`` so they pair to their
+    reference ``piece_<n>.mid`` by the token-prefix rule.
     """
     import shutil
 
@@ -122,9 +122,8 @@ def silent_wav(tmp_path: Path) -> Path:
 @pytest.fixture
 def off_rate_wav(tmp_path: Path) -> Path:
     """A WAV written at 48000Hz while the test config's ``pipeline.sample_rate``
-    stays at the 44100Hz default — the regression fixture for the sample-rate
-    structural fix in Phase 3 (audio-mode output must follow the source
-    file's own rate, not the config rate)."""
+    stays at the 44100Hz default — the regression fixture for audio-mode
+    output following the source file's own rate, not the config rate."""
     from sonitra.storage import write_wav
 
     sample_rate = 48000

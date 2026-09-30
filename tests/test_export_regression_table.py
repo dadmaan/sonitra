@@ -500,7 +500,7 @@ def test_build_rows_metadata_join_keys_on_song_for_both_recordings(ert: ModuleTy
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: token-prefix metadata join (MusicNet)
+# token-prefix metadata join (MusicNet)
 # ---------------------------------------------------------------------------
 
 

@@ -32,7 +32,7 @@ def _minimal_config_dict() -> dict:
     }
 
 
-# ── Stage 6: config schema ─────────────────────────────────────────────
+# ── config schema ──────────────────────────────────────────────────────
 
 def test_transkun_config_defaults() -> None:
     from sonitra.transcribe.configs import TranskunTranscriberConfig
@@ -88,7 +88,7 @@ def test_transkun_config_paths_accept_str_and_path() -> None:
     assert str(cfg2.weights_path) == "/tmp/w.pt"
 
 
-# ── Stage 8: mapper helpers ────────────────────────────────────────────
+# ── mapper helpers ─────────────────────────────────────────────────────
 
 class _FakeNote:
     def __init__(self, pitch, start, end, velocity=80, hasOnset=True, hasOffset=True):
@@ -315,7 +315,7 @@ def test_read_audio_resampled_missing_raises(tmp_path: Path) -> None:
         read_audio_resampled(tmp_path / "missing.wav")
 
 
-# ── Stage 9 slow tests (require transkun installed) ────────────────────
+# ── slow tests (require transkun installed) ────────────────────────────
 
 @pytest.mark.slow
 def test_transkun_transcribes_sine_tone(tmp_path: Path) -> None:

@@ -53,10 +53,10 @@ def _patch_audio(monkeypatch: pytest.MonkeyPatch, synth: _FakeSynth) -> None:
 
 
 def test_audio_metric_values_drops_zero_duration_phantom(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Part C Stage 16 — resynthesis path is pinned through the canonical contract.
+    """Resynthesis path is pinned through the canonical contract.
 
     _audio_metric_values is the one metric input that never passed through
-    notes_from_dicts. After Part A it receives make_note output and is clean,
+    notes_from_dicts. It receives make_note output and is clean,
     but nothing said so. This test pins that a degenerate note is dropped before
     synthesis, not leaked to the synth.
 

@@ -371,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
 
     records = load_records(results_path)
 
-    # Single resolved song -> metadata key map (Phase 5). Both build_rows
+    # Single resolved song -> metadata key map. Both build_rows
     # and the unmatched count use this map; otherwise prefix matches would
     # still be counted as unmatched.
     song_to_metadata_key: dict[str, str | None] | None = None

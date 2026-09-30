@@ -103,11 +103,11 @@ def test_notes_from_dicts_sorting_and_offsets() -> None:
     assert events[1].duration_sec == pytest.approx(0.5)
 
 
-# --- Part C Stage 14: degenerate (zero-duration) note characterization ---
+# --- degenerate (zero-duration) note characterization ---
 
 
 def test_zero_duration_estimate_matches_onset() -> None:
-    """Characterization (Part C Stage 14.1): onset matching ignores duration.
+    """Characterization: onset matching ignores duration.
 
     ``match_notes`` checks pitch equality and onset tolerance only
     (note_metrics.py:37-41) — duration is never read. A zero-duration
@@ -123,7 +123,7 @@ def test_zero_duration_estimate_matches_onset() -> None:
 
 
 def test_zero_duration_deflates_precision() -> None:
-    """Characterization (Part C Stage 14.2): degenerate note deflates precision.
+    """Characterization: degenerate note deflates precision.
 
     ``precision_recall_f1`` (note_metrics.py:144) divides by ``len(estimate)``,
     which counts the phantom note. Adding a single zero-duration phantom to an
@@ -142,7 +142,7 @@ def test_zero_duration_deflates_precision() -> None:
 
 
 def test_zero_duration_matches_offset_for_short_reference() -> None:
-    """Characterization (Part C Stage 14.3): offset tolerance floor lets zero match.
+    """Characterization: offset tolerance floor lets zero match.
 
     Tolerance is ``max(0.05, 0.2 * ref.duration_sec)`` (note_metrics.py:43)
     with a 50 ms floor. Against a 50 ms reference a zero-duration estimate

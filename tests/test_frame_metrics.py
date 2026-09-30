@@ -33,7 +33,7 @@ def test_rasterise_minimum_one_frame() -> None:
 
 
 def test_rasterise_zero_duration_exactly_one_frame() -> None:
-    """Part C Stage 15: clamp `last <= first` pins zero-duration to one cell.
+    """Clamp `last <= first` pins zero-duration to one cell.
 
     The existing test uses 0.0001 s (positive duration). Only the 0.0 case
     proves the `<=` rather than `<` branch in frame_metrics.py:18-19.
@@ -48,7 +48,7 @@ def test_rasterise_zero_duration_exactly_one_frame() -> None:
 
 
 def test_rasterise_short_note_shorter_than_hop_one_frame() -> None:
-    """Part C Stage 15: notes shorter than one hop still occupy one cell.
+    """Notes shorter than one hop still occupy one cell.
 
     The clamp is only reached at zero/negative duration (any positive
     duration already yields ceil > floor), but the broader deliberate
@@ -64,7 +64,7 @@ def test_rasterise_short_note_shorter_than_hop_one_frame() -> None:
 
 
 def test_frame_metrics_degenerate_note_deflates_precision() -> None:
-    """Part C Stage 15: degenerate estimate adds a cell → precision < 1, recall == 1.
+    """Degenerate estimate adds a cell → precision < 1, recall == 1.
 
     rasterise is tested above in isolation; this pins the consequence at the
     FrameMetrics level — a zero-duration phantom inflates len(est_cells) and
@@ -85,7 +85,7 @@ def test_frame_metrics_degenerate_note_deflates_precision() -> None:
 
 
 def test_frame_metrics_degenerate_note_different_frame_deflates_precision() -> None:
-    """Part C Stage 15: degenerate at a new frame also inflates est_cells.
+    """Degenerate at a new frame also inflates est_cells.
 
     Complements the different-pitch variant — a degenerate note at the frame
     just past the reference (pitch 60, frame 100) is also exactly one new
