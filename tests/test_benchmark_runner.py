@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +13,7 @@ import yaml
 from sonitra.benchmark import runner as runner_module
 from sonitra.benchmark.host_info import collect_host_info
 from sonitra.benchmark.runner import run_benchmark
-from sonitra.config import PipelineConfig
+from sonitra.config import ConditionSection, PipelineConfig, SweepSection
 from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
@@ -157,6 +159,19 @@ def test_config_snapshot_written_to_work_dir(
     assert [s.name for s in saved.benchmark.sweeps] == [
         s.name for s in benchmark_config.benchmark.sweeps
     ]
+
+
+def test_config_snapshot_records_benchmark_dir(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.benchmark.benchmark_dir = str(tmp_path / "configured")
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    saved = PipelineConfig.model_validate(
+        yaml.safe_load((tmp_path / "config.yaml").read_text())
+    )
+    assert str(saved.benchmark.benchmark_dir) == str(tmp_path / "configured")
 
 
 def test_config_snapshot_persists_and_updates_across_resume(
@@ -516,6 +531,78 @@ def test_benchmark_preflight_raises_before_render(
     assert not (tmp_path / "benchmark_results.jsonl").exists()
 
 
+_RUN_LEVEL_KEYS = [
+    "io.dataset",
+    "io.metadata_csv",
+    "io.join_column",
+    "io.where",
+    "io.where.split",
+    "io.sample",
+    "io.sample.n",
+    "benchmark.benchmark_dir",
+]
+
+
+@pytest.mark.parametrize("key", _RUN_LEVEL_KEYS)
+def test_condition_overriding_run_level_key_rejected(
+    key: str, benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.conditions.append(
+        ConditionSection(name="run-level-override", overrides={key: 2})
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"benchmark conditions may not override run-level key '{key}' "
+            r"\(condition 'run-level-override'\)"
+        ),
+    ):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+
+@pytest.mark.parametrize("key", _RUN_LEVEL_KEYS)
+def test_sweep_over_run_level_key_rejected(
+    key: str, benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps.append(
+        SweepSection(parameter=key, values=[1, 2], name="run-level")
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"benchmark conditions may not override run-level key '{key}' "
+            rf"\(sweep '{key}'\)"
+        ),
+    ):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+
+@pytest.mark.parametrize("key", ["io.corpus_root", "io.output_format"])
+def test_other_io_keys_are_not_run_level(
+    key: str, benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    from sonitra.benchmark.runner import _is_run_level_key
+
+    assert not _is_run_level_key(key)
+
+
+def test_unrelated_overrides_still_allowed(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.conditions.append(
+        ConditionSection(
+            name="padding-2",
+            overrides={"render_pipeline.duration_padding_sec": 2.0},
+        )
+    )
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+    assert {record.condition for record in result.records} == {
+        "baseline",
+        "padding=1.0",
+        "padding-2",
+    }
+
+
 def test_save_audio_true_keeps_condition_audio_dir(
     benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
 ) -> None:
@@ -763,6 +850,110 @@ def test_resume_rejects_config_fingerprint_mismatch(
         run_benchmark(midi_paths, tmp_path, benchmark_config)
 
 
+def _selection_payload(
+    *,
+    metadata_sha256: str = "a" * 64,
+    metadata_csv: str = "corpus/maestro-v3/metadata/meta.csv",
+) -> dict[str, object]:
+    return {
+        "configured": True,
+        "dataset": "maestro-v3",
+        "metadata_csv": metadata_csv,
+        "metadata_sha256": metadata_sha256,
+        "join_column": "midi_filename",
+        "where": {"split": ["test"]},
+        "sample": None,
+        "unit": "reference_midi",
+        "counts": {
+            "discovered": 5,
+            "unmatched": 0,
+            "excluded_by_where": 3,
+            "unpaired_audio": 0,
+            "selected_before_sample": 2,
+            "selected": 2,
+        },
+        "by_value": {"split": {"test": 2}},
+        "files_sha256": "f" * 64,
+    }
+
+
+def test_summary_json_has_selection_block_when_passed(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    selection = _selection_payload()
+    result = run_benchmark(
+        [midi_fixture("test_c4.mid")],
+        tmp_path,
+        benchmark_config,
+        selection=selection,
+    )
+    payload = json.loads(result.summary_path.read_text())
+    assert payload["selection"] == selection
+
+
+def test_summary_json_selection_defaults_to_minimal_unconfigured_block(
+    benchmark_config: PipelineConfig, midi_fixture, corpus_dir: Path, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+    result = run_benchmark(
+        midi_paths, tmp_path, benchmark_config, corpus_root=corpus_dir
+    )
+
+    payload = json.loads(result.summary_path.read_text())
+    selection = payload["selection"]
+    assert set(selection) == {"configured", "unit", "counts", "files_sha256"}
+    assert selection["configured"] is False
+    assert selection["unit"] == "reference_midi"
+    assert selection["counts"] == {"discovered": 2, "selected": 2}
+    expected_hash = hashlib.sha256(
+        "\n".join(
+            sorted(path.relative_to(corpus_dir).as_posix() for path in midi_paths)
+        ).encode("utf-8")
+    ).hexdigest()
+    assert selection["files_sha256"] == expected_hash
+
+
+def test_resume_refuses_when_metadata_sha_changed(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    run_benchmark(
+        midi_paths, tmp_path, benchmark_config, selection=_selection_payload()
+    )
+
+    benchmark_config.benchmark.resume = True
+    changed = _selection_payload(metadata_sha256="b" * 64)
+    with pytest.raises(ValueError, match="selection metadata changed") as excinfo:
+        run_benchmark(midi_paths, tmp_path, benchmark_config, selection=changed)
+    assert "meta.csv" in str(excinfo.value)
+
+
+def test_resume_allows_pre_change_summary_without_selection(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    run_benchmark(
+        midi_paths, tmp_path, benchmark_config, selection=_selection_payload()
+    )
+
+    # Simulate a summary written before selection provenance existed.
+    summary_path = tmp_path / "summary.json"
+    payload = json.loads(summary_path.read_text())
+    payload.pop("selection")
+    summary_path.write_text(json.dumps(payload))
+
+    benchmark_config.benchmark.resume = True
+    incoming = _selection_payload(metadata_sha256="c" * 64)
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, selection=incoming)
+
+    rewritten = json.loads(result.summary_path.read_text())
+    assert rewritten["selection"] == incoming
+
+
 def test_resume_false_starts_clean_in_reused_work_dir(
     benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
 ) -> None:
@@ -850,3 +1041,80 @@ def test_benchmark_reports_progress_in_parallel_path(
     # which subprocess happened to finish first
     assert [row["condition"] for row in result.summary] == ["baseline", "padding=1.0"]
     assert [row["condition"] for row in result.degradation] == ["padding=1.0"]
+
+
+def _parent_sentinel_visible() -> bool:
+    """Worker probe: does this process see state set on runner in the parent?"""
+    module = sys.modules.get("sonitra.benchmark.runner")
+    return bool(getattr(module, "_PARENT_SENTINEL", False))
+
+
+class _RecordingPool(runner_module.ProcessPoolExecutor):
+    """Real pool that records its kwargs and probes a worker's start method."""
+
+    instances: list["_RecordingPool"] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.init_kwargs = kwargs
+        self.probes: list = []
+        _RecordingPool.instances.append(self)
+
+    def submit(self, fn, /, *args, **kwargs):
+        if not self.probes:
+            self.probes.append(super().submit(_parent_sentinel_visible))
+        return super().submit(fn, *args, **kwargs)
+
+
+@pytest.fixture
+def recording_pool(monkeypatch: pytest.MonkeyPatch) -> type[_RecordingPool]:
+    _RecordingPool.instances = []
+    monkeypatch.setattr(runner_module, "ProcessPoolExecutor", _RecordingPool)
+    return _RecordingPool
+
+
+def test_parallel_benchmark_uses_spawn_context(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, recording_pool
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert len(recording_pool.instances) == 1
+    ctx = recording_pool.instances[0].init_kwargs.get("mp_context")
+    assert ctx is not None
+    assert ctx.get_start_method() == "spawn"
+
+
+def test_parallel_benchmark_workers_are_fresh_interpreters(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    recording_pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+    monkeypatch.setattr(runner_module, "_PARENT_SENTINEL", True, raising=False)
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    # A forked worker inherits parent memory (including any initialised
+    # CUDA state) and would see the sentinel; a spawned one re-imports.
+    probe = recording_pool.instances[0].probes[0]
+    assert probe.result(timeout=60) is False
+
+
+def test_parallel_benchmark_runs_end_to_end_under_spawn(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    # Regression guard: every worker argument and the progress queue must
+    # survive pickling under spawn.
+    benchmark_config.benchmark.max_workers = 2
+    progress = _RecordingProgress()
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, progress=progress)
+
+    assert len(result.records) == 4
+    assert all(record.status == "succeeded" for record in result.records)
+    assert any(e.status == "done" for e in progress.worker_events)

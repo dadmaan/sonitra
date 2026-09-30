@@ -11,6 +11,7 @@ from sonitra.config import (
     IOSection,
     PipelineConfig,
     load_config,
+    resolve_benchmark_dir,
     resolve_corpus_paths,
 )
 
@@ -264,3 +265,54 @@ def test_pipeline_config_unknown_io_field_raises() -> None:
     data["io"]["definitely_not_a_real_field"] = "oops"
     with pytest.raises(ConfigError):
         PipelineConfig.model_validate(data)
+
+
+# ── resolve_benchmark_dir ────────────────────────────────────────────────────
+
+
+def _cfg_for_run_dir(
+    *,
+    dataset: str | None = None,
+    corpus_root: str = "corpus",
+    benchmark_dir: str | None = None,
+) -> PipelineConfig:
+    payload = _minimal_config_dict(dataset=dataset)
+    payload["io"]["corpus_root"] = corpus_root
+    if benchmark_dir is not None:
+        payload["benchmark"] = {"benchmark_dir": benchmark_dir}
+    return PipelineConfig.model_validate(payload)
+
+
+def test_resolve_benchmark_dir_key_is_used_as_given_and_wins() -> None:
+    cfg = _cfg_for_run_dir(dataset="maestro", benchmark_dir="runs/fixed")
+    assert resolve_benchmark_dir(cfg, "study") == Path("runs/fixed")
+
+
+def test_resolve_benchmark_dir_key_absolute_stays_absolute(tmp_path: Path) -> None:
+    cfg = _cfg_for_run_dir(benchmark_dir=str(tmp_path / "abs"))
+    assert resolve_benchmark_dir(cfg, "study") == tmp_path / "abs"
+
+
+def test_resolve_benchmark_dir_uses_dataset_under_corpus_root() -> None:
+    cfg = _cfg_for_run_dir(dataset="maestro")
+    assert resolve_benchmark_dir(cfg, "study") == (
+        Path("corpus") / "maestro" / "benchmark" / "study"
+    )
+
+
+def test_resolve_benchmark_dir_honours_custom_corpus_root() -> None:
+    cfg = _cfg_for_run_dir(dataset="maestro", corpus_root="/data/root")
+    assert resolve_benchmark_dir(cfg, "study") == (
+        Path("/data/root") / "maestro" / "benchmark" / "study"
+    )
+
+
+def test_resolve_benchmark_dir_without_dataset_is_cwd_relative() -> None:
+    cfg = _cfg_for_run_dir(corpus_root="/data/root")
+    resolved = resolve_benchmark_dir(cfg, "study")
+    assert resolved == Path("benchmark") / "study"
+    assert not resolved.is_absolute()
+
+
+def test_benchmark_dir_defaults_to_none() -> None:
+    assert _cfg_for_run_dir().benchmark.benchmark_dir is None

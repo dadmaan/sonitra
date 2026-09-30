@@ -92,6 +92,7 @@ _FINGERPRINT_EXCLUDE = {
     ("benchmark", "resume"),
     ("benchmark", "max_workers"),
     ("benchmark", "save_audio"),
+    ("benchmark", "benchmark_dir"),
     ("render_pipeline", "max_workers"),
     ("transcription", "max_workers"),
     ("evaluation", "max_workers"),
@@ -106,6 +107,14 @@ def compute_fingerprint(config: PipelineConfig) -> str:
     computed under two different meanings of "condition"/"record".
     """
     data = config.model_dump(mode="json")
+    io_data = data.get("io", {})
+    if not io_data.get("where"):
+        # Filter keys are inert without a filter; dropping them keeps the hash
+        # of every unfiltered config unchanged.
+        for key in ("where", "metadata_csv", "join_column"):
+            io_data.pop(key, None)
+    if io_data.get("sample") is None:
+        io_data.pop("sample", None)
     for section, key in _FINGERPRINT_EXCLUDE:
         data.get(section, {}).pop(key, None)
     return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()

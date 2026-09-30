@@ -17,8 +17,7 @@ def _reset_console_singleton():
     first use; CliRunner's isolation closes that stream when its `invoke()`
     context exits, so a Console cached from an earlier CLI test/invocation
     in this session raises `ValueError: I/O operation on closed file` on the
-    next `console.print`. This is the pre-existing CliRunner flakiness noted
-    in PLAN.md's verification notes. Reset before each test so this module's
+    next `console.print`. Reset before each test so this module's
     tests are not order-dependent on whichever CLI test ran first in the
     batch, and reset again afterward so this module's CliRunner usage does
     not leave a closed-stream singleton behind for unrelated test modules
@@ -36,7 +35,7 @@ def _reset_console_singleton():
 # Inline config templates (cf. tests/test_corpus_discovery.py's
 # `_RENDER_SMOKE_CONFIG` and tests/test_cli.py's `_MINIMAL_CONFIG_TEMPLATE`).
 # `synth_backend: fluidsynth` is used purely as a required enum value -- in
-# `input_type: audio` mode the synth is never constructed (Phase 1), so no
+# `input_type: audio` mode the synth is never constructed, so no
 # `fluidsynth:`/`dawdreamer:` section is needed.
 # ---------------------------------------------------------------------------
 
@@ -239,7 +238,7 @@ def test_benchmark_audio_mode_cli_discovers_and_subsets_consistently(
 ) -> None:
     """--limit subsets the recordings list first; midi_paths passed to
     run_benchmark must be exactly the deduplicated references paired to the
-    *sampled* recordings, never an independently sampled list (PLAN §2.5.1)."""
+    *sampled* recordings, never an independently sampled list."""
     from sonitra.cli import _apply_subset
 
     recordings_dir = audio_corpus_dir / "recordings"
@@ -266,7 +265,7 @@ def test_benchmark_audio_mode_cli_discovers_and_subsets_consistently(
 
     captured: dict = {}
 
-    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None, selection=None):
         captured["midi_paths"] = sorted(Path(p) for p in midi_paths)
         captured["audio_paths"] = sorted(Path(p) for p in audio_paths) if audio_paths is not None else None
         work_dir = Path(work_dir)
@@ -353,7 +352,7 @@ def test_benchmark_timing_table_shows_condition_timing(
         lambda *args, **kwargs: Console(file=sys.stdout, width=200),
     )
 
-    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None, selection=None):
         work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         return runner_module.BenchmarkResult(
@@ -472,7 +471,7 @@ def test_benchmark_timing_table_shows_separate_seconds_when_present(
         lambda *args, **kwargs: Console(file=sys.stdout, width=200),
     )
 
-    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None, selection=None):
         work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         return runner_module.BenchmarkResult(
@@ -572,7 +571,7 @@ def test_benchmark_timing_by_transcriber_absent_without_per_transcriber(
         lambda *args, **kwargs: Console(file=sys.stdout, width=200),
     )
 
-    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None, selection=None):
         work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         return runner_module.BenchmarkResult(
@@ -656,7 +655,7 @@ def test_benchmark_timing_table_absent_without_timing(
         lambda *args, **kwargs: Console(file=sys.stdout, width=200),
     )
 
-    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None):
+    def _fake_run_benchmark(midi_paths, work_dir, config, corpus_root=None, *, audio_paths=None, progress=None, selection=None):
         work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         return runner_module.BenchmarkResult(

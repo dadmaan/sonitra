@@ -66,6 +66,13 @@ class PipelineSection(BaseModel):
     log_level: str
 
 
+class SelectionSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    n: int = Field(ge=1)
+    seed: int = 0
+
+
 class IOSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -74,6 +81,10 @@ class IOSection(BaseModel):
     mp3_bitrate_kbps: int
     file_naming: str
     dataset: str | None = None
+    metadata_csv: str | None = None
+    join_column: str = "midi_filename"
+    where: dict[str, list[str]] = Field(default_factory=dict)
+    sample: SelectionSample | None = None
 
     @field_validator("output_format")
     @classmethod
@@ -82,6 +93,72 @@ class IOSection(BaseModel):
         if value not in allowed:
             raise ValueError(f"Unsupported output_format: {value}")
         return value
+
+    @field_validator("where", mode="before")
+    @classmethod
+    def validate_where(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(
+                "io.where must be a mapping of column names to value lists"
+            )
+        cleaned: dict[str, list[str]] = {}
+        for column, values in value.items():
+            if not isinstance(column, str):
+                raise ValueError("io.where column names must be strings")
+            if not isinstance(values, list):
+                raise ValueError(
+                    "io.where values must be lists of values "
+                    f"(column '{column}' got {type(values).__name__})"
+                )
+            if not values:
+                raise ValueError(f"io.where['{column}'] must not be empty")
+            converted: list[str] = []
+            for item in values:
+                if isinstance(item, bool):
+                    raise ValueError(
+                        "io.where values must be strings or ints, not bool "
+                        f"(column '{column}')"
+                    )
+                if isinstance(item, str):
+                    converted.append(item)
+                elif isinstance(item, int):
+                    converted.append(str(item))
+                else:
+                    raise ValueError(
+                        "io.where values must be strings or ints "
+                        f"(column '{column}' got {type(item).__name__})"
+                    )
+            cleaned[column] = sorted(set(converted))
+        return cleaned
+
+    @field_validator("sample", mode="before")
+    @classmethod
+    def validate_sample(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (dict, SelectionSample)):
+            return value
+        # A bare count is the likeliest mistake; echo it back in the hint.
+        if isinstance(value, int) and not isinstance(value, bool):
+            n = value
+        elif isinstance(value, str) and value.isdigit():
+            n = int(value)
+        else:
+            n = 2
+        raise ValueError(
+            f"io.sample must be a mapping like {{n: {n}, seed: 0}}, or null "
+            f"(got {value!r})"
+        )
+
+    @model_validator(mode="after")
+    def _validate_filter(self) -> "IOSection":
+        if self.where and (self.metadata_csv is None or self.dataset is None):
+            raise ValueError(
+                "io.where requires io.metadata_csv and io.dataset to be set"
+            )
+        if self.metadata_csv is not None and not self.where:
+            raise ValueError("io.metadata_csv has no effect without io.where")
+        return self
 
 
 class DawDreamerSection(BaseModel):
@@ -246,6 +323,7 @@ class BenchmarkSection(BaseModel):
     max_workers: int = 1
     save_audio: bool = True
     resume: bool = False
+    benchmark_dir: Path | str | None = None
 
 
 class PipelineConfig(BaseModel):
@@ -361,6 +439,33 @@ def resolve_corpus_paths(
         eval_results=base / "eval_results",
         recordings=base / "recordings",
     )
+
+
+def resolve_benchmark_dir(cfg: PipelineConfig, config_name: str) -> Path:
+    """Return the benchmark run directory for *cfg* (the ``--workdir`` default).
+
+    The first match wins:
+
+    1. ``benchmark.benchmark_dir``: the full run directory, used as given
+       (no config stem is appended).
+    2. ``io.dataset`` set: ``<io.corpus_root>/<dataset>/benchmark/<config_name>``.
+    3. Otherwise ``benchmark/<config_name>`` relative to the working directory.
+
+    This is not part of :class:`CorpusPaths`: without a dataset the fallback is
+    ``./benchmark``, not ``<corpus_root>/benchmark``.
+
+    Args:
+        cfg: Pipeline configuration with ``--dataset`` already applied.
+        config_name: Stem of the YAML config filename.
+
+    Returns:
+        The run directory; relative paths stay relative to the working directory.
+    """
+    if cfg.benchmark.benchmark_dir is not None:
+        return Path(cfg.benchmark.benchmark_dir)
+    if cfg.io.dataset:
+        return Path(cfg.io.corpus_root) / cfg.io.dataset / "benchmark" / config_name
+    return Path("benchmark") / config_name
 
 
 def load_config(path: Path | str) -> PipelineConfig:

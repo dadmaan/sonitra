@@ -196,6 +196,23 @@ def _dump_csv(rows: list[dict], path: Path) -> None:
             )
 
 
+def _build_render_command(
+    config_path: Path,
+    dataset: str | None,
+    limit: int | None,
+    seed: int | None,
+) -> list[str]:
+    """Build the ``sonitra render`` command for one preset config."""
+    render_cmd = [*_PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
+    if dataset is not None:
+        render_cmd += ["--dataset", dataset]
+    if limit is not None:
+        render_cmd += ["--limit", str(limit)]
+        if seed is not None:
+            render_cmd += ["--seed", str(seed)]
+    return render_cmd
+
+
 def _process_config(
     config_path: Path,
     args: argparse.Namespace,
@@ -221,13 +238,9 @@ def _process_config(
 
     if not args.skip_render:
         print(f"  step 1: render     -> {audio_dir}/")
-        render_cmd = [*_PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
-        if args.dataset is not None:
-            render_cmd += ["--dataset", args.dataset]
-        if args.limit is not None:
-            render_cmd += ["--limit", str(args.limit)]
-        if args.seed is not None:
-            render_cmd += ["--seed", str(args.seed)]
+        render_cmd = _build_render_command(
+            config_path, args.dataset, args.limit, args.seed
+        )
         rc = _run(render_cmd)
         if rc != 0:
             print(f"  FAIL  — render exited {rc}")

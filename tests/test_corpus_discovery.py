@@ -241,12 +241,16 @@ def test_evaluate_limit_constrains_output(tmp_path: Path) -> None:
         shutil.copy(fixtures / "test_c4.mid", ref_dir / f"piece_{i}.mid")
         shutil.copy(fixtures / "test_c4.mid", est_dir / f"piece_{i}.mid")
 
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_RENDER_SMOKE_CONFIG)
+
     out_jsonl = tmp_path / "results.jsonl"
     runner = CliRunner()
     result = runner.invoke(
         app,
         [
             "evaluate",
+            "--config", str(config_path),
             "--reference", str(ref_dir),
             "--estimate", str(est_dir),
             "--output", str(out_jsonl),
@@ -276,6 +280,9 @@ def test_evaluate_limit_samples_only_files_with_estimates(tmp_path: Path) -> Non
     for i in range(2):
         shutil.copy(fixtures / "test_c4.mid", est_dir / f"piece_{i}.mid")
 
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_RENDER_SMOKE_CONFIG)
+
     # limit 5 exceeds the 2 matchable files -> all 2 evaluated (not 3).
     out_jsonl = tmp_path / "results.jsonl"
     runner = CliRunner()
@@ -283,6 +290,7 @@ def test_evaluate_limit_samples_only_files_with_estimates(tmp_path: Path) -> Non
         app,
         [
             "evaluate",
+            "--config", str(config_path),
             "--reference", str(ref_dir),
             "--estimate", str(est_dir),
             "--output", str(out_jsonl),

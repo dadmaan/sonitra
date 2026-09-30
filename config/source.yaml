@@ -41,6 +41,39 @@ io:
     mp3_bitrate_kbps: 192 # only applies when output_format: mp3
     file_naming: "{stem}" # output filename template; {stem} = MIDI filename without extension
     dataset: null # optional: scope paths to {corpus_root}/{dataset}/midi|audio|transcription|eval_results/
+    # File selection: restrict a run to a subset of the dataset's reference files.
+    # Leave `where` empty and `sample` null to use every file. `sonitra serve` loads
+    # this file and ignores selection, so these values stay at their defaults here.
+    #
+    #   metadata_csv bare filename resolved under {corpus_root}/{dataset}/metadata/.
+    #                Pass a filename, not a repo-relative path (unlike the exporter
+    #                scripts, which take repo-relative paths): a relative path here
+    #                resolves below the metadata directory and is reported as missing.
+    #                Required with `where`, rejected without it.
+    #   join_column  metadata column matched against the reference file stem
+    #                (default midi_filename; GAPS uses midi_path). Ignored without `where`.
+    #   where        exact-match filter, which requires `dataset` and `metadata_csv`:
+    #                a file is kept when every column matches (AND) and its value
+    #                matches any entry of that column's list (OR). Values compare as
+    #                strings; ints are accepted and stringified. Lists are sorted and
+    #                de-duplicated, so their order never matters.
+    #   sample       draw n files deterministically from the filtered set with seed
+    #                (default 0); n must be at least 1, and n >= set size keeps all
+    #                files. The CLI --limit and --seed flags write into these fields.
+    #
+    # Example: MAESTRO-v3 official test split.
+    #   dataset: maestro-v3
+    #   metadata_csv: maestro-v3.0.0.csv
+    #   join_column: midi_filename
+    #   where:
+    #       split: [test]
+    #   sample:
+    #       n: 177
+    #       seed: 0
+    metadata_csv: null
+    join_column: midi_filename
+    where: {}
+    sample: null
 
 dawdreamer:
     block_size: 512
@@ -194,7 +227,7 @@ transcription:
           melodia_trick: true # HMM/melodia post-processing smoothing (code default)
           multiple_pitch_bends: false # allow overlapping same-pitch notes w/ glissando (code default)
           save_raw_outputs: false # persist raw model outputs as CSV sidecar next to each MIDI (code default)
-          batch_size: 16 # stacked-window inference batch size, CPU only (GPU stays at 1 until Phase 2 decides); 16-32 recommended
+          batch_size: 16 # stacked-window inference batch size, CPU only (GPU stays at 1: batched-GPU throughput is unmeasured); 16-32 recommended
         # Pre-exported MIDI from any external tool:
         # - type: precomputed
         #   name: klangio             # used as the output subdirectory name
@@ -241,6 +274,14 @@ benchmark:
     max_workers: 1 # parallel conditions; uses ProcessPoolExecutor for JUCE isolation
     save_audio: true # keep rendered audio/stems on disk after a condition finishes; set false to delete them once transcribed+evaluated, bounding disk usage for large sweeps
     resume: false # continue a stopped run: skip (condition, file, transcriber) triples already present in results_path instead of recomputing them
+    # Full run directory (renamed or moved by hand: used exactly as given, no config stem is appended).
+    # Precedence: --workdir, then this key, then <io.corpus_root>/<io.dataset>/benchmark/<config stem>
+    # when io.dataset is set, otherwise ./benchmark/<config stem>.
+    # With resume: false, starting a run deletes existing results in this folder, so two configs (or one
+    # config run with different --dataset values) sharing a fixed folder overwrite each other. The CLI
+    # refuses --dataset when it differs from io.dataset while this key is set, unless --workdir is given.
+    # Not part of the resume fingerprint, so the folder can be moved and resumed from its new path.
+    benchmark_dir: null
     conditions: [] # named config variants; each provides a list of overrides
     sweeps:
         - name: reverb_wet # sweep name used in results output

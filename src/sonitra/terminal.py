@@ -51,9 +51,12 @@ def get_console(*, quiet: bool = False, no_color: bool = False) -> Console:
     to rich's default dynamic lookup, so the console keeps writing to the real
     terminal even if ``sys.stdout`` is later reassigned (e.g. by a serial-mode
     output guard redirecting a noisy backend's prints away from the display).
+    A cached console whose pinned stream has been closed (e.g. a previous
+    in-process ``CliRunner`` invocation) is replaced so later calls do not
+    write to a dead stream.
     """
     global _console
-    if _console is None:
+    if _console is None or getattr(_console.file, "closed", False):
         _console = Console(quiet=quiet, no_color=no_color, file=sys.stdout)
     return _console
 

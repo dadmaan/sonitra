@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
+import hashlib
 import json
 import logging
 import multiprocessing
@@ -210,6 +211,92 @@ def _validate_no_input_type_sweep(config: PipelineConfig) -> None:
         )
 
 
+_RUN_LEVEL_KEYS = frozenset(
+    {
+        "io.dataset",
+        "io.metadata_csv",
+        "io.join_column",
+        "io.where",
+        "io.sample",
+        "benchmark.benchmark_dir",
+    }
+)
+_RUN_LEVEL_PREFIXES = ("io.where.", "io.sample.")
+
+
+def _is_run_level_key(key: str) -> bool:
+    return key in _RUN_LEVEL_KEYS or key.startswith(_RUN_LEVEL_PREFIXES)
+
+
+def _validate_no_run_level_override(config: PipelineConfig) -> None:
+    """Reject conditions/sweeps that override run-level keys.
+
+    The CLI resolves the dataset, the file selection and the run directory
+    once, before ``run_benchmark`` is called. Overriding ``io.dataset``, the
+    ``io`` selection keys or ``benchmark.benchmark_dir`` here would be
+    recorded in ``BenchmarkRecord.overrides`` but silently ignored -- the same
+    hazard as ``render_pipeline.input_type``.
+
+    Raises:
+        ValueError: If any condition or sweep overrides a run-level key.
+    """
+    for condition in config.benchmark.conditions:
+        for key in condition.overrides:
+            if _is_run_level_key(key):
+                raise ValueError(
+                    f"benchmark conditions may not override run-level key '{key}' "
+                    f"(condition '{condition.name}')"
+                )
+    for sweep in config.benchmark.sweeps:
+        if _is_run_level_key(sweep.parameter):
+            raise ValueError(
+                "benchmark conditions may not override run-level key "
+                f"'{sweep.parameter}' (sweep '{sweep.parameter}')"
+            )
+
+
+def _selection_files_sha256(units: Sequence[Path], corpus_root: Path | None) -> str:
+    """Hash unit paths relative to *corpus_root*, POSIX, sorted, newline-joined.
+
+    A unit outside *corpus_root* (or a missing root) falls back to its
+    absolute POSIX path instead of raising.
+    """
+    rendered: list[str] = []
+    for unit in units:
+        relative: str | None = None
+        if corpus_root is not None:
+            try:
+                relative = unit.relative_to(corpus_root).as_posix()
+            except ValueError:
+                relative = None
+        rendered.append(relative if relative is not None else unit.as_posix())
+    return hashlib.sha256("\n".join(sorted(rendered)).encode("utf-8")).hexdigest()
+
+
+def _minimal_selection_block(
+    midi_paths: Sequence[Path],
+    audio_paths: Sequence[Path] | None,
+    corpus_root: Path | None,
+) -> dict[str, Any]:
+    """Build the unconfigured selection block for a run with no filter.
+
+    Same shape as :meth:`sonitra.selection.SelectionResult.provenance` for an
+    unconfigured result, so every ``summary.json`` carries exactly four keys.
+    """
+    if audio_paths is not None:
+        units = list(audio_paths)
+        unit_kind = "recording"
+    else:
+        units = list(midi_paths)
+        unit_kind = "reference_midi"
+    return {
+        "configured": False,
+        "unit": unit_kind,
+        "counts": {"discovered": len(units), "selected": len(units)},
+        "files_sha256": _selection_files_sha256(units, corpus_root),
+    }
+
+
 def run_benchmark(
     midi_paths: Iterable[Path | str],
     work_dir: Path | str,
@@ -218,6 +305,7 @@ def run_benchmark(
     *,
     audio_paths: Iterable[Path | str] | None = None,
     progress: BenchmarkProgress | None = None,
+    selection: dict[str, Any] | None = None,
 ) -> BenchmarkResult:
     """Run the full benchmark: render -> (separate) -> transcribe -> evaluate.
 
@@ -237,6 +325,12 @@ def run_benchmark(
     ``config.io.corpus_root`` itself; both must already be fully resolved by
     the caller (mirrors how *midi_paths* already crosses the CLI->runner
     boundary today) -- only the *pairing* between them is computed here.
+
+    *selection* is the resolved provenance dict built by the caller (the CLI
+    passes ``SelectionResult.provenance(unit_root=...)``); it is written
+    verbatim under the top-level ``selection`` key of ``summary.json``. When
+    ``None``, the runner computes the minimal unconfigured block from the
+    resolved file lists, so every summary carries the same shape.
     """
     start = time.perf_counter()
     midi_paths = [Path(path) for path in midi_paths]
@@ -244,6 +338,7 @@ def run_benchmark(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     _validate_no_input_type_sweep(config)
+    _validate_no_run_level_override(config)
 
     audio_to_reference: dict[Path, Path] | None = None
     if config.render_pipeline.input_type == InputType.AUDIO:
@@ -264,6 +359,12 @@ def run_benchmark(
         audio_paths = sorted(audio_to_reference.keys())
     else:
         audio_paths = None
+
+    resolved_selection = (
+        selection
+        if selection is not None
+        else _minimal_selection_block(midi_paths, audio_paths, corpus_root)
+    )
 
     transcriber_configs = [t for t in config.transcription.transcribers if t.enabled]
     if not transcriber_configs:
@@ -305,6 +406,17 @@ def run_benchmark(
                 "proceeding without a config-consistency check.",
                 results_file,
             )
+        previous_summary_path = work_dir / "summary.json"
+        if previous_summary_path.exists():
+            previous_summary = json.loads(previous_summary_path.read_text())
+            previous_block = previous_summary.get("selection") or {}
+            previous_sha = previous_block.get("metadata_sha256")
+            incoming_sha = resolved_selection.get("metadata_sha256")
+            if previous_sha is not None and previous_sha != incoming_sha:
+                raise ValueError(
+                    "cannot resume: selection metadata changed since this work "
+                    f"dir was started ({resolved_selection.get('metadata_csv')})"
+                )
         records = load_records(results_file)
     elif results_file.exists():
         logger.info(
@@ -346,7 +458,7 @@ def run_benchmark(
             references[path] = None
 
     # In audio mode, per-condition totals reflect cells (recording x
-    # transcriber), matching the resolved fan-out granularity (§2.5) --
+    # transcriber), matching the resolved fan-out granularity --
     # not len(midi_paths), which would undercount when several recordings
     # share one reference.
     condition_file_count = len(audio_paths) if audio_paths is not None else len(midi_paths)
@@ -357,10 +469,16 @@ def run_benchmark(
     condition_wall: dict[str, float] = {}
 
     if n_workers > 1:
+        # Spawn, not fork: the device preflight may have initialised
+        # CUDA/TensorFlow/torch in this process, and forked children inherit
+        # that broken CUDA state (every GPU call then fails with
+        # CUDA_ERROR_NOT_INITIALIZED). Spawned workers start clean. The queue
+        # must come from the same context as the pool.
+        mp_context = multiprocessing.get_context("spawn")
         event_queue: multiprocessing.Queue | None = None
         drainer: Thread | None = None
         if progress is not None:
-            event_queue = multiprocessing.Queue()
+            event_queue = mp_context.Queue()
             drainer = Thread(
                 target=_drain_events, args=(event_queue, progress), daemon=True
             )
@@ -368,6 +486,7 @@ def run_benchmark(
         log_dir = work_dir / "logs"
         with ProcessPoolExecutor(
             max_workers=n_workers,
+            mp_context=mp_context,
             initializer=_worker_event_init,
             initargs=(event_queue, log_dir),
         ) as executor:
@@ -463,7 +582,12 @@ def run_benchmark(
     summary_path = work_dir / "summary.json"
     summary_path.write_text(
         json.dumps(
-            {"summary": summary, "degradation": degradation_rows, "timing": timing},
+            {
+                "summary": summary,
+                "degradation": degradation_rows,
+                "timing": timing,
+                "selection": resolved_selection,
+            },
             indent=2,
         )
     )
@@ -834,7 +958,7 @@ def _audio_metric_values(
     audio with the same synthesiser configuration, and audio metrics (DTW)
     score the divergence from the audio the transcriber actually heard.
     """
-    # Pin the resynthesis path through the canonical contract (Part C Stage 16).
+    # Pin the resynthesis path through the canonical contract.
     # This is the one metric input that never passes through notes_from_dicts;
     # without it a zero-duration phantom would leak to the synth and inflate
     # duration. normalise_notes drops duration<=0, clamps velocity/start,
