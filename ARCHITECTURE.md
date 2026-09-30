@@ -139,7 +139,7 @@ flowchart LR
     root --> midi & recordings & meta & ann & audio & tx & ev & bm
 ```
 
-`midi/`, `recordings/`, `metadata/` and `annotations/` are produced by `scripts/download_datasets.py` (which also keeps download records in `.sources/`) and the dataset converters; the pipeline only reads them. The CLI writes `audio/{config}/`, `transcription/{config}/` and `eval_results/`; `sonitra benchmark --dataset` writes `benchmark/{config}/` (`./benchmark/{config}/` without `--dataset`).
+`midi/`, `recordings/`, `metadata/` and `annotations/` are produced by `scripts/download_datasets.py` (which also keeps download records in `.sources/`) and the dataset converters; the pipeline only reads them. The CLI writes `audio/{config}/`, `transcription/{config}/` and `eval_results/`; `sonitra benchmark` writes to `{corpus_root}/<dataset>/benchmark/<config stem>` when `io.dataset` is set, either in YAML or with `--dataset`; without a dataset it writes to `./benchmark/<config stem>`. `--workdir` and `benchmark.benchmark_dir` override that location.
 
 Recordings pair to reference MIDIs by token prefix (e.g. `BSED-01_1_*.wav` → `BSED-01_*.mid`) via `sonitra.corpus.pair_audio_to_reference`: `k` descends over `_`-split stem tokens and stops at the first `k` with one candidate (paired) or several (ambiguous). Unmatched and ambiguous recordings are excluded, logged and reported in `PairingResult` (`ambiguous` keeps their candidates). `scripts/check_dataset.py` calls the same function; its core, `match_token_prefix`, also backs `export_regression_table.py --metadata-match token-prefix`. `discover_midi_files` / `discover_audio_files` do the recursive directory walks.
 
@@ -150,7 +150,7 @@ flowchart TB
     bm["benchmark section (conditions[] · sweeps[])"]
     expand["expand_conditions (baseline → explicit conditions → one per sweep value; one factor at a time, no cross-product)"]
     conds["Condition list (name, dotted-path overrides)"]
-    setup["Once per run: parse reference MIDIs · pair recordings (audio mode) · resume check · write config.yaml + .fingerprint"]
+    setup["Once per run: resolve file selection · parse reference MIDIs · pair recordings (audio mode) · resume check · write config.yaml + .fingerprint"]
     bm --> expand --> conds
 
     subgraph percond["Per condition (benchmark.max_workers = processes)"]
@@ -174,7 +174,7 @@ flowchart TB
     resume -.-> records
 ```
 
-A failed render yields `render_failed` records for that file and the run continues. In audio mode the recordings are the inputs, paired once to reference MIDIs in `midi/`, and records key on the recording path; DTW is skipped. Conditions/sweeps may not override `render_pipeline.input_type` (`_validate_no_input_type_sweep`, checked before expansion): input mode selects the corpus and pairing for the whole run.
+A failed render yields `render_failed` records for that file and the run continues. In audio mode the recordings are the inputs, paired once to reference MIDIs in `midi/`, and records key on the recording path; DTW is skipped. Conditions/sweeps may not override `render_pipeline.input_type` (`_validate_no_input_type_sweep`, checked before expansion): input mode selects the corpus and pairing for the whole run. File selection happens once per run, before any rendering or scoring, in the single resolver in `sonitra.selection` (config keys `io.where` and `io.sample`). The resolver works from the reference MIDI files: a filtered run keeps a reference file only when its row in the dataset metadata matches the filter. For audio input, the resolver pairs recordings against the full reference list, then keeps them when their reference is selected.
 
 ## Evaluation
 

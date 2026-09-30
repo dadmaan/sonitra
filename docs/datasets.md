@@ -135,6 +135,15 @@ In `exact` mode an unmatched warning suggests `--metadata-match token-prefix`.
 
 v0.3.0 migration (breaking): `musicnet` → `musicnet-full` with no alias (as `maestro-v3` in v0.3.0); label CSVs moved from `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/*_labels/`; score MIDI for `-full` moved from `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/`. If you have a v0.3.0 `corpus/musicnet/`, move `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/` and `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/` (or let `python scripts/musicnet_labels_to_midi.py --replace-score-midi` do the second move). Otherwise `musicnet-full`'s legacy presence check (every target dir non-empty) fails and it re-downloads ~10.6 GB; the file-level skip-by-size saves the writes, not the download.
 
+### Dataset splits
+
+A filtered run (`io.where`; see [Configuration → File selection](configuration.md#file-selection)) matches the dataset's metadata CSV to each reference file by file name, ignoring folders and the file ending. The split information each dataset provides differs:
+
+- **MAESTRO:** the metadata has a `split` column with 962 train / 137 validation / 177 test files. The split is not by year.
+- **GAPS:** the metadata has a `split` column, left blank for unpublished files, matched on `midi_path`. The test split has 30 rows. Three files (`Bc1wc`, `CM1wc`, `mN1wc`) exist on disk as `*-fine-aligned.mid` with no metadata row, so a filtered run leaves them out.
+- **GuitarSet:** no official split. Its metadata CSV has a `player_id` column if you want to filter or group by performer.
+- **MusicNet:** the split lives in the label folder names (`train_labels`/`test_labels`). After you run the converter, `metadata/musicnet.csv` has a `split` column plus the `midi_filename` join column, so a converted corpus can be filtered by split. The raw score layout has no split column.
+
 ### Joining dataset metadata into a benchmark export
 
 `scripts/export_regression_table.py` (see [CLI reference](cli.md)) can add a dataset's `corpus/{dataset}/metadata/*.csv` to a benchmark results table. Use this to add composer or work details for further analysis, for example:

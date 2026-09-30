@@ -251,6 +251,33 @@ confound disclosure. `rotary_speaker` in particular carries a larger
 Section 1 before treating a result from it as evidence about real Leslie
 processing.
 
+### MAESTRO test-split presets
+
+`paper_experiments/` holds four presets. Each one copies the piano-only study and adds a
+filter that keeps only MAESTRO's official test split:
+
+- `bp_piano_only_maestro_test_audio.yaml` and `bp_piano_only_maestro_test_midi.yaml` run
+  Basic Pitch.
+- `tk_piano_only_maestro_test_audio.yaml` and `tk_piano_only_maestro_test_midi.yaml` run
+  TransKun.
+
+Each transcriber has two versions, one for audio input and one for MIDI input: the
+`_audio` preset reads the real recordings, and the `_midi` preset renders the reference
+MIDI. The filter reads `maestro-v3`'s metadata and keeps only the files in the official
+test split, so a run scores the model on performances outside the training data.
+
+Two presets probe the other side of the same split:
+`tk_piano_only_maestro_train_probe_audio.yaml` and
+`tk_piano_only_maestro_train_probe_midi.yaml`. They are copies of the TransKun test
+presets with a filter that keeps MAESTRO's official train split and a sample of 177
+files with seed 0. The sample has the same number of files as the test split, so the
+probe and test runs compare directly. Comparing a probe run against its test-split twin
+measures TransKun's train-versus-test gap in that input mode (the difference between its
+train-split and test-split scores). In audio mode Sonitra plays the real MAESTRO
+recordings, which overlap TransKun's training audio; in MIDI mode Sonitra renders its own
+audio, so only the note sequences overlap its training data. The export that builds the
+model-cards table skips both, because a sampled run is not a baseline.
+
 ---
 
 ## Adding a new benchmark config

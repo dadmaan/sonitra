@@ -38,6 +38,7 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
   - DawDreamer/JUCE is not thread-safe: call `validate_worker_constraint()` before parallelising (forces `render_pipeline.max_workers=1`).
 - **Synth** (`synth/`): `make_synth` dispatches on `render_pipeline.synth_backend`; `pedalboard_instrument` with no plugin falls back to FluidSynth when a SoundFont is set.
 - **Pipeline** (`pipeline.py`): `run_pipeline(config=...)` is the real path; `engine=` is legacy. Per file: load → synth → normalise → effects → normalise → quality gate → write, logged to `renders.jsonl`.
+- **File selection**: `io.where`/`io.sample` (dataset = `io.dataset`); resolved only in `sonitra.selection` (reference-keyed; audio pairs against the full reference list); never filter corpus files ad hoc.
 - **Benchmark** (`benchmark/`): expands conditions/sweeps into dotted-path overrides (`pedalboard.effects.1.wet_level`), then renders, transcribes and scores each. Writes per-file JSONL, `summary.json` (summary + degradation vs. `baseline`) and the resolved `config.yaml`.
 - **Evaluation** (`evaluation/`): NumPy/SciPy metrics with mir_eval-compatible matching (no mir_eval dependency). Keys are `"<metric>.<key>"`; undefined values are `NaN` and aggregation skips them.
 - **API** (`api/`): FastAPI; renders are serialised by an `asyncio.Lock`. Schema changes require regenerating `tests/api/openapi_snapshot.json`.

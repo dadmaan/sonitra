@@ -78,6 +78,8 @@ This writes `regression_table_split-test.csv` in `--work-dir`, leaving the unfil
 
 `meta.year` is MAESTRO's contest year, from 2004 to 2018. It marks the recording batch, not when the music was written. `misc/MAESTRO_comp_year.txt` holds an AI-compiled year when each work was finished. Use it when your question is about the age of the music, not the recording date. It spans 1612-2006 across 60 composers. 27 of 60 composers have works in more than one composition year. For the other 33 it never changes within a composer, so the main result mostly compares composers. Your true sample is closer to 60 than 8932.
 
+The main MAESTRO numbers should come from the official test split, not the full corpus (see [Restricting to one dataset split](#restricting-to-one-dataset-split)). The composition-year study stays on the full corpus as a secondary analysis, with `split` included as a covariate (an extra model term), because the full corpus is the only sample with enough composers for that comparison to detect a real difference: 60, against 16 in the test split.
+
 Enrich the metadata first, then export against the enriched file. The export flags stay the same:
 
 ```bash
