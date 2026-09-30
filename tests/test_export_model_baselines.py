@@ -63,6 +63,7 @@ def _write_run(
     *,
     input_type: str | None = "midi",
     write_config: bool = True,
+    selection: dict | None = None,
 ) -> Path:
     run_dir = corpus_root / dataset / "benchmark" / run
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -72,10 +73,32 @@ def _write_run(
         render: dict = {}
         if input_type is not None:
             render["input_type"] = input_type
+        config: dict = {"render_pipeline": render}
+        if selection is not None:
+            config["io"] = {
+                "where": selection.get("where") or {},
+                "sample": selection.get("sample"),
+            }
         (run_dir / "config.yaml").write_text(
-            yaml.safe_dump({"render_pipeline": render}), encoding="utf-8"
+            yaml.safe_dump(config), encoding="utf-8"
         )
     return run_dir
+
+
+def _table_rows(block: str) -> list[list[str]]:
+    """Data rows of the rendered markdown table, header and separator dropped."""
+    rows: list[list[str]] = []
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and cells[0] == "Corpus":
+            continue
+        if cells and all(set(cell) <= {"-"} for cell in cells):
+            continue
+        rows.append(cells)
+    return rows
 
 
 def _write_doc(doc: Path, *, begin: str = BEGIN, end: str = END, extra_begin: bool = False) -> Path:
@@ -471,3 +494,318 @@ def test_refuses_doc_path_inside_corpus_root(
 
     assert _run(emb, corpus_root, doc) == 1
     assert doc.read_text(encoding="utf-8") == before
+
+
+# --- selection column ------------------------------------------------------
+
+
+def test_selection_label_from_config_yaml(
+    emb: ModuleType, corpus_root: Path, doc: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_run(corpus_root, "maestro-v3", "piano_only_MIDI", [_baseline_row()])
+    null_dir = _write_run(
+        corpus_root, "guitarset", "guitar_only_MIDI", [_baseline_row()]
+    )
+    (null_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {"render_pipeline": {"input_type": "midi"}, "io": {"where": {}, "sample": None}}
+        ),
+        encoding="utf-8",
+    )
+    _write_run(
+        corpus_root,
+        "bsed",
+        "piano_only_test",
+        [_baseline_row()],
+        selection={
+            "dataset": "bsed",
+            "metadata_csv": "meta.csv",
+            "where": {"split": ["test"]},
+        },
+    )
+    _write_run(
+        corpus_root,
+        "test",
+        "piano_only_smoke",
+        [_baseline_row(n=3)],
+        selection={"sample": {"n": 2}},
+    )
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    labels = {row[0]: row[2] for row in _table_rows(_block(doc))}
+    assert labels == {"maestro-v3": "all", "guitarset": "all", "bsed": "split=test"}
+    err = capsys.readouterr().err
+    assert (
+        "note: skipping test/piano_only_smoke: sampled selection (n=2) "
+        "is not a baseline"
+    ) in err
+
+
+def test_rows_with_different_selection_do_not_collide(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_all",
+        [_baseline_row(**{"note.onset_f1": 0.100})],
+    )
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_test",
+        [_baseline_row(**{"note.onset_f1": 0.900})],
+        selection={
+            "dataset": "maestro-v3",
+            "metadata_csv": "meta.csv",
+            "where": {"split": ["test"]},
+        },
+    )
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    block = _block(doc)
+    rows = _table_rows(block)
+    assert [row[2] for row in rows] == ["all", "split=test"]
+    assert "0.100" in block
+    assert "0.900" in block
+
+
+def test_split_rows_appear_alongside_all_row(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_split",
+        [_baseline_row(**{"note.onset_f1": 0.900})],
+        selection={
+            "dataset": "maestro-v3",
+            "metadata_csv": "meta.csv",
+            "where": {"split": ["test"]},
+        },
+    )
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_all",
+        [_baseline_row(**{"note.onset_f1": 0.100})],
+    )
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    block = _block(doc)
+    assert [row[2] for row in _table_rows(block)] == ["all", "split=test"]
+    assert (
+        "_Selection \"all\" is the full corpus. For a model trained on a "
+        "corpus's train split, its \"all\" row includes training files; compare "
+        "models on the held-out split rows (e.g. split=test)._"
+    ) in block
+
+
+def test_multiple_splits_all_listed(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_validation",
+        [_baseline_row()],
+        selection={
+            "dataset": "maestro-v3",
+            "metadata_csv": "meta.csv",
+            "where": {"split": ["validation"]},
+        },
+    )
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_test",
+        [_baseline_row()],
+        selection={
+            "dataset": "maestro-v3",
+            "metadata_csv": "meta.csv",
+            "where": {"split": ["test"]},
+        },
+    )
+    _write_run(corpus_root, "maestro-v3", "piano_only_all", [_baseline_row()])
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    assert [row[2] for row in _table_rows(_block(doc))] == [
+        "all",
+        "split=test",
+        "split=validation",
+    ]
+
+
+def test_sampled_runs_skipped_with_note(
+    emb: ModuleType, corpus_root: Path, doc: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_run(corpus_root, "maestro-v3", "piano_only_MIDI", [_baseline_row(n=1276)])
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_smoke",
+        [_baseline_row(n=2)],
+        selection={"sample": {"n": 2}},
+    )
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "piano_only_train_probe",
+        [_baseline_row(n=177)],
+        selection={
+            "dataset": "maestro-v3",
+            "metadata_csv": "meta.csv",
+            "where": {"split": ["train"]},
+            "sample": {"n": 177},
+        },
+    )
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    block = _block(doc)
+    rows = _table_rows(block)
+    assert len(rows) == 1
+    assert rows[0][2] == "all"
+    assert "| 1276 |" in block
+    err = capsys.readouterr().err
+    assert (
+        "note: skipping maestro-v3/piano_only_smoke: sampled selection (n=2) "
+        "is not a baseline"
+    ) in err
+    assert (
+        "note: skipping maestro-v3/piano_only_train_probe: sampled selection "
+        "(n=177) is not a baseline"
+    ) in err
+    assert "177 |" not in block
+
+
+def test_top_level_selection_in_run_config_is_ignored(
+    emb: ModuleType, corpus_root: Path, doc: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = _write_run(
+        corpus_root, "maestro-v3", "piano_only_old", [_baseline_row(n=2)]
+    )
+    config_path = run_dir / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["selection"] = {"where": {"split": ["test"]}, "sample": {"n": 2, "seed": 0}}
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    rows = _table_rows(_block(doc))
+    assert len(rows) == 1
+    assert rows[0][2] == "all"
+    assert "skipping" not in capsys.readouterr().err
+
+
+def test_no_note_without_split_rows(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    _write_run(corpus_root, "bsed", "piano_only_MIDI", [_baseline_row()])
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    block = _block(doc)
+    assert "| Selection |" in block
+    assert 'Selection "all"' not in block
+
+
+def test_dataset_without_selected_runs_unchanged(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    first = _write_run(corpus_root, "bsed", "piano_only_MIDI", [_baseline_row()])
+    second = _write_run(corpus_root, "guitarset", "guitar_only_MIDI", [_baseline_row()])
+    for run_dir in (first, second):
+        os.utime(run_dir / "summary.json", (1651795200, 1651795200))
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    expected = "\n".join(
+        [
+            "<!-- Generated by scripts/export_model_baselines.py - do not edit by hand -->",
+            "",
+            "| Corpus | Input | Selection | Model | n | onset F1 | +offset F1 | "
+            "+vel F1 | vel corr | frame F1 |",
+            "|" + "---|" * 10,
+            "| bsed | midi | all | basic_pitch | 100 | 0.500 | 0.400 | 0.300 | "
+            "0.200 | 0.600 |",
+            "| guitarset | midi | all | basic_pitch | 100 | 0.500 | 0.400 | 0.300 | "
+            "0.200 | 0.600 |",
+            "",
+            "_Baseline condition only, from 2 run(s) under `corpus/`; newest run "
+            "2022-05-06. Each run's own `summary.json` carries its host and timing._",
+        ]
+    )
+    assert _block(doc) == "\n" + expected + "\n"
+
+
+def test_same_selection_twice_still_errors(
+    emb: ModuleType, corpus_root: Path, doc: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_run(corpus_root, "maestro-v3", "piano_only_a", [_baseline_row()])
+    _write_run(corpus_root, "maestro-v3", "piano_only_b", [_baseline_row()])
+    before = doc.read_text(encoding="utf-8")
+
+    assert _run(emb, corpus_root, doc) == 1
+
+    assert doc.read_text(encoding="utf-8") == before
+    err = capsys.readouterr().err
+    assert "several allowlisted runs share a row key" in err
+    assert "maestro-v3/midi/basic_pitch/all" in err
+
+
+def test_check_mode_detects_selection_column_drift(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    run_dir = _write_run(corpus_root, "maestro-v3", "piano_only_MIDI", [_baseline_row()])
+    assert _run(emb, corpus_root, doc) == 0
+    written = doc.read_text(encoding="utf-8")
+
+    (run_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "render_pipeline": {"input_type": "midi"},
+                "io": {
+                    "metadata_csv": "meta.csv",
+                    "where": {"split": ["test"]},
+                    "sample": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _run(emb, corpus_root, doc, "--check") != 0
+    assert doc.read_text(encoding="utf-8") == written
+
+
+def test_default_prefixes_include_transcriber_tagged_piano_runs(
+    emb: ModuleType, corpus_root: Path, doc: Path
+) -> None:
+    split = {"where": {"split": ["test"]}, "sample": None}
+    _write_run(corpus_root, "maestro-v3", "piano_only_MIDI", [_baseline_row(n=1276)])
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "bp_piano_only_maestro_test_midi",
+        [_baseline_row(n=177)],
+        selection=split,
+    )
+    _write_run(
+        corpus_root,
+        "maestro-v3",
+        "tk_piano_only_maestro_test_midi",
+        [_baseline_row("transkun", n=177)],
+        selection=split,
+    )
+
+    assert _run(emb, corpus_root, doc) == 0
+
+    rows = _table_rows(_block(doc))
+    split_rows = [row for row in rows if "split=test" in row]
+    assert len(split_rows) == 2
+    assert all("177" in row for row in split_rows)
