@@ -2,22 +2,9 @@
 
 Thanks for contributing to Sonitra.
 
-## Commit Message Convention
+## Commit Messages
 
-Use this format:
-
-`<type>(<scope>): <short imperative summary>`
-
-- Example: `fix(evaluation): skip NaN-only rows in metric aggregation`
-- Keep subject lines concise (target <= 72 characters)
-- Use imperative verbs (`add`, `fix`, `refactor`, `update`)
-- Prefer one clear scope:
-  - `pipeline`, `synth`, `effects`, `separation`, `transcribe`, `evaluation`
-  - `benchmark`, `api`, `cli`, `config`, `scripts`, `tests`, `docs`, `ci`, `chore`
-  - If truly cross-cutting, use `core`
-- Recommended types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, `ci`, `revert`
-- Add a short body for non-trivial changes to explain why and any contract/config impact
-- Add `BREAKING CHANGE:` footer when behaviour or interfaces are not backward compatible
+Follow [`COMMIT_CONVENTION.md`](COMMIT_CONVENTION.md): `<type>(<scope>): <short imperative summary>`.
 
 ## Local Quality Workflow
 
@@ -56,8 +43,22 @@ Sonitra keeps a single changelog at `CHANGELOG.md` following the [Keep a Changel
 - Each entry should briefly explain the impact and any contract/config changes.
 - When a new version is released, the `[Unreleased]` heading is renamed to the version number and dated; an empty `[Unreleased]` section is added for the next cycle.
 
-## Branch and PR Expectations
+## Branches
 
-- Default integration target is `main`.
+Sonitra uses two long-lived branches:
+
+| Branch | Purpose | Stability |
+|--------|---------|-----------|
+| `main` | Stable code. Releases are cut from here. | Tests pass. Config schema and CLI are stable between releases. |
+| `dev`  | Integration branch for in-progress features and experimental changes. | May be unstable: interfaces, config keys and outputs can change without notice. |
+
+- Open feature and fix PRs against `dev`, not `main`.
+- `dev` is merged into `main` once its changes are complete, tested and documented in `CHANGELOG.md`.
+- Changelog entries accumulate under `[Unreleased]` on `dev` and reach `main` with the merge.
+- Do not depend on `dev` for reproducible benchmark results. Pin to `main` or a release tag.
+- Urgent fixes to a release may target `main` directly; they are then merged back into `dev`.
+
+## PR Expectations
+
 - Keep PRs reviewable by splitting broad work into logical commits (e.g. new backend vs. its tests vs. config schema change).
 - New config fields must be added to the `PipelineConfig` Pydantic tree with `extra="forbid"` maintained on the affected section.
