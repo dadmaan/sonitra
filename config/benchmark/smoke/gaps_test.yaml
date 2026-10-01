@@ -1,5 +1,7 @@
 # GAPS smoke-test: 4 conditions on real classical-guitar audio, benchmark-only.
-# Unfiltered corpus: all 404 recordings kept together (official split not applied).
+# Unfiltered corpus: all 404 files kept together (official split not applied).
+# To restrict it, set io.metadata_csv: gaps_metadata_with_splits.csv, io.join_column: midi_path
+# and io.where: {split: [test]}.
 # Run scale: 404 recordings × 4 conditions = 1,616 transcriptions over ~19 h of audio per pass,
 # median file 155s, longest 791s — --limit is not optional advice here.
 # Conditions: baseline, no_reverb, wet_level=0.0, wet_level=0.6

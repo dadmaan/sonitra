@@ -257,15 +257,15 @@ sonitra benchmark \
   --dataset <name>
 ```
 
-Smoke test on a small subset (use `--seed` for a reproducible sample):
+Smoke test on 2 files (the same 2 on every run; add `--seed N` to pick a different 2):
 
 ```bash
 sonitra benchmark \
   --config config/benchmark/old_recording/vintage_scenarios.yaml \
-  --dataset test --limit 2 --seed 0
+  --dataset test --limit 2
 ```
 
-Results land under `corpus/<name>/benchmark/` (`benchmark_results.jsonl`,
+Results land under `corpus/<name>/benchmark/vintage_scenarios/` (`benchmark_results.jsonl`,
 `summary.json`, per-condition transcriptions) — see the parent
 `config/benchmark/README.md` for the general output layout and the resume
 mechanism.

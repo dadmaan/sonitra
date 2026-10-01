@@ -93,7 +93,7 @@ sonitra benchmark \
   --dataset <your-dataset-name>
 ```
 
-**All files in sequence** (results go to `corpus/<dataset>/benchmark/`):
+**All files in sequence** (results go to `corpus/<dataset>/benchmark/<config stem>/`):
 
 ```bash
 for cfg in config/benchmark/sweeps/reverb_sweep.yaml \
@@ -169,13 +169,23 @@ when set, otherwise the last dotted segment of `sweep.parameter`. Examples:
 After `sonitra benchmark --config <file> --dataset <name>`:
 
 ```
-corpus/<name>/benchmark/
+corpus/<name>/benchmark/<config stem>/
+  config.yaml               # the resolved config this run used
+  logs/                     # captured worker and console output (runs with a progress display)
   benchmark_results.jsonl   # one JSON record per (condition × transcriber × file)
   summary.json              # aggregate means + degradation-vs-baseline table
   audio/<condition>/        # rendered WAV per condition
   stems/<condition>/        # separated stems per condition (only if separation.enabled)
   transcriptions/<condition>/<transcriber>/   # MIDI transcriptions per condition
 ```
+
+Sonitra picks the run folder from the first rule that applies:
+
+1. `--workdir`, if you pass it.
+2. `benchmark.benchmark_dir`, used exactly as written (the config stem is not added).
+3. `<io.corpus_root>/<io.dataset>/benchmark/<config stem>`, if a dataset is set in the
+   YAML or with `--dataset` (the flag wins over the YAML).
+4. Otherwise `./benchmark/<config stem>`.
 
 `benchmark_results.jsonl`, `summary.json`, and `transcriptions/<condition>/` are always
 kept. `audio/<condition>/` and `stems/<condition>/` are only kept when
@@ -195,9 +205,19 @@ corpora or configs with many conditions.
   ],
   "degradation": [
     {"condition": "wet_level=0.3", "note.f1": -0.03, ...}
-  ]
+  ],
+  "selection": {
+    "configured": false,
+    "unit": "reference_midi",
+    "counts": {"discovered": 40, "selected": 40},
+    "files_sha256": "..."
+  }
 }
 ```
+
+`selection` records which files the run used. A run with `io.where` set also records the
+filter, the metadata CSV and its hash, and per-value counts. See
+[File selection](../../docs/configuration.md#file-selection) for the keys.
 
 `NaN` values appear when a metric is undefined (e.g. correlation over too few matched
 notes). They are preserved as `null` in JSON and skipped during aggregation.
@@ -225,8 +245,16 @@ so a config edit that would change what a condition or record means (transcriber
 conditions/sweeps, synth/effects settings, evaluation parameters) raises an error
 instead of silently mixing results computed under two different configs. Leave
 `resume: false` (the default) to always start clean; with `resume: true`, note that
-`benchmark.max_workers`, `benchmark.save_audio`, and the various `max_workers` knobs
-are excluded from the fingerprint since they don't affect result semantics.
+`benchmark.resume`, `benchmark.max_workers`, `benchmark.save_audio`,
+`benchmark.benchmark_dir`, and the various `max_workers` knobs are left out of the
+fingerprint because they don't change the results. Since `benchmark_dir` is left out,
+you can move a run folder and resume it from the new place with `benchmark.benchmark_dir`
+or `--workdir`.
+
+The fingerprint does cover which files the run uses: `io.where`, `io.metadata_csv` and
+`io.join_column` when a filter is set, and `io.sample` when it is set (`--limit` and
+`--seed` write their values there). Resume also stops with an error if the metadata
+CSV was edited after the run started.
 
 ---
 
