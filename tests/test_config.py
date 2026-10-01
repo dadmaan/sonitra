@@ -280,7 +280,7 @@ def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
     checked = 0
     for path in runnable:
         cfg = load_config(path)
-        # TransKun-only presets (tk_*) have no basic_pitch block to check.
+        # Presets without a basic_pitch transcriber have nothing to check here.
         for basic_pitch in (
             t for t in cfg.transcription.transcribers if t.type == "basic_pitch"
         ):
@@ -349,11 +349,17 @@ def test_source_yaml_documents_io_filter_keys_and_no_selection_block() -> None:
 _PAPER_EXPERIMENTS = (
     Path(__file__).resolve().parent.parent / "config" / "benchmark" / "paper_experiments"
 )
-# bp_* run basic_pitch, as piano_only.yaml does; tk_* are the TransKun twins.
-_MAESTRO_TEST_AUDIO = _PAPER_EXPERIMENTS / "bp_piano_only_maestro_test_audio.yaml"
-_MAESTRO_TEST_MIDI = _PAPER_EXPERIMENTS / "bp_piano_only_maestro_test_midi.yaml"
-_TK_MAESTRO_TEST_AUDIO = _PAPER_EXPERIMENTS / "tk_piano_only_maestro_test_audio.yaml"
-_TK_MAESTRO_TEST_MIDI = _PAPER_EXPERIMENTS / "tk_piano_only_maestro_test_midi.yaml"
+# The MAESTRO split presets run basic_pitch (CPU) and TransKun (CUDA) together.
+_MAESTRO_TEST_AUDIO = _PAPER_EXPERIMENTS / "piano_only_maestro_test_audio.yaml"
+_MAESTRO_TEST_MIDI = _PAPER_EXPERIMENTS / "piano_only_maestro_test_midi.yaml"
+_MAESTRO_TRAIN_PROBE_AUDIO = _PAPER_EXPERIMENTS / "piano_only_maestro_train_probe_audio.yaml"
+_MAESTRO_TRAIN_PROBE_MIDI = _PAPER_EXPERIMENTS / "piano_only_maestro_train_probe_midi.yaml"
+_MAESTRO_SPLIT_PRESETS = (
+    _MAESTRO_TEST_AUDIO,
+    _MAESTRO_TEST_MIDI,
+    _MAESTRO_TRAIN_PROBE_AUDIO,
+    _MAESTRO_TRAIN_PROBE_MIDI,
+)
 
 
 def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -387,58 +393,52 @@ def test_maestro_test_presets_select_test_split() -> None:
         assert cfg.render_pipeline.input_type == expected_input, path
 
 
-def test_maestro_test_presets_differ_from_piano_only_only_by_io_filter() -> None:
-    base = _flatten(
-        load_config(_PAPER_EXPERIMENTS / "piano_only.yaml").model_dump(mode="json")
-    )
-
-    audio = _flatten(load_config(_MAESTRO_TEST_AUDIO).model_dump(mode="json"))
-    audio_diff = _differing_keys(base, audio)
-    assert {
-        key for key in audio_diff if not key.startswith("io.where.")
-    } == {"io.dataset", "io.metadata_csv"}
-    assert "io.where.split" in audio_diff
-
-    midi = _flatten(load_config(_MAESTRO_TEST_MIDI).model_dump(mode="json"))
-    midi_diff = _differing_keys(base, midi)
-    assert {
-        key for key in midi_diff if not key.startswith("io.where.")
-    } == {"io.dataset", "io.metadata_csv", "render_pipeline.input_type"}
-    assert "io.where.split" in midi_diff
+def test_maestro_split_presets_run_basic_pitch_on_cpu_and_transkun_on_cuda() -> None:
+    for path in _MAESTRO_SPLIT_PRESETS:
+        cfg = load_config(path)
+        transcribers = cfg.transcription.transcribers
+        assert [t.type for t in transcribers] == ["basic_pitch", "transkun"], path
+        basic_pitch, transkun = transcribers
+        assert basic_pitch.device == "cpu", path
+        assert basic_pitch.batch_size == 16, path
+        assert transkun.device == "cuda", path
+        assert cfg.transcription.numeric_mode == "strict", path
+        # TensorFlow reserves most GPU memory unless growth is on, which would
+        # starve TransKun in the same process even with basic_pitch on CPU.
+        assert cfg.transcription.gpu_memory_growth is True, path
+        assert cfg.benchmark.benchmark_dir is None, path
 
 
-def test_transkun_maestro_test_presets_differ_from_basic_pitch_twin_only_by_transcriber() -> None:
-    pairs = (
-        (_TK_MAESTRO_TEST_AUDIO, _MAESTRO_TEST_AUDIO),
-        (_TK_MAESTRO_TEST_MIDI, _MAESTRO_TEST_MIDI),
-    )
-    for tk_path, bp_path in pairs:
-        tk_cfg = load_config(tk_path)
-        assert [t.type for t in tk_cfg.transcription.transcribers] == ["transkun"], tk_path
-        assert tk_cfg.io.where == {"split": ["test"]}, tk_path
-        assert tk_cfg.io.sample is None, tk_path
-        assert tk_cfg.benchmark.benchmark_dir is None, tk_path
-        diff = _differing_keys(
-            _flatten(load_config(bp_path).model_dump(mode="json")),
-            _flatten(tk_cfg.model_dump(mode="json")),
-        )
-        # Worker count may differ: TransKun and basic_pitch load different
-        # models, so GPU memory per worker differs.
-        assert diff - {"benchmark.max_workers"} == {"transcription.transcribers"}, tk_path
-
-
-_TK_MAESTRO_TRAIN_PROBE_AUDIO = (
-    _PAPER_EXPERIMENTS / "tk_piano_only_maestro_train_probe_audio.yaml"
-)
-_TK_MAESTRO_TRAIN_PROBE_MIDI = (
-    _PAPER_EXPERIMENTS / "tk_piano_only_maestro_train_probe_midi.yaml"
-)
-
-
-def test_transkun_train_probes_sample_train_split() -> None:
+def test_maestro_test_presets_differ_from_piano_only_only_by_filter_and_transcription() -> None:
+    base_cfg = load_config(_PAPER_EXPERIMENTS / "piano_only.yaml")
+    base = _flatten(base_cfg.model_dump(mode="json"))
+    shared = {
+        "io.dataset",
+        "io.metadata_csv",
+        "transcription.numeric_mode",
+        "transcription.gpu_memory_growth",
+        "transcription.transcribers",
+    }
     cases = (
-        (_TK_MAESTRO_TRAIN_PROBE_AUDIO, InputType.AUDIO),
-        (_TK_MAESTRO_TRAIN_PROBE_MIDI, InputType.MIDI),
+        # The audio preset also keeps already-written render files on rerun.
+        (_MAESTRO_TEST_AUDIO, {"render_pipeline.resume"}),
+        (_MAESTRO_TEST_MIDI, {"render_pipeline.input_type", "benchmark.max_workers"}),
+    )
+    for path, extra in cases:
+        cfg = load_config(path)
+        diff = _differing_keys(base, _flatten(cfg.model_dump(mode="json")))
+        assert {key for key in diff if not key.startswith("io.where.")} == shared | extra, path
+        assert "io.where.split" in diff, path
+        # basic_pitch keeps piano_only's settings apart from the device.
+        base_bp = base_cfg.transcription.transcribers[0].model_dump(mode="json")
+        bp = cfg.transcription.transcribers[0].model_dump(mode="json")
+        assert {k for k in base_bp if base_bp[k] != bp[k]} == {"device"}, path
+
+
+def test_maestro_train_probes_sample_train_split() -> None:
+    cases = (
+        (_MAESTRO_TRAIN_PROBE_AUDIO, InputType.AUDIO),
+        (_MAESTRO_TRAIN_PROBE_MIDI, InputType.MIDI),
     )
     for path, expected_input in cases:
         cfg = load_config(path)
@@ -450,13 +450,12 @@ def test_transkun_train_probes_sample_train_split() -> None:
         assert cfg.io.sample.n == 177, path
         assert cfg.io.sample.seed == 0, path
         assert cfg.render_pipeline.input_type == expected_input, path
-        assert [t.type for t in cfg.transcription.transcribers] == ["transkun"], path
 
 
-def test_transkun_train_probes_differ_from_test_twin_only_by_io_filter() -> None:
+def test_maestro_train_probes_differ_from_test_twin_only_by_io_filter() -> None:
     pairs = (
-        (_TK_MAESTRO_TRAIN_PROBE_AUDIO, _TK_MAESTRO_TEST_AUDIO),
-        (_TK_MAESTRO_TRAIN_PROBE_MIDI, _TK_MAESTRO_TEST_MIDI),
+        (_MAESTRO_TRAIN_PROBE_AUDIO, _MAESTRO_TEST_AUDIO),
+        (_MAESTRO_TRAIN_PROBE_MIDI, _MAESTRO_TEST_MIDI),
     )
     for probe_path, twin_path in pairs:
         probe = _flatten(load_config(probe_path).model_dump(mode="json"))

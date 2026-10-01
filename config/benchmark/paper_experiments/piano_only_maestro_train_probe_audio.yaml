@@ -1,17 +1,17 @@
-# MAESTRO-v3 official test split, MIDI input.
-# Run: sonitra benchmark --config config/benchmark/paper_experiments/piano_only_maestro_test_midi.yaml --dataset maestro-v3
-# These models were trained on MAESTRO's train split, so this preset scores the held-out test split.
+# MAESTRO-v3 official train split probe, audio input: basic_pitch on CPU and TransKun on CUDA in one run.
+# Run: sonitra benchmark --config config/benchmark/paper_experiments/piano_only_maestro_train_probe_audio.yaml
+# Both models were trained on this split; the 177-file sample matches the test split's size so the runs compare directly.
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
-  input_type: midi
+  input_type: audio
   bpm: 120
   sample_rate: 44100
   bit_depth: 24
   channels: 2
   duration_padding_sec: 2.0
   overwrite: true
-  resume: false
+  resume: true
   max_workers: 8
   log_level: INFO
 
@@ -24,8 +24,10 @@ io:
   metadata_csv: maestro-v3.0.0.csv
   join_column: midi_filename
   where:
-    split: [test]
-  sample: null
+    split: [train]
+  sample:
+    n: 177
+    seed: 0
 
 dawdreamer:
   block_size: 512
@@ -92,10 +94,15 @@ separation:
 transcription:
   output_dir: transcriptions
   max_workers: 1
+  numeric_mode: strict # deterministic kernels, TF32 off
+  # TensorFlow otherwise reserves most GPU memory, even with basic_pitch on CPU,
+  # and starves TransKun in the same process.
+  gpu_memory_growth: true
   transcribers:
     - type: basic_pitch
       enabled: true
-      device: GPU:0
+      # CPU batches windows (batch_size); results match GPU under strict numerics.
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -104,6 +111,15 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+      batch_size: 16
+    - type: transkun
+      enabled: true
+      # Raises rather than silently falling back when CUDA is absent.
+      device: cuda
+      segment_size_sec: null
+      segment_hop_sec: null
+      weights_path: null
+      conf_path: null
 
 evaluation:
   note_metrics:

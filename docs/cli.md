@@ -33,7 +33,7 @@ sonitra benchmark --config config/benchmark/old_recording/vintage_scenarios.yaml
 
 `scripts/run_mixed_effects_analysis.py --work-dir DIR [--input FILE] [--output-dir DIR] [--ref-level NAME] [--rscript PATH] [--covariate COL] [--covariate-transform NAME] [--covariate-divisor N] [--interact-with-condition] [--dry-run]` fits a beta mixed-effects model to that table. A mixed-effects model is a form of statistics that separates the effect of each test condition from the natural difficulty of each piece. Results go in `regression_analysis/` next to the table. You need R with `glmmTMB` installed (see [Statistical analysis](statistical-analysis.md)).
 
-`scripts/export_model_baselines.py [--corpus-root DIR] [--doc FILE] [--runs PREFIXES] [--check | --stdout]` rewrites the measured-baselines table in `docs/model-cards.md` from benchmark runs under `corpus/` (default `--corpus-root`). `--runs` picks which run-name prefixes count, comma-separated, default `piano_only,guitar_only,bp_piano_only,tk_piano_only`. `--check` verifies the table is current without writing; `--stdout` prints the table instead of writing it. The two are mutually exclusive.
+`scripts/export_model_baselines.py [--corpus-root DIR] [--doc FILE] [--runs PREFIXES] [--check | --stdout]` rewrites the measured-baselines table in `docs/model-cards.md` from benchmark runs under `corpus/` (default `--corpus-root`). `--runs` picks which run-name prefixes count, comma-separated, default `piano_only,guitar_only`; a run with several transcribers gives one row each. `--check` verifies the table is current without writing; `--stdout` prints the table instead of writing it. The two are mutually exclusive.
 
 ---
 [← Back to README](../README.md)

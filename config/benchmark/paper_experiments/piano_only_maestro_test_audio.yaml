@@ -1,17 +1,17 @@
-# MAESTRO-v3 official train split probe, MIDI input.
-# Run: sonitra benchmark --config config/benchmark/paper_experiments/tk_piano_only_maestro_train_probe_midi.yaml --dataset maestro-v3
-# TransKun was trained on this split; the 177-file sample matches the test split's size so the runs compare directly.
+# MAESTRO-v3 official test split, audio input: basic_pitch on CPU and TransKun on CUDA in one run.
+# Run: sonitra benchmark --config config/benchmark/paper_experiments/piano_only_maestro_test_audio.yaml
+# These models were trained on MAESTRO's train split, so this preset scores the held-out test split.
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
-  input_type: midi
+  input_type: audio
   bpm: 120
   sample_rate: 44100
   bit_depth: 24
   channels: 2
   duration_padding_sec: 2.0
   overwrite: true
-  resume: false
+  resume: true
   max_workers: 8
   log_level: INFO
 
@@ -24,10 +24,7 @@ io:
   metadata_csv: maestro-v3.0.0.csv
   join_column: midi_filename
   where:
-    split: [train]
-  sample:
-    n: 177
-    seed: 0
+    split: [test]
 
 dawdreamer:
   block_size: 512
@@ -94,11 +91,27 @@ separation:
 transcription:
   output_dir: transcriptions
   max_workers: 1
+  numeric_mode: strict # deterministic kernels, TF32 off
+  # TensorFlow otherwise reserves most GPU memory, even with basic_pitch on CPU,
+  # and starves TransKun in the same process.
+  gpu_memory_growth: true
   transcribers:
+    - type: basic_pitch
+      enabled: true
+      # CPU batches windows (batch_size); results match GPU under strict numerics.
+      device: cpu
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+      melodia_trick: true
+      multiple_pitch_bends: false
+      save_raw_outputs: false
+      batch_size: 16
     - type: transkun
       enabled: true
-      # CUDA preset: assumes a CUDA host. Raises rather than silently falling
-      # back when CUDA is absent. Also accepts `GPU:0` / `cuda:0`.
+      # Raises rather than silently falling back when CUDA is absent.
       device: cuda
       segment_size_sec: null
       segment_hop_sec: null
@@ -254,4 +267,4 @@ benchmark:
         pedalboard.effects.2.enabled: true
         pedalboard.effects.2.drive_db: 35
   sweeps: []
-  max_workers: 1
+  max_workers: 2

@@ -272,30 +272,36 @@ processing.
 
 ### MAESTRO test-split presets
 
-`paper_experiments/` holds four presets. Each one copies the piano-only study and adds a
-filter that keeps only MAESTRO's official test split:
+`paper_experiments/` holds four MAESTRO presets. Each one copies the piano-only study and
+runs both transcribers in one run: Basic Pitch on the CPU (`device: cpu`,
+`batch_size: 16`) and TransKun on CUDA (`device: cuda`). One run gives one row per
+transcriber in the model-cards table.
 
-- `bp_piano_only_maestro_test_audio.yaml` and `bp_piano_only_maestro_test_midi.yaml` run
-  Basic Pitch.
-- `tk_piano_only_maestro_test_audio.yaml` and `tk_piano_only_maestro_test_midi.yaml` run
-  TransKun.
+- `piano_only_maestro_test_audio.yaml` and `piano_only_maestro_test_midi.yaml` add a
+  filter that keeps only MAESTRO's official test split (`where: {split: [test]}`, read
+  from `maestro-v3`'s metadata), so a run scores each model on performances outside its
+  training data.
+- `piano_only_maestro_train_probe_audio.yaml` and
+  `piano_only_maestro_train_probe_midi.yaml` match their test twins except that the filter
+  keeps the official train split and a sample of 177 files with seed 0. The sample has the
+  same number of files as the test split, so the two runs compare directly.
 
-Each transcriber has two versions, one for audio input and one for MIDI input: the
-`_audio` preset reads the real recordings, and the `_midi` preset renders the reference
-MIDI. The filter reads `maestro-v3`'s metadata and keeps only the files in the official
-test split, so a run scores the model on performances outside the training data.
+The `_audio` presets read the real recordings, and the `_midi` presets render the
+reference MIDI. All four set `transcription.numeric_mode: strict` (deterministic kernels,
+TF32 off) and `transcription.gpu_memory_growth: true`. Without memory growth, TensorFlow
+reserves most of the GPU even with Basic Pitch on the CPU, which can leave TransKun in the
+same process without memory. Under strict numerics, Basic Pitch gave the same scores on
+the CPU as on the GPU in the measured comparison, and on the CPU the batch size moves note
+probabilities by under 1e-6, far below the 0.5 note threshold (see
+[Reproducibility](../../docs/reproducibility.md)). `benchmark.max_workers` is 2 for audio
+and 1 for MIDI, because each worker loads its own TransKun model onto the GPU.
 
-Two presets probe the other side of the same split:
-`tk_piano_only_maestro_train_probe_audio.yaml` and
-`tk_piano_only_maestro_train_probe_midi.yaml`. They are copies of the TransKun test
-presets with a filter that keeps MAESTRO's official train split and a sample of 177
-files with seed 0. The sample has the same number of files as the test split, so the
-probe and test runs compare directly. Comparing a probe run against its test-split twin
-measures TransKun's train-versus-test gap in that input mode (the difference between its
-train-split and test-split scores). In audio mode Sonitra plays the real MAESTRO
-recordings, which overlap TransKun's training audio; in MIDI mode Sonitra renders its own
-audio, so only the note sequences overlap its training data. The export that builds the
-model-cards table skips both, because a sampled run is not a baseline.
+Comparing a probe run against its test twin measures each model's train-versus-test gap
+(the difference between its train-split and test-split scores) in that input mode. In
+audio mode Sonitra plays the real MAESTRO recordings, which overlap the models' training
+audio; in MIDI mode Sonitra renders its own audio, so only the note sequences overlap.
+The export that builds the model-cards table skips both probes, because a sampled run is
+not a baseline.
 
 ---
 

@@ -783,7 +783,7 @@ def test_check_mode_detects_selection_column_drift(
     assert doc.read_text(encoding="utf-8") == written
 
 
-def test_default_prefixes_include_transcriber_tagged_piano_runs(
+def test_combined_split_run_gives_one_row_per_transcriber(
     emb: ModuleType, corpus_root: Path, doc: Path
 ) -> None:
     split = {"where": {"split": ["test"]}, "sample": None}
@@ -791,15 +791,17 @@ def test_default_prefixes_include_transcriber_tagged_piano_runs(
     _write_run(
         corpus_root,
         "maestro-v3",
-        "bp_piano_only_maestro_test_midi",
-        [_baseline_row(n=177)],
+        "piano_only_maestro_test_midi",
+        [_baseline_row(n=177), _baseline_row("transkun", n=177)],
         selection=split,
     )
+    # Runs tagged with a transcriber prefix are no longer default baselines.
     _write_run(
         corpus_root,
         "maestro-v3",
-        "tk_piano_only_maestro_test_midi",
+        "tk_piano_only_maestro_test_audio",
         [_baseline_row("transkun", n=177)],
+        input_type="audio",
         selection=split,
     )
 
@@ -809,3 +811,5 @@ def test_default_prefixes_include_transcriber_tagged_piano_runs(
     split_rows = [row for row in rows if "split=test" in row]
     assert len(split_rows) == 2
     assert all("177" in row for row in split_rows)
+    assert {cell for row in split_rows for cell in row} >= {"basic_pitch", "transkun"}
+    assert not any("audio" in row for row in rows)
