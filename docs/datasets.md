@@ -53,7 +53,7 @@ You must convert the answers before use. The downloader puts nothing in `midi/` 
 python scripts/download_datasets.py guitarset-full   # JAMS → corpus/guitarset/annotations/, both audios → corpus/guitarset/recordings/
 python scripts/guitarset_jams_to_midi.py --dry-run  # inspect counts first
 python scripts/guitarset_jams_to_midi.py            # annotations/ → midi/ (360 unsuffixed stems) + metadata/guitarset.csv
-sonitra benchmark --config config/benchmark/guitarset_test.yaml --dataset guitarset --limit 2
+sonitra benchmark --config config/benchmark/smoke/guitarset_test.yaml --dataset guitarset --limit 2
 ```
 
 `scripts/guitarset_jams_to_midi.py` (standard library plus `sonitra.midi_writer`) merges the six per-string `note_midi` blocks into one note list per clip. It rounds pitch with `pitch = round(value)` and sets loudness to a fixed velocity of 100, because GuitarSet has no loudness data. It writes a General MIDI `program_change` on channel 0 ahead of the first note (`--program`, default 24, Acoustic Guitar (nylon); `--no-program` omits it): without one, a GM player such as the Windows GS Wavetable synth falls back to program 0 and the reference plays back as piano. The program affects playback timbre only — `parse_midi` reads notes and ignores it, so no metric changes. It writes `corpus/guitarset/midi/*.mid` plus `corpus/guitarset/metadata/guitarset.csv`, one row per clip with join column `midi_filename`. It also writes a `<csv>.provenance.json` log file. `annotations/` is a new corpus target folder, the same one `ROADMAP.md` plans for BSED's alignment files.
@@ -73,7 +73,7 @@ Two keys share `corpus/gaps/`, the same pattern as the `maestro-v3-*` and `e-gmd
 ```bash
 python scripts/download_datasets.py gaps-midi   # ~3 MB: MIDI + metadata into corpus/gaps/
 python scripts/download_datasets.py gaps-full   # ~15.3 GB: adds recordings, MusicXML, syncpoints
-sonitra benchmark --config config/benchmark/gaps_test.yaml --dataset gaps --limit 2
+sonitra benchmark --config config/benchmark/smoke/gaps_test.yaml --dataset gaps --limit 2
 ```
 
 The download key and the dataset name differ. `--dataset gaps` stays the same whichever key you fetched, because both keys fill `corpus/gaps/`.
@@ -113,7 +113,7 @@ python scripts/download_datasets.py musicnet-full              # ~10.6 GB: adds 
 python scripts/musicnet_labels_to_midi.py --dry-run            # inspect counts first
 python scripts/musicnet_labels_to_midi.py                      # annotations/labels/ → midi/<id>.mid + metadata/musicnet.csv
 python scripts/musicnet_labels_to_midi.py --replace-score-midi # if midi/ still holds the score tree, moves it to annotations/score_midi/
-sonitra benchmark --config config/benchmark/musicnet_test.yaml --dataset musicnet --limit 2
+sonitra benchmark --config config/benchmark/smoke/musicnet_test.yaml --dataset musicnet --limit 2
 ```
 
 If `--output-midi` contains any MIDI not at top-level `<id>.mid` (the `musicnet-midi` score tree), the converter refuses with exit 1; pass `--replace-score-midi` to move or delete it (identical copies are deleted, differing copies are refused rather than lost, and empty dirs are removed). After `musicnet-full` is present, `musicnet-midi` reads as present via `superseded_by`, so a later downloader run does not restore the score tree. The converter also accepts a v0.3.0 layout (`--labels corpus/musicnet/metadata`) — the `*_labels` parent match is layout-agnostic. `ticks_per_beat = sample_rate // 2` (22 050 at 44.1 kHz, fits MIDI's signed 16-bit division) so 1 tick = 1 sample at 120 BPM; `parse_midi` round-trip is sample-exact (`round(t * sr) == sample`, not float equality).

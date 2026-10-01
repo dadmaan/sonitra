@@ -301,10 +301,18 @@ def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
         assert key in source_text
 
 
+def test_benchmark_configs_live_in_subfolders() -> None:
+    # Benchmark studies are grouped by kind; only the README sits at the top level.
+    config_dir = Path(__file__).parent.parent / "config" / "benchmark"
+    assert sorted(p.name for p in config_dir.glob("*.yaml")) == []
+    for group in ("smoke", "sweeps", "transkun", "methods"):
+        assert sorted(config_dir.glob(f"{group}/*.yaml")), group
+
+
 def test_transkun_baseline_presets_pin_cpu_and_cuda() -> None:
     config_dir = Path(__file__).parent.parent / "config" / "benchmark"
-    cpu_cfg = load_config(config_dir / "transkun_baseline.yaml")
-    gpu_cfg = load_config(config_dir / "transkun_baseline_gpu.yaml")
+    cpu_cfg = load_config(config_dir / "transkun" / "transkun_baseline.yaml")
+    gpu_cfg = load_config(config_dir / "transkun" / "transkun_baseline_gpu.yaml")
 
     def _devices(cfg: PipelineConfig) -> dict[str, str]:
         return {t.type: t.device for t in cfg.transcription.transcribers}

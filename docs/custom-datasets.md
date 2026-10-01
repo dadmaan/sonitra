@@ -24,10 +24,10 @@ MIDI files end in `.mid` or `.midi`; audio files end in `.wav`, `.flac`, or `.mp
 
 ## If you have only MIDI files
 
-This is the default mode, so an existing benchmark config such as `config/benchmark/benchmark_test.yaml` works as it is. Try it on two files first:
+This is the default mode, so an existing benchmark config such as `config/benchmark/smoke/benchmark_test.yaml` works as it is. Try it on two files first:
 
 ```bash
-sonitra benchmark --config config/benchmark/benchmark_test.yaml --dataset my-dataset --limit 2
+sonitra benchmark --config config/benchmark/smoke/benchmark_test.yaml --dataset my-dataset --limit 2
 ```
 
 Sonitra renders audio from your MIDI, transcribes it, and scores the result against the same MIDI. Results go to `corpus/my-dataset/benchmark/<config-name>/`, here `benchmark_test/`, whenever the run has a dataset: `--dataset` on the command line, or `io.dataset` in the config. Drop `--limit` for the full run.

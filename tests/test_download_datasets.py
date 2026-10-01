@@ -159,11 +159,11 @@ def test_next_steps_registry_field(dd: ModuleType) -> None:
     for key in ["guitarset-mic", "guitarset-mix", "guitarset-full"]:
         assert "next_steps" in dd.DATASETS[key]
         assert "scripts/guitarset_jams_to_midi.py --dry-run" in dd.DATASETS[key]["next_steps"]
-        assert "config/benchmark/guitarset_test.yaml" in dd.DATASETS[key]["next_steps"]
+        assert "config/benchmark/smoke/guitarset_test.yaml" in dd.DATASETS[key]["next_steps"]
     # MusicNet converter
     assert "next_steps" in dd.DATASETS["musicnet-full"]
     assert "scripts/musicnet_labels_to_midi.py" in dd.DATASETS["musicnet-full"]["next_steps"]
-    assert "config/benchmark/musicnet_test.yaml" in dd.DATASETS["musicnet-full"]["next_steps"]
+    assert "config/benchmark/smoke/musicnet_test.yaml" in dd.DATASETS["musicnet-full"]["next_steps"]
     # Also check helper still returns same
     assert dd._guitarset_next_steps() == dd.DATASETS["guitarset-mic"]["next_steps"]
 

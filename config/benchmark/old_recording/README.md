@@ -143,7 +143,7 @@ attributed to "how hard vintage shellac recordings are."
 ## 4. Confound disclosure: post-effects normalisation
 
 `normalisation.pre_effects: true` is set in this config (departing from
-`config/benchmark/effects_combinations.yaml`, which leaves it `false`) so that
+`config/benchmark/sweeps/effects_combinations.yaml`, which leaves it `false`) so that
 `Distortion` drive and `Compressor` threshold behave deterministically instead
 of depending on whatever level FluidSynth happened to produce for a given
 file. This is a correctness fix, not the confound.

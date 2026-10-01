@@ -1,10 +1,9 @@
-# Publication baseline (CPU): head-to-head basic_pitch vs transkun on the same render.
-# Strict determinism (transcription.numeric_mode: strict, gpu_memory_growth: false).
-# basic_pitch runs with explicit batch_size 16; batch 16 is fully live on CPU.
-# Runs on any host. For the CUDA twin, see transkun_baseline_gpu_batch8_strict.yaml.
+# Distortion sweep: measure signal distortion / clipping-like degradation.
+# Conditions: baseline, mild_overdrive, heavy_distortion, drive={0.0..30.0} (6)
+# Total: 9 conditions
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/transkun_baseline_batch16_strict.yaml --dataset test --limit 2 --seed 123
+#   sonitra benchmark --config config/benchmark/sweeps/distortion_sweep.yaml --dataset <name>
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -16,6 +15,10 @@ render_pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
+  # Render parallelism. Only honoured when synth_backend is
+  # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
+  # regardless (see pipeline.py), and dawdreamer is forced to 1 by
+  # validate_worker_constraint() because JUCE is not concurrency-safe.
   max_workers: 1
   log_level: INFO
 
@@ -49,13 +52,8 @@ pedalboard:
       attack_ms: 5.0
       release_ms: 100.0
       enabled: true
-    - type: Reverb
-      room_size: 0.4
-      damping: 0.5
-      wet_level: 0.15
-      dry_level: 0.85
-      width: 1.0
-      freeze_mode: false
+    - type: Distortion
+      drive_db: 0.0
       enabled: true
 
 normalisation:
@@ -86,14 +84,11 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 1
-  numeric_mode: strict
-  gpu_memory_growth: false
+  max_workers: 6
   transcribers:
     - type: basic_pitch
       enabled: true
-      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
-      device: cpu
+      device: GPU:0
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -102,15 +97,6 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
-      batch_size: 16
-    - type: transkun
-      enabled: true
-      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
-      device: cpu
-      segment_size_sec: null
-      segment_hop_sec: null
-      weights_path: null
-      conf_path: null
 
 evaluation:
   note_metrics:
@@ -130,14 +116,23 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 1
+  max_workers: 4
 
 benchmark:
-  results_path: benchmark_results_batch16_strict.jsonl
+  results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
   save_audio: false
   resume: false
-  conditions: []
-  sweeps: []
+  conditions:
+    - name: mild_overdrive
+      overrides:
+        pedalboard.effects.1.drive_db: 6.0
+    - name: heavy_distortion
+      overrides:
+        pedalboard.effects.1.drive_db: 24.0
+  sweeps:
+    - name: drive
+      parameter: pedalboard.effects.1.drive_db
+      values: [0.0, 6.0, 12.0, 18.0, 24.0, 30.0]
   max_workers: 1

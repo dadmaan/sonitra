@@ -1,9 +1,10 @@
-# TransKun baseline (GPU): head-to-head basic_pitch vs transkun on the same render.
-# Requires a CUDA host. Both backends raise rather than silently using CPU when
-# no GPU is present. CPU twin: transkun_baseline.yaml.
+# Publication baseline (CPU): head-to-head basic_pitch vs transkun on the same render.
+# Strict determinism (transcription.numeric_mode: strict, gpu_memory_growth: false).
+# basic_pitch runs with explicit batch_size 16; batch 16 is fully live on CPU.
+# Runs on any host. For the CUDA twin, see transkun_baseline_gpu_batch8_strict.yaml.
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/transkun_baseline_gpu.yaml --dataset maestro-v3 --limit 1
+#   sonitra benchmark --config config/benchmark/transkun/transkun_baseline_batch16_strict.yaml --dataset test --limit 2 --seed 123
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -86,12 +87,13 @@ separation:
 transcription:
   output_dir: transcriptions
   max_workers: 1
+  numeric_mode: strict
+  gpu_memory_growth: false
   transcribers:
     - type: basic_pitch
       enabled: true
-      # Unified spelling: `cuda` is translated to TensorFlow's `GPU:0`
-      # (see src/sonitra/transcribe/devices.py). Needs a CUDA host.
-      device: cuda
+      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -100,11 +102,11 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+      batch_size: 16
     - type: transkun
       enabled: true
-      # CUDA preset: assumes a CUDA host. Raises rather than silently falling
-      # back when CUDA is absent. Also accepts `GPU:0` / `cuda:0`.
-      device: cuda
+      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
+      device: cpu
       segment_size_sec: null
       segment_hop_sec: null
       weights_path: null
@@ -131,7 +133,7 @@ evaluation:
   max_workers: 1
 
 benchmark:
-  results_path: benchmark_results.jsonl
+  results_path: benchmark_results_batch16_strict.jsonl
   include_baseline: true
   baseline_name: baseline
   save_audio: false

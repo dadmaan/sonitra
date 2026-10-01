@@ -1,17 +1,27 @@
-# Compression sweep: measure dynamic-range compression impact on transcription.
-# Reverb is held mild and constant so compression is the independent variable.
-# Conditions: baseline, heavy_compression, ratio={1.0..32.0} (6), threshold={-6.0..-36.0} (5)
-# Total: 13 conditions
+# MusicNet smoke-test: 4 conditions, benchmark-only.
+# Works on score MIDI (musicnet-midi) or aligned MIDI converted from the
+# per-note label CSVs. Score MIDI is at score time (not aligned to the
+# recordings); the aligned ground truth is built by converting the label CSVs
+# with scripts/musicnet_labels_to_midi.py — for audio-input runs you must run
+# the converter first (it writes midi/<id>.mid and metadata/musicnet.csv).
+# 7 of 330 upstream score MIDI files are corrupt and fail to parse; they are
+# skipped with a warning.
+# Conditions: baseline, no_reverb, wet_level=0.0, wet_level=0.6
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/compression_sweep.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/smoke/musicnet_test.yaml --dataset musicnet --limit 2
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
   input_type: midi
   bpm: 120
+  # Documentary only — inert in audio mode: AudioSource returns the file's own
+  # rate and the chain runs at that rate (see pipeline.py). Set to match the corpus.
   sample_rate: 44100
-  bit_depth: 24
+  # MusicNet recordings are 32-bit float 44.1 kHz mono; write_audio honours the
+  # rendered rate (pipeline.py), so the bit depth here controls only Sonitra's
+  # own renders (MIDI-input mode).
+  bit_depth: 16
   channels: 2
   duration_padding_sec: 2.0
   overwrite: true
@@ -20,7 +30,7 @@ render_pipeline:
   # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
   # regardless (see pipeline.py), and dawdreamer is forced to 1 by
   # validate_worker_constraint() because JUCE is not concurrency-safe.
-  max_workers: 1
+  max_workers: 8
   log_level: INFO
 
 io:
@@ -28,7 +38,7 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
-  dataset: null
+  dataset: musicnet
 
 dawdreamer:
   block_size: 512
@@ -54,10 +64,10 @@ pedalboard:
       release_ms: 100.0
       enabled: true
     - type: Reverb
-      room_size: 0.3
+      room_size: 0.4
       damping: 0.5
-      wet_level: 0.1
-      dry_level: 0.9
+      wet_level: 0.15
+      dry_level: 0.85
       width: 1.0
       freeze_mode: false
       enabled: true
@@ -90,10 +100,16 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
+  # Thread pool over audio files, sharing one TensorFlow process (and so one
+  # GPU context) — safe to raise. Honoured by `sonitra transcribe`;
+  # `sonitra benchmark` parallelises via benchmark.max_workers instead.
+  max_workers: 1
   transcribers:
     - type: basic_pitch
       enabled: true
+      # TensorFlow device string for inference. Requires the GPU image
+      # (docker compose --profile gpu) or a bare-metal `[gpu]` install;
+      # set to "cpu" to force CPU inference.
       device: GPU:0
       onset_threshold: 0.5
       frame_threshold: 0.3
@@ -118,29 +134,37 @@ evaluation:
     enabled: true
     harmony_window_sec: 2.0
   dtw:
+    # Deviation from benchmark_test.yaml (enabled: true): DTW is already
+    # skipped in audio mode (runner.py:757), so true would log a warning
+    # every run with no dtw.* data.
     enabled: false
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
   # Thread pool over per-file metric computation (NumPy/SciPy, CPU-bound).
   # Honoured by `sonitra evaluate`.
-  max_workers: 4
+  max_workers: 1
 
 benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
+  # A rendered pass over MusicNet is ~ few GB per condition; four conditions
+  # would retain ~ tens of GB. runner.py:687 reclaims each condition's audio
+  # when this is false, capping peak at one condition.
   save_audio: false
   resume: false
   conditions:
-    - name: heavy_compression
+    - name: no_reverb
       overrides:
-        pedalboard.effects.0.ratio: 16.0
-        pedalboard.effects.0.threshold_db: -30.0
+        pedalboard.effects.1.enabled: false
   sweeps:
-    - parameter: pedalboard.effects.0.ratio
-      values: [1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
-    - name: threshold
-      parameter: pedalboard.effects.0.threshold_db
-      values: [-6.0, -12.0, -18.0, -24.0, -36.0]
+    - parameter: pedalboard.effects.1.wet_level
+      values: [0.0, 0.6]
+  # Process pool over conditions — the only knob that parallelises
+  # `sonitra benchmark`. Kept at 1 because each worker is a separate process
+  # with its own TensorFlow runtime, and TF pre-allocates almost all GPU
+  # memory on init (~22 GB of 24 GB in the first process), so a second worker
+  # is left with nothing. Raising this requires enabling GPU memory growth
+  # first, or setting transcription device back to "cpu".
   max_workers: 1

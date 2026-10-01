@@ -1,23 +1,9 @@
-# Numerics check: does `transcription.numeric_mode` change results, and by how much?
-#
-# This measures the APPARATUS, not the models. It establishes Sonitra's
-# measurement error bars (determinism + TF32 precision), so its output is a
-# methods artifact and must not land in the same table as model scores.
-#
-# A transcription-only sweep re-renders identical audio per condition, which
-# is pure waste; for routine use prefer the equivalence harness and keep this
-# preset for the occasional published methods run.
-#
-# NOTE: `transcription.numeric_mode` + `gpu_memory_growth` are process-global:
-# runner builds transcribers once from base config (runner.py:271,506), so
-# per-condition overrides are recorded in BenchmarkRecord.overrides but NOT
-# applied — one file with warn/strict conditions would falsely show ~0 delta.
-# Run once per mode with top-level `transcription.numeric_mode: "off"/warn/strict`
-# (3 separate runs). Keep "off" quoted (YAML 1.1 bool trap).
+# TransKun baseline: head-to-head basic_pitch vs transkun on the same render.
+# Minimal runnable benchmark; use `--dataset test --limit 2 --seed 123` for smoke runs.
+# CPU preset: runs on any host. For the CUDA twin, see transkun_baseline_gpu.yaml.
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/numerics_check.yaml --dataset test --limit 2 --seed 123
-#   # then repeat with numeric_mode: warn / strict edited at top level
+#   sonitra benchmark --config config/benchmark/transkun/transkun_baseline.yaml --dataset test --limit 2 --seed 123
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -100,11 +86,10 @@ separation:
 transcription:
   output_dir: transcriptions
   max_workers: 1
-  numeric_mode: "off" # baseline; rerun with warn/strict at top level (see header)
-  gpu_memory_growth: false
   transcribers:
     - type: basic_pitch
       enabled: true
+      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
       device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
@@ -116,6 +101,7 @@ transcription:
       save_raw_outputs: false
     - type: transkun
       enabled: true
+      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
       device: cpu
       segment_size_sec: null
       segment_hop_sec: null

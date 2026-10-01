@@ -138,7 +138,7 @@ through the model at once.
 `transcription.numeric_mode` (`off`, `warn` or `strict`; default `off`) is the
 remedy. It is process-global, it stays in the run fingerprint, and each backend
 records it in its per-row metadata. `warn` falls back without failing; `strict`
-raises. `config/benchmark/numerics_check.yaml` is a transcription-only methods
+raises. `config/benchmark/methods/numerics_check.yaml` is a transcription-only methods
 preset for measuring the effect, not a model comparison.
 See [docs/reproducibility.md](docs/reproducibility.md).
 

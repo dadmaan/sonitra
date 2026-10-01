@@ -6,6 +6,22 @@ section that drives the `sonitra benchmark` command.
 
 ---
 
+## Layout
+
+Configs live in subfolders by purpose. Put a new study in the matching folder.
+
+- `smoke/`: quick end-to-end checks, one per corpus.
+- `sweeps/`: one or a few `pedalboard` parameters stepped across a grid of values.
+- `transkun/`: Basic Pitch vs TransKun baselines on CPU and CUDA, including the batched
+  strict variants.
+- `methods/`: checks of the benchmark setup itself (numeric settings, synthesis engine),
+  not of the models.
+- `paper_experiments/`: the paper's degradation studies and the MAESTRO test-split and train-probe presets.
+- `old_recording/`, `telephone_channel/`, `rotary_speaker/`, `venue_acoustics/`: grounded
+  scenario studies, each with its own `README.md`.
+
+---
+
 ## What are benchmark configs?
 
 A benchmark config is a full `PipelineConfig` file — it specifies synthesis backend,
@@ -23,7 +39,7 @@ condition).
 
 ## How they differ from top-level `config/examples/*.yaml` presets
 
-| Preset (`config/examples/*.yaml`) | Benchmark config (`config/benchmark/*.yaml`) |
+| Preset (`config/examples/*.yaml`) | Benchmark config (`config/benchmark/**/*.yaml`) |
 |---|---|
 | One fixed pipeline run | Many experimental conditions from one file |
 | Run via `sonitra render` / `sonitra transcribe` / `sonitra evaluate` | Run via `sonitra benchmark` |
@@ -35,8 +51,8 @@ condition).
 
 This directory now holds two different kinds of study:
 
-- **Abstract single-axis sweeps** — `reverb_sweep.yaml`, `compression_sweep.yaml`,
-  `distortion_sweep.yaml`, `effects_combinations.yaml`. Each varies one (or a small
+- **Abstract single-axis sweeps** — `sweeps/reverb_sweep.yaml`, `sweeps/compression_sweep.yaml`,
+  `sweeps/distortion_sweep.yaml`, `sweeps/effects_combinations.yaml`. Each varies one (or a small
   combination of) `pedalboard` parameter(s) across an arbitrary, evenly-spaced grid of
   values. They answer "how does degrading this parameter change transcription quality,"
   not "what does a real-world condition sound like."
@@ -64,7 +80,7 @@ pre-XOR-post switch, not an additive one) that apply to every result it produces
 
 ```bash
 sonitra benchmark \
-  --config config/benchmark/benchmark_test.yaml \
+  --config config/benchmark/smoke/benchmark_test.yaml \
   --dataset test \
   --limit 2
 ```
@@ -73,17 +89,17 @@ sonitra benchmark \
 
 ```bash
 sonitra benchmark \
-  --config config/benchmark/reverb_sweep.yaml \
+  --config config/benchmark/sweeps/reverb_sweep.yaml \
   --dataset <your-dataset-name>
 ```
 
 **All files in sequence** (results go to `corpus/<dataset>/benchmark/`):
 
 ```bash
-for cfg in config/benchmark/reverb_sweep.yaml \
-            config/benchmark/compression_sweep.yaml \
-            config/benchmark/distortion_sweep.yaml \
-            config/benchmark/effects_combinations.yaml \
+for cfg in config/benchmark/sweeps/reverb_sweep.yaml \
+            config/benchmark/sweeps/compression_sweep.yaml \
+            config/benchmark/sweeps/distortion_sweep.yaml \
+            config/benchmark/sweeps/effects_combinations.yaml \
             config/benchmark/old_recording/vintage_scenarios.yaml \
             config/benchmark/telephone_channel/telephone_scenarios.yaml \
             config/benchmark/venue_acoustics/venue_scenarios.yaml \
@@ -218,17 +234,20 @@ are excluded from the fingerprint since they don't affect result semantics.
 
 | Config file | Acoustic factor | Conditions |
 |---|---|---|
-| `transkun_baseline.yaml` | TransKun vs Basic Pitch baseline (CPU) | 1 |
-| `transkun_baseline_gpu.yaml` | TransKun vs Basic Pitch baseline (CUDA; requires GPU host) | 1 |
-| `benchmark_test.yaml` | Smoke test (reverb) | 4 |
-| `guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
-| `gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |
-| `musicnet_test.yaml` | Smoke test (classical, MIDI-input; score or aligned MIDI, 44.1 kHz) | 4 |
-| `reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
-| `compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
-| `distortion_sweep.yaml` | Signal distortion (drive) | 9 |
-| `effects_combinations.yaml` | Combinations of effects | 7 |
-| `synthesis_backends.yaml` | Synthesis engine (FluidSynth, Faust, Vital) | 3 |
+| `smoke/benchmark_test.yaml` | Smoke test (reverb) | 4 |
+| `smoke/guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
+| `smoke/gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |
+| `smoke/musicnet_test.yaml` | Smoke test (classical, MIDI-input; score or aligned MIDI, 44.1 kHz) | 4 |
+| `sweeps/reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
+| `sweeps/compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
+| `sweeps/distortion_sweep.yaml` | Signal distortion (drive) | 9 |
+| `sweeps/effects_combinations.yaml` | Combinations of effects | 7 |
+| `transkun/transkun_baseline.yaml` | TransKun vs Basic Pitch baseline (CPU) | 1 |
+| `transkun/transkun_baseline_gpu.yaml` | TransKun vs Basic Pitch baseline (CUDA; requires GPU host) | 1 |
+| `transkun/transkun_baseline_batch16_strict.yaml` | TransKun vs Basic Pitch baseline (CPU; strict numerics, Basic Pitch batch size 16) | 1 |
+| `transkun/transkun_baseline_gpu_batch8_strict.yaml` | TransKun vs Basic Pitch baseline (CUDA; strict numerics, Basic Pitch batch size 8; requires GPU host) | 1 |
+| `methods/synthesis_backends.yaml` | Synthesis engine (FluidSynth, Faust, Vital) | 3 |
+| `methods/numerics_check.yaml` | Numeric settings (`transcription.numeric_mode`): measurement error bars, not model scores | 1 |
 | `old_recording/vintage_scenarios.yaml` | Vintage recording chains (bandwidth + dynamics) | 7 |
 | `telephone_channel/telephone_scenarios.yaml` | Voice-channel bandwidth + AGC (VoIP wideband, PSTN narrowband, intercom) | 4 |
 | `venue_acoustics/venue_scenarios.yaml` | Room acoustics (RT60-calibrated: studio, recital hall, symphony hall, cathedral) | 5 |
@@ -282,17 +301,19 @@ model-cards table skips both, because a sampled run is not a baseline.
 
 ## Adding a new benchmark config
 
-1. Copy one of the existing files as a starting point.
+1. Copy one of the existing files as a starting point, and save the copy in the
+   folder that matches its purpose (`smoke/`, `sweeps/`, `transkun/`, `methods/`, or a
+   scenario folder).
 2. Edit the `pedalboard.effects` chain to match the effect you want to vary.
 3. Add conditions and/or sweeps to the `benchmark:` block.
 4. Validate it loads cleanly:
    ```python
    from sonitra.config import load_config
    from sonitra.benchmark.conditions import expand_conditions
-   cfg = load_config("config/benchmark/my_new_benchmark.yaml")
+   cfg = load_config("config/benchmark/sweeps/my_new_benchmark.yaml")
    print(expand_conditions(cfg.benchmark))
    ```
 5. Run the smoke test to confirm end-to-end execution:
    ```bash
-   sonitra benchmark --config config/benchmark/my_new_benchmark.yaml --dataset test --limit 2
+   sonitra benchmark --config config/benchmark/sweeps/my_new_benchmark.yaml --dataset test --limit 2
    ```

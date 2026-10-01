@@ -1,22 +1,15 @@
-# GAPS smoke-test: 4 conditions on real classical-guitar audio, benchmark-only.
-# Unfiltered corpus: all 404 recordings kept together (official split not applied).
-# Run scale: 404 recordings × 4 conditions = 1,616 transcriptions over ~19 h of audio per pass,
-# median file 155s, longest 791s — --limit is not optional advice here.
+# Benchmark smoke-test: 4 conditions, designed to complete quickly on a small corpus.
 # Conditions: baseline, no_reverb, wet_level=0.0, wet_level=0.6
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/gaps_test.yaml --dataset gaps --limit 2
+#   sonitra benchmark --config config/benchmark/smoke/benchmark_test.yaml --dataset test --limit 2
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
   input_type: midi
   bpm: 120
-  # Documentary only — inert in audio mode: AudioSource returns the file's own
-  # rate and the chain runs at that rate (see pipeline.py). Set to match the corpus.
-  sample_rate: 48000
-  # GAPS audio is 16-bit; write_audio honours this (pipeline.py:139-140),
-  # so 24 would inflate every output 1.5x for no recoverable information.
-  bit_depth: 16
+  sample_rate: 44100
+  bit_depth: 24
   channels: 2
   duration_padding_sec: 2.0
   overwrite: true
@@ -33,7 +26,7 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
-  dataset: gaps
+  dataset: null
 
 dawdreamer:
   block_size: 512
@@ -129,10 +122,7 @@ evaluation:
     enabled: true
     harmony_window_sec: 2.0
   dtw:
-    # Deviation from benchmark_test.yaml (enabled: true): DTW is already
-    # skipped in audio mode (runner.py:757), so true would log a warning
-    # every run with no dtw.* data.
-    enabled: false
+    enabled: true
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
@@ -144,9 +134,6 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  # A rendered pass over GAPS is ~16 GB per condition; four conditions would
-  # retain ~64 GB. runner.py:687 reclaims each condition's audio when this is
-  # false, capping peak at one condition.
   save_audio: false
   resume: false
   conditions:

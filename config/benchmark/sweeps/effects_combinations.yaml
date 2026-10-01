@@ -5,7 +5,7 @@
 # Conditions (named only, no sweeps): 7 total
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/effects_combinations.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/sweeps/effects_combinations.yaml --dataset <name>
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard

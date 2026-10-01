@@ -1,15 +1,11 @@
-# MusicNet smoke-test: 4 conditions, benchmark-only.
-# Works on score MIDI (musicnet-midi) or aligned MIDI converted from the
-# per-note label CSVs. Score MIDI is at score time (not aligned to the
-# recordings); the aligned ground truth is built by converting the label CSVs
-# with scripts/musicnet_labels_to_midi.py — for audio-input runs you must run
-# the converter first (it writes midi/<id>.mid and metadata/musicnet.csv).
-# 7 of 330 upstream score MIDI files are corrupt and fail to parse; they are
-# skipped with a warning.
+# GAPS smoke-test: 4 conditions on real classical-guitar audio, benchmark-only.
+# Unfiltered corpus: all 404 recordings kept together (official split not applied).
+# Run scale: 404 recordings × 4 conditions = 1,616 transcriptions over ~19 h of audio per pass,
+# median file 155s, longest 791s — --limit is not optional advice here.
 # Conditions: baseline, no_reverb, wet_level=0.0, wet_level=0.6
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/musicnet_test.yaml --dataset musicnet --limit 2
+#   sonitra benchmark --config config/benchmark/smoke/gaps_test.yaml --dataset gaps --limit 2
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -17,10 +13,9 @@ render_pipeline:
   bpm: 120
   # Documentary only — inert in audio mode: AudioSource returns the file's own
   # rate and the chain runs at that rate (see pipeline.py). Set to match the corpus.
-  sample_rate: 44100
-  # MusicNet recordings are 32-bit float 44.1 kHz mono; write_audio honours the
-  # rendered rate (pipeline.py), so the bit depth here controls only Sonitra's
-  # own renders (MIDI-input mode).
+  sample_rate: 48000
+  # GAPS audio is 16-bit; write_audio honours this (pipeline.py:139-140),
+  # so 24 would inflate every output 1.5x for no recoverable information.
   bit_depth: 16
   channels: 2
   duration_padding_sec: 2.0
@@ -38,7 +33,7 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
-  dataset: musicnet
+  dataset: gaps
 
 dawdreamer:
   block_size: 512
@@ -149,9 +144,9 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  # A rendered pass over MusicNet is ~ few GB per condition; four conditions
-  # would retain ~ tens of GB. runner.py:687 reclaims each condition's audio
-  # when this is false, capping peak at one condition.
+  # A rendered pass over GAPS is ~16 GB per condition; four conditions would
+  # retain ~64 GB. runner.py:687 reclaims each condition's audio when this is
+  # false, capping peak at one condition.
   save_audio: false
   resume: false
   conditions:

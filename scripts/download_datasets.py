@@ -78,7 +78,7 @@ _GUITARSET_NEXT_STEPS = (
     "Next steps for GuitarSet (JAMS ground truth needs one conversion):\n"
     "  python scripts/guitarset_jams_to_midi.py --dry-run\n"
     "  python scripts/guitarset_jams_to_midi.py\n"
-    "  sonitra benchmark --config config/benchmark/guitarset_test.yaml "
+    "  sonitra benchmark --config config/benchmark/smoke/guitarset_test.yaml "
     "--dataset guitarset --limit 2"
 )
 
@@ -86,7 +86,7 @@ _MUSICNET_NEXT_STEPS = (
     "Next steps for MusicNet (label CSVs need one conversion):\n"
     "  python scripts/musicnet_labels_to_midi.py --dry-run\n"
     "  python scripts/musicnet_labels_to_midi.py\n"
-    "  sonitra benchmark --config config/benchmark/musicnet_test.yaml "
+    "  sonitra benchmark --config config/benchmark/smoke/musicnet_test.yaml "
     "--dataset musicnet --limit 2"
 )
 

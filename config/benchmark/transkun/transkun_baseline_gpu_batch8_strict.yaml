@@ -1,9 +1,16 @@
-# TransKun baseline: head-to-head basic_pitch vs transkun on the same render.
-# Minimal runnable benchmark; use `--dataset test --limit 2 --seed 123` for smoke runs.
-# CPU preset: runs on any host. For the CUDA twin, see transkun_baseline_gpu.yaml.
+# Publication baseline (GPU): head-to-head basic_pitch vs transkun on the same render.
+# Strict determinism (transcription.numeric_mode: strict, gpu_memory_growth: false).
+# basic_pitch runs with batch_size 8 on CUDA; transkun entry unchanged.
+# Requires a CUDA host. Both backends raise rather than silently using CPU when
+# no GPU is present. CPU twin: transkun_baseline_batch16_strict.yaml (strict, batch 16).
+#
+# NOTE: batch sizes above 1 on GPU take effect only once the batch-1 guard in
+# basic_pitch transcribe is lifted behind config; until then the effective GPU
+# batch stays 1 — verify the effective batch in per-row run metadata before
+# publishing timings.
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/transkun_baseline.yaml --dataset test --limit 2 --seed 123
+#   sonitra benchmark --config config/benchmark/transkun/transkun_baseline_gpu_batch8_strict.yaml --dataset maestro-v3 --limit 1
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -86,11 +93,14 @@ separation:
 transcription:
   output_dir: transcriptions
   max_workers: 1
+  numeric_mode: strict
+  gpu_memory_growth: false
   transcribers:
     - type: basic_pitch
       enabled: true
-      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
-      device: cpu
+      # Unified spelling: `cuda` is translated to TensorFlow's `GPU:0`
+      # (see src/sonitra/transcribe/devices.py). Needs a CUDA host.
+      device: cuda
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -99,10 +109,12 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+      batch_size: 8
     - type: transkun
       enabled: true
-      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
-      device: cpu
+      # CUDA preset: assumes a CUDA host. Raises rather than silently falling
+      # back when CUDA is absent. Also accepts `GPU:0` / `cuda:0`.
+      device: cuda
       segment_size_sec: null
       segment_hop_sec: null
       weights_path: null
@@ -129,7 +141,7 @@ evaluation:
   max_workers: 1
 
 benchmark:
-  results_path: benchmark_results.jsonl
+  results_path: benchmark_results_batch8_strict.jsonl
   include_baseline: true
   baseline_name: baseline
   save_audio: false

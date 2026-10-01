@@ -1,9 +1,23 @@
-# Distortion sweep: measure signal distortion / clipping-like degradation.
-# Conditions: baseline, mild_overdrive, heavy_distortion, drive={0.0..30.0} (6)
-# Total: 9 conditions
+# Numerics check: does `transcription.numeric_mode` change results, and by how much?
+#
+# This measures the APPARATUS, not the models. It establishes Sonitra's
+# measurement error bars (determinism + TF32 precision), so its output is a
+# methods artifact and must not land in the same table as model scores.
+#
+# A transcription-only sweep re-renders identical audio per condition, which
+# is pure waste; for routine use prefer the equivalence harness and keep this
+# preset for the occasional published methods run.
+#
+# NOTE: `transcription.numeric_mode` + `gpu_memory_growth` are process-global:
+# runner builds transcribers once from base config (runner.py:271,506), so
+# per-condition overrides are recorded in BenchmarkRecord.overrides but NOT
+# applied — one file with warn/strict conditions would falsely show ~0 delta.
+# Run once per mode with top-level `transcription.numeric_mode: "off"/warn/strict`
+# (3 separate runs). Keep "off" quoted (YAML 1.1 bool trap).
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/distortion_sweep.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/methods/numerics_check.yaml --dataset test --limit 2 --seed 123
+#   # then repeat with numeric_mode: warn / strict edited at top level
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -15,10 +29,6 @@ render_pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
-  # Render parallelism. Only honoured when synth_backend is
-  # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
-  # regardless (see pipeline.py), and dawdreamer is forced to 1 by
-  # validate_worker_constraint() because JUCE is not concurrency-safe.
   max_workers: 1
   log_level: INFO
 
@@ -52,8 +62,13 @@ pedalboard:
       attack_ms: 5.0
       release_ms: 100.0
       enabled: true
-    - type: Distortion
-      drive_db: 0.0
+    - type: Reverb
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.15
+      dry_level: 0.85
+      width: 1.0
+      freeze_mode: false
       enabled: true
 
 normalisation:
@@ -84,11 +99,13 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
+  max_workers: 1
+  numeric_mode: "off" # baseline; rerun with warn/strict at top level (see header)
+  gpu_memory_growth: false
   transcribers:
     - type: basic_pitch
       enabled: true
-      device: GPU:0
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -97,6 +114,13 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+    - type: transkun
+      enabled: true
+      device: cpu
+      segment_size_sec: null
+      segment_hop_sec: null
+      weights_path: null
+      conf_path: null
 
 evaluation:
   note_metrics:
@@ -116,7 +140,7 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 4
+  max_workers: 1
 
 benchmark:
   results_path: benchmark_results.jsonl
@@ -124,15 +148,6 @@ benchmark:
   baseline_name: baseline
   save_audio: false
   resume: false
-  conditions:
-    - name: mild_overdrive
-      overrides:
-        pedalboard.effects.1.drive_db: 6.0
-    - name: heavy_distortion
-      overrides:
-        pedalboard.effects.1.drive_db: 24.0
-  sweeps:
-    - name: drive
-      parameter: pedalboard.effects.1.drive_db
-      values: [0.0, 6.0, 12.0, 18.0, 24.0, 30.0]
+  conditions: []
+  sweeps: []
   max_workers: 1
