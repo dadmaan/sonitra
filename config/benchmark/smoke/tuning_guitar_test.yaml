@@ -1,0 +1,210 @@
+# GuitarSet tuning smoke-test: real guitar audio through the guitar effect
+# chain, benchmark-only — the run exists to prove the tuning offset transcribes
+# cleanly, not to feed a render preset.
+# Copied from paper_experiments/guitar_only.yaml. The chain is kept whole (two
+# leading tuning slots, then gain, cabinet, delay and room) so the smoke run
+# exercises the same chain the paper conditions use, but every condition
+# switches off everything except the offset under test.
+# Conditions: baseline, tune=-32c, tune=40c, tune=rt40c
+# The selection keys are left at their defaults: GuitarSet recordings run under
+# a minute, so a run is bounded by --limit rather than by a sample or filter.
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/smoke/tuning_guitar_test.yaml --dataset guitarset --limit 2
+render_pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  input_type: audio
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 8
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: guitarset
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    # The tuning offset leads the chain: what is out of tune is the instrument
+    # itself, so the shift belongs ahead of the amp, cabinet and room. Slot 1
+    # exists only for the round-trip control, which shifts +c then -c to expose
+    # the processing artifacts at the largest offset. Both slots ship disabled,
+    # and a zero-cent slot is a passthrough, so a chain that declares either one
+    # without switching it on leaves the signal unprocessed.
+    - type: TuningOffset      # index 0 — the instrument's own tuning offset
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    - type: TuningOffset      # index 1 — return leg, used by the round trip only
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    # Declaration order == signal chain order. Do not reorder: every condition
+    # below addresses the leading tuning slots and the effects by index.
+    - type: Distortion        # index 2 — amp preamp gain stage
+      drive_db: 25.0
+      enabled: false
+    - type: HighpassFilter    # index 3 — cabinet LF roll-off, 6 dB/oct @ 75 Hz
+      cutoff_frequency_hz: 75.0
+      enabled: false
+    - type: LowpassFilter     # index 4 — cabinet HF pole 1 of 2
+      cutoff_frequency_hz: 7200.0
+      enabled: false
+    - type: LowpassFilter     # index 5 — cabinet HF pole 2 of 2 (-3 dB ~5.0 kHz)
+      cutoff_frequency_hz: 7200.0
+      enabled: false
+    - type: Delay             # index 6 — slapback, 1/16 note at 120 BPM
+      delay_seconds: 0.125
+      feedback: 0.30
+      mix: 0.40
+      enabled: false
+    - type: Reverb            # index 7 — room ambience (params match piano study)
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.0
+      dry_level: 1.0
+      width: 1.0
+      freeze_mode: false
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: rms
+  target_db: -18.0
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  max_workers: 1
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      device: cpu
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null   # deliberately unclamped — see section 3
+      maximum_frequency_hz: null
+      melodia_trick: true
+      multiple_pitch_bends: false
+      save_raw_outputs: false
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+  max_workers: 4
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  include_baseline: true
+  baseline_name: baseline
+  save_audio: false
+  resume: true
+  conditions:
+    - name: tune=-32c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -32.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=rt40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+  sweeps: []
+  max_workers: 2

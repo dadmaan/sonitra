@@ -541,6 +541,12 @@ _PAPER_LAYOUT = {
     ),
 }
 
+_SMOKE_DIR = Path(__file__).resolve().parent.parent / "config" / "benchmark" / "smoke"
+_TUNING_SMOKE_CONFIGS = (
+    (_SMOKE_DIR / "tuning_piano_test.yaml", "maestro-v3", _PIANO_CONDITION_PREFIX, "piano_only.yaml"),
+    (_SMOKE_DIR / "tuning_guitar_test.yaml", "guitarset", _GUITAR_CONDITION_PREFIX, "guitar_only.yaml"),
+)
+
 
 def _tuning_names(prefix: str, levels: tuple[tuple[str, float, float | None], ...]) -> list[str]:
     return [f"{prefix}tune={suffix}" for suffix, _, _ in levels]
@@ -619,3 +625,25 @@ def test_paper_configs_condition_names_unique_and_slug_stable() -> None:
                 continue
             # A "+" would not survive Condition.slug, so offsets stay signed.
             assert Condition(condition.name).slug == condition.name, (name, condition.name)
+
+
+def test_tuning_smoke_configs() -> None:
+    for path, dataset, prefix, twin_name in _TUNING_SMOKE_CONFIGS:
+        cfg = load_config(path)
+        twin = load_config(_PAPER_EXPERIMENTS / twin_name)
+        assert cfg.io.dataset == dataset, path
+        assert cfg.render_pipeline.input_type == InputType.AUDIO, path
+        assert [type(e) for e in cfg.pedalboard.effects] == [type(e) for e in twin.pedalboard.effects], path
+        assert [c.name for c in cfg.benchmark.conditions] == [
+            f"{prefix}tune={suffix}" for suffix in ("-32c", "40c", "rt40c")
+        ], path
+        assert cfg.benchmark.include_baseline is True, path
+        assert [t.type for t in cfg.transcription.transcribers] == ["basic_pitch"], path
+        assert cfg.transcription.transcribers[0].device == "cpu", path
+        if dataset == "maestro-v3":
+            # The test split is capped by an explicit sample, so the smoke run
+            # cannot draw one of MAESTRO's tens-of-minutes recordings.
+            assert cfg.io.where == {"split": ["test"]}, path
+            assert cfg.io.sample is not None, path
+            assert (cfg.io.sample.n, cfg.io.sample.seed) == (2, 0), path
+        assert expand_conditions(cfg.benchmark)[0].name == cfg.benchmark.baseline_name, path
