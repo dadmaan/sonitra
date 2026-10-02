@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from sonitra.benchmark.conditions import Condition, expand_conditions
 from sonitra.config import (
     ConfigError,
     EffectsChain,
@@ -15,6 +16,14 @@ from sonitra.config import (
     default_config_path,
     load_config,
 )
+from sonitra.effects import (
+    ChorusConfig,
+    DelayConfig,
+    DistortionConfig,
+    ReverbConfig,
+    TuningOffsetConfig,
+)
+from sonitra.effects.builtin_effects import HighpassFilterConfig, LowpassFilterConfig
 from sonitra.pipeline import run_pipeline
 
 
@@ -466,3 +475,147 @@ def test_maestro_train_probes_differ_from_test_twin_only_by_io_filter() -> None:
             "io.sample.n",
             "io.sample.seed",
         }, probe_path
+
+
+# ── Global tuning offset ─────────────────────────────────────────────
+# The offset leads the chain in two adjacent slots: the instrument's own
+# offset, then the return leg the round-trip control alone switches on. Both
+# ship disabled so a preset that declares neither stays unprocessed.
+
+_TUNING_KNOB_DEFAULTS = {
+    "high_quality": True,
+    "transient_mode": "crisp",
+    "transient_detector": "compound",
+    "retain_phase_continuity": True,
+    "use_long_fft_window": None,
+    "use_time_domain_smoothing": False,
+    "preserve_formants": True,
+}
+
+# (name suffix, instrument-slot cents, return-slot cents or None when off)
+_TUNING_LEVELS = (
+    ("-32c", -32.0, None),
+    ("-20c", -20.0, None),
+    ("-8c", -8.0, None),
+    ("8c", 8.0, None),
+    ("12c", 12.0, None),
+    ("20c", 20.0, None),
+    ("-40c", -40.0, None),
+    ("40c", 40.0, None),
+    ("rt40c", 40.0, -40.0),
+)
+
+_PIANO_CONDITION_PREFIX = "inst=piano_"
+_GUITAR_CONDITION_PREFIX = ""
+
+_PAPER_PIANO_CONFIGS = (
+    "piano_only.yaml",
+    "piano_only_maestro_test_audio.yaml",
+    "piano_only_maestro_test_midi.yaml",
+    "piano_only_maestro_train_probe_audio.yaml",
+    "piano_only_maestro_train_probe_midi.yaml",
+)
+_PAPER_GUITAR_CONFIGS = ("guitar_only.yaml",)
+_PAPER_CONFIGS = _PAPER_PIANO_CONFIGS + _PAPER_GUITAR_CONFIGS
+
+_PAPER_LAYOUT = {
+    **{
+        name: (
+            TuningOffsetConfig,
+            TuningOffsetConfig,
+            ReverbConfig,
+            ChorusConfig,
+            DistortionConfig,
+        )
+        for name in _PAPER_PIANO_CONFIGS
+    },
+    "guitar_only.yaml": (
+        TuningOffsetConfig,
+        TuningOffsetConfig,
+        DistortionConfig,
+        HighpassFilterConfig,
+        LowpassFilterConfig,
+        LowpassFilterConfig,
+        DelayConfig,
+        ReverbConfig,
+    ),
+}
+
+
+def _tuning_names(prefix: str, levels: tuple[tuple[str, float, float | None], ...]) -> list[str]:
+    return [f"{prefix}tune={suffix}" for suffix, _, _ in levels]
+
+
+def test_paper_configs_lead_with_two_disabled_tuning_slots() -> None:
+    for name in _PAPER_CONFIGS:
+        effects = load_config(_PAPER_EXPERIMENTS / name).pedalboard.effects
+        for index in (0, 1):
+            slot = effects[index]
+            assert isinstance(slot, TuningOffsetConfig), (name, index)
+            assert slot.enabled is False, (name, index)
+            assert slot.cents == 0.0, (name, index)
+            knobs = slot.model_dump(mode="json")
+            del knobs["type"], knobs["enabled"], knobs["cents"]
+            assert knobs == _TUNING_KNOB_DEFAULTS, (name, index, knobs)
+
+
+def test_paper_configs_slot_layout() -> None:
+    for name, expected in _PAPER_LAYOUT.items():
+        effects = load_config(_PAPER_EXPERIMENTS / name).pedalboard.effects
+        assert tuple(type(effect) for effect in effects) == expected, name
+
+
+def test_paper_configs_tuning_conditions() -> None:
+    prefixes = {name: _PIANO_CONDITION_PREFIX for name in _PAPER_PIANO_CONFIGS}
+    prefixes.update({name: _GUITAR_CONDITION_PREFIX for name in _PAPER_GUITAR_CONFIGS})
+    for name, prefix in prefixes.items():
+        cfg = load_config(_PAPER_EXPERIMENTS / name)
+        declared = [condition.name for condition in cfg.benchmark.conditions]
+        assert declared[-9:] == _tuning_names(prefix, _TUNING_LEVELS), name
+        assert not [n for n in declared[:-9] if "tune=" in n], name
+
+        slot_count = len(cfg.pedalboard.effects)
+        enabled_paths = {f"pedalboard.effects.{i}.enabled" for i in range(slot_count)}
+        overrides = {c.name: c.overrides for c in cfg.benchmark.conditions}
+        for suffix, instrument_cents, return_cents in _TUNING_LEVELS:
+            tuning = overrides[f"{prefix}tune={suffix}"]
+            assert tuning["pedalboard.effects.0.enabled"] is True, (name, suffix)
+            assert tuning["pedalboard.effects.0.cents"] == instrument_cents, (name, suffix)
+            if return_cents is None:
+                assert tuning["pedalboard.effects.1.enabled"] is False, (name, suffix)
+            else:
+                assert tuning["pedalboard.effects.1.enabled"] is True, (name, suffix)
+                assert tuning["pedalboard.effects.1.cents"] == return_cents, (name, suffix)
+            # A clean signal: every slot the offset does not use is switched off.
+            switches = {p: v for p, v in tuning.items() if p.endswith(".enabled")}
+            assert set(switches) == enabled_paths, (name, suffix)
+            assert all(switches[f"pedalboard.effects.{i}.enabled"] is False for i in range(2, slot_count)), (
+                name,
+                suffix,
+            )
+
+
+def test_paper_configs_non_tuning_conditions_leave_tuning_off() -> None:
+    for name in _PAPER_CONFIGS:
+        cfg = load_config(_PAPER_EXPERIMENTS / name)
+        for condition in cfg.benchmark.conditions:
+            if "tune=" in condition.name:
+                continue
+            for path in condition.overrides:
+                assert not path.startswith(("pedalboard.effects.0.", "pedalboard.effects.1.")), (
+                    name,
+                    condition.name,
+                    path,
+                )
+
+
+def test_paper_configs_condition_names_unique_and_slug_stable() -> None:
+    for name in _PAPER_CONFIGS:
+        cfg = load_config(_PAPER_EXPERIMENTS / name)
+        expanded = [condition.name for condition in expand_conditions(cfg.benchmark)]
+        assert len(expanded) == len(set(expanded)), name
+        for condition in cfg.benchmark.conditions:
+            if "tune=" not in condition.name:
+                continue
+            # A "+" would not survive Condition.slug, so offsets stay signed.
+            assert Condition(condition.name).slug == condition.name, (name, condition.name)
