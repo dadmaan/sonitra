@@ -176,6 +176,20 @@ pedalboard:
         #   gain_db: 3.0  # boost/cut centred on cutoff_frequency_hz
         #   q: 1.0
         #   enabled: false
+        # - type: TuningOffset
+        #   cents: 0.0  # required; whole-signal shift in hundredths of a semitone, negative = down
+        #   high_quality: true  # slower, more accurate stretcher
+        #   transient_mode: crisp  # crisp | mixed | smooth
+        #   transient_detector: compound  # compound | percussive | soft
+        #   retain_phase_continuity: true  # keep phase continuous across FFT frames
+        #   use_long_fft_window: null  # null = let the stretcher pick the window length
+        #   use_time_domain_smoothing: false  # smoother onsets, more smearing
+        #   preserve_formants: true  # keep vocal formants while shifting
+        #   enabled: false  # bypassed by default
+        # The shift runs through Rubber Band's offline pitch/time stretcher behind
+        # pedalboard.time_stretch, because the PitchShift plugin drops sub-semitone
+        # shifts. cents: 0.0 never reaches the stretcher, so an enabled zero-cent slot
+        # stays a passthrough; a +c / -c pair round-trips through it to show its artifacts.
 
 # Post-effects peak normalisation ensures the rendered audio stays below the clip
 # threshold. In peak mode the signal is scaled so its peak == 10^(target_db/20).

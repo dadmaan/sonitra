@@ -647,3 +647,16 @@ def test_tuning_smoke_configs() -> None:
             assert cfg.io.sample is not None, path
             assert (cfg.io.sample.n, cfg.io.sample.seed) == (2, 0), path
         assert expand_conditions(cfg.benchmark)[0].name == cfg.benchmark.baseline_name, path
+
+
+def test_source_yaml_documents_tuning_offset() -> None:
+    text = default_config_path().read_text()
+    entry = re.search(
+        r"^[ \t]*# - type: TuningOffset$(?P<body>(?:\n[ \t]*#.*)*)", text, re.M
+    )
+    assert entry, "config/source.yaml has no commented TuningOffset entry"
+    body = entry.group("body")
+    for field in ("cents", *_TUNING_KNOB_DEFAULTS):
+        assert re.search(rf"^[ \t]*#[ \t]+{field}:", body, re.M), field
+    # The engine choice is the reason the offset is not a native plugin.
+    assert "time_stretch" in body
