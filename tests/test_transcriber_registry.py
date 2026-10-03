@@ -35,6 +35,7 @@ def _registry_types() -> set[str]:
     # Trigger lazy registration via imports; make_transcriber also imports.
     import sonitra.transcribe.basic_pitch  # noqa: F401
     import sonitra.transcribe.external_command  # noqa: F401
+    import sonitra.transcribe.hft_transformer  # noqa: F401
     import sonitra.transcribe.precomputed  # noqa: F401
 
     # Also call make_transcriber once to cover protocol's inside import path
