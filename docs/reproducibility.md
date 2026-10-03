@@ -8,9 +8,17 @@ Sonitra produces comparable numbers; this note records where that comparability 
 
 ## Scope
 
-Measured: `basic_pitch` and `transkun`, the two neural backends Sonitra ships. All Phase-2 and Phase-3e numbers below use the `bsed` dataset at `--limit 20` with `batch_size=1`, except the timing profile, which uses a 363 s MAESTRO render. Region of validity, stated plainly because it is easy to over-read: the precursor measurement was `basic_pitch`-only, and arm 2b is what confirms the finding on `transkun`.
+Measured: `basic_pitch` and `transkun`, both neural backends, and separately `hft_transformer`. These are not one experiment. Each backend was measured against its own bounds, so read the arm table together with the conditions named beside it and do not carry one backend's result across to another.
+
+All Phase-2 and Phase-3e numbers below use the `bsed` dataset at `--limit 20` with `batch_size=1`, except the timing profile, which uses a 363 s MAESTRO render. Region of validity, stated plainly because it is easy to over-read: the precursor measurement was `basic_pitch`-only, and arm 2b is what confirms the finding on `transkun`.
+
+Measured for `hft_transformer`, to different bounds. On CPU at `batch_size=1` the vendored network and note decoder are bit-for-bit identical to the upstream reference implementation, checked across 43 windows and both window modes, so the port itself adds no numeric change. CPU against CUDA diverges by up to 3.3e-04 on the velocity logits, which changes 70–75 of roughly 75 note-list entries in the last bits. CPU `batch_size=4` against `batch_size=1` was bitwise identical on that machine. It has not been run through the `bsed` arm design below, and the `transkun` rows there do not cover it.
 
 Measured: nothing else. `precomputed` and `external_command` are not neural (they replay a stored file or shell out to a command), so device and numeric-mode settings do not apply to them. Do not extend these numbers to any backend that was not run.
+
+## The pedal-blindness caveat
+
+Any onset+offset or velocity-weighted number for `hft_transformer` is a lower bound, and the reason is Sonitra's reference side rather than the model. That model's training references are pedal-extended: the reference builder forces note-off at the CC64 sustain-pedal release, so notes ring until the pedal lifts. `src/sonitra/midi_reader.py` has no `control_change` branch, so it cannot reproduce that convention: reference durations here came out 22.2 % shorter than the model's own training references, +993.5 s of reference note length measured against +180.4 s. `note.onset_f1` is convention-neutral and is the number to compare; `note.onset_offset_f1` and `note.onset_offset_velocity_f1` mix model quality with a reference-construction difference. This affects the scoring target, not the transcription: it is a property of the MIDI Sonitra reads as truth, and it applies to any model scored against that reference.
 
 ## Where basic_pitch time goes
 

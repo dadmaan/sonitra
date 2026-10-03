@@ -1,16 +1,16 @@
 # Model cards
 
-Sonitra benchmarks audio-to-note transcription against a reference score; it does not train models. A transcription backend is the tool that turns audio into notes. A checkpoint is the saved weights for a trained model. This page documents every backend it ships: two trained models, Basic Pitch and TransKun, and two adapters, `precomputed` and `external_command`, that plug in transcriptions Sonitra did not produce itself.
+Sonitra benchmarks audio-to-note transcription against a reference score; it does not train models. A transcription backend is the tool that turns audio into notes. A checkpoint is the saved weights for a trained model. This page documents every backend it ships: three trained models, Basic Pitch, TransKun and hFT-Transformer, and two adapters, `precomputed` and `external_command`, that plug in transcriptions Sonitra did not produce itself.
 
 Every backend takes audio and outputs MIDI notes. MIDI is a digital score format with pitch, start time, end time and loudness. Each model's card covers what it was built for, how it works, what data it saw, where it was published, its licence, and a compact spec table of the settings you need to run it.
 
 Before comparing numbers across models or corpora, read these three notes.
 
-MAESTRO overlap: TransKun was trained on MAESTRO V3, and Sonitra ships a `maestro-v3` corpus built from the same source. In `render_pipeline.input_type: midi` runs, Sonitra renders its own audio from the MIDI scores, so TransKun never hears an actual MAESTRO recording. The note sequences still overlap, because both come from the same scores. In `input_type: audio` runs, Sonitra plays the real MAESTRO recordings instead, so for TransKun that specific combination is training data at test time.
+MAESTRO overlap: TransKun was trained on MAESTRO V3, and Sonitra ships a `maestro-v3` corpus built from the same source. In `render_pipeline.input_type: midi` runs, Sonitra renders its own audio from the MIDI scores, so TransKun never hears an actual MAESTRO recording. The note sequences still overlap, because both come from the same scores. In `input_type: audio` runs, Sonitra plays the real MAESTRO recordings instead, so for TransKun that specific combination is training data at test time. hFT-Transformer is trained on MAESTRO V3 too, so the same two cases apply to it: both piano models have train overlap on this corpus, and neither has ever heard Sonitra's own renders.
 
-Input resolution: Basic Pitch resamples all input to 22.05 kHz. TransKun requires 44.1 kHz, loaded via `read_audio_resampled`. A side-by-side run does not control for input resolution, so a gap between the two models may reflect the resampling as well as the models themselves.
+Input resolution: Basic Pitch resamples all input to 22.05 kHz. TransKun requires 44.1 kHz, loaded via `read_audio_resampled`. hFT-Transformer's feature extractor is pinned to 16 kHz. A side-by-side run does not control for input resolution, so a gap between the models may reflect the resampling as well as the models themselves.
 
-Velocity: velocity means how hard a note is hit, on a scale from 1 to 127. Basic Pitch's velocity is a rescaled model confidence score, not a measured loudness. TransKun predicts real velocity, trained against MAESTRO's recorded key-strike velocities. A side-by-side velocity comparison between the two models is not meaningful. See each model's Output fidelity note below for the mechanics.
+Velocity: velocity means how hard a note is hit, on a scale from 1 to 127. Basic Pitch's velocity is a rescaled model confidence score, not a measured loudness. TransKun predicts real velocity, trained against MAESTRO's recorded key-strike velocities. A side-by-side velocity comparison between Basic Pitch and either piano model is not meaningful; between TransKun and hFT-Transformer it is, because both predict real velocity against the same source. See each model's Output fidelity note below for the mechanics.
 
 ### Applicability matrix
 
@@ -18,11 +18,11 @@ Every note Sonitra reads or produces, whether from the reference MIDI or a model
 
 Instrument scope has three separate axes. A model being polyphonic, meaning it can predict many notes sounding at once, does not mean it can tell instruments apart.
 
-| Axis | Basic Pitch | TransKun |
-|---|---|---|
-| Trained timbre | Many instruments plus singing | Piano only |
-| Polyphony | Yes. Upstream notes it works best on one instrument at a time | Yes |
-| Instrument attribution | None: no per-note instrument label | None: no per-note instrument label |
+| Axis | Basic Pitch | TransKun | hFT-Transformer |
+|---|---|---|---|
+| Trained timbre | Many instruments plus singing | Piano only | Piano only |
+| Polyphony | Yes. Upstream notes it works best on one instrument at a time | Yes | Yes |
+| Instrument attribution | None: no per-note instrument label | None: no per-note instrument label | None: no per-note instrument label |
 
 The table below rates each shipped corpus (see [datasets.md](datasets.md)) against each model:
 
@@ -31,20 +31,20 @@ The table below rates each shipped corpus (see [datasets.md](datasets.md)) again
 - `category error`: the model's whole premise does not apply, so its output is not a meaningful measurement even though it runs without error.
 - `train overlap`: the model saw this exact material while training.
 
-| Corpus | Instrument(s) | Basic Pitch | TransKun |
-|---|---|---|---|
-| `maestro-v3` | Piano | in-domain | train overlap (see note below) |
-| `bsed` | Orchestral (Beethoven symphony excerpts) | out-of-domain but valid | category error |
-| `guitarset` | Acoustic guitar | in-domain | category error |
-| `gaps` | Classical guitar | in-domain | category error |
-| `musicnet` | Multi-instrument classical | out-of-domain but valid | category error |
-| `e-gmd` | Drums | category error (see note below) | category error (see note below) |
+| Corpus | Instrument(s) | Basic Pitch | TransKun | hFT-Transformer |
+|---|---|---|---|---|
+| `maestro-v3` | Piano | in-domain | train overlap (see note below) | train overlap (see note below) |
+| `bsed` | Orchestral (Beethoven symphony excerpts) | out-of-domain but valid | category error | category error |
+| `guitarset` | Acoustic guitar | in-domain | category error | category error |
+| `gaps` | Classical guitar | in-domain | category error | category error |
+| `musicnet` | Multi-instrument classical | out-of-domain but valid | category error | category error |
+| `e-gmd` | Drums | category error (see note below) | category error (see note below) | category error (see note below) |
 
-Note on `maestro-v3`: both `input_type: midi` and `input_type: audio` runs draw their note sequences from the same MAESTRO scores, so both overlap TransKun's training data. `input_type: audio` runs go further and feed TransKun the actual MAESTRO recordings it trained on, not just the same notes.
+Note on `maestro-v3`: both `input_type: midi` and `input_type: audio` runs draw their note sequences from the same MAESTRO scores, so both overlap TransKun's training data. `input_type: audio` runs go further and feed TransKun the actual MAESTRO recordings it trained on, not just the same notes. hFT-Transformer is also trained on MAESTRO V3, so both cases apply to it too.
 
-Note on `e-gmd`: [datasets.md](datasets.md) states that Sonitra's transcription and scoring target pitched instruments, not drum hits, so E-GMD is not benchmarkable by either model. This is a tooling limit, not a difference between the two models.
+Note on `e-gmd`: [datasets.md](datasets.md) states that Sonitra's transcription and scoring target pitched instruments, not drum hits, so E-GMD is not benchmarkable by any of the three models. This is a tooling limit, not a difference between them.
 
-TransKun does not refuse non-piano input. Point it at an orchestral or guitar recording and it returns plausible-looking, fully scoreable MIDI, complete with pitches, onsets, offsets and velocities. Nothing signals that the input was out of scope. A silent category error like this is worse than a crash, because a crash cannot be mistaken for a result.
+Neither piano model refuses non-piano input. Point either at an orchestral or guitar recording and it returns plausible-looking, fully scoreable MIDI, complete with pitches, onsets, offsets and velocities. Nothing signals that the input was out of scope. A silent category error like this is worse than a crash, because a crash cannot be mistaken for a result.
 
 ### Basic Pitch
 
@@ -99,6 +99,64 @@ TransKun does not refuse non-piano input. Point it at an orchestral or guitar re
 | Package | `transkun==2.0.1` under the `transkun` extra. `pip install 'sonitra[transkun]'` |
 | Device config | `cpu`, `cuda`, `cuda:1`, `mps` or `GPU:0` style. Sonitra translates `GPU:0` to `cuda:0`. A `cuda` request with no CUDA raises |
 | Checkpoint location | `importlib.resources` under `transkun/pretrained/`. Override with `weights_path` and `conf_path` |
+
+### hFT-Transformer
+
+**Task.** Piano only transcription. The model turns a piano recording into MIDI notes with pitch, start, end and velocity, the same four fields TransKun produces, and it is a direct point of comparison for TransKun: same instrument, same training corpus, same scoring.
+
+**Architecture.** A two-level hierarchical frequency-time Transformer. The first hierarchy is a one-dimensional convolution along the time axis, then a Transformer encoder and a Transformer decoder along the frequency axis, where the decoder turns frequency bins into the piano's 88 pitches. The second hierarchy is another Transformer encoder, along the time axis. `n_stride` exists because a single pass over a window blurs notes near its edges: halving the stride at inference time and keeping only the central part of each pass is the paper's own remedy for that position-dependent accuracy fluctuation, and `0` disables it.
+
+On top of the network the model predicts a piano-roll representation, which is a grid of activations marking each pitch at each moment, and decodes that grid into discrete note events. The decoder has two head sets, one per axis. `output: second`, the default, selects the time-axis set, which is what the model's paper reports; `output: first` selects the other.
+
+**Training data.** MAESTRO V3, the same aligned piano performances TransKun trains on. The paper also evaluates on MAPS.
+
+**Publication.** Toyama, Akama, Ikemiya, Takida, Liao and Mitsufuji, ISMIR 2023 (Toyama et al., ISMIR 2023), "Automatic Piano Transcription with Hierarchical Frequency-Time Transformer". Upstream is research code at <https://github.com/sony/hFT-Transformer>.
+
+**Provenance.** The network and the note decoding are vendored under `src/sonitra/transcribe/_hft/`, with upstream's `LICENSE` alongside, pinned at commit `71a2ee06e9ced1ea24673c95ee0acded2fc98d04`. Vendoring is necessary rather than decorative: upstream has no package metadata, so it cannot be installed as a dependency, and its top-level module name would collide with another package. Sonitra therefore cannot drift from the pinned code without a deliberate change to the vendored copy.
+
+**Licence.** The vendored code is MIT, Copyright 2023 Sony Group Corporation. The release asset that carries the weights states no licence of its own, and the weights are derived from MAESTRO, which is CC BY-NC-SA 4.0. That is why Sonitra neither redistributes the weights nor commits them: users fetch them themselves, and the non-commercial share-alike terms of the training data travel with them. The same MAESTRO licence is named in the README's third-party section.
+
+**Installation.** Torch is required, which the existing `transkun` extra already provides, so there is no new extra and no dependency change. The weights are a separate one-time step, because the released checkpoint ships as a pickled `nn.Module` whose tensors are tagged `cuda:0` and therefore cannot be loaded at runtime. The setup script downloads the pinned release asset, verifies its size and sha256 against the registry, converts it once into a `model.pt` that `torch.load(weights_only=True)` accepts, and writes a `manifest.json` recording the provenance next to it:
+
+```bash
+python scripts/setup_hft_transformer.py
+```
+
+Run it once. The devcontainer and the production image run it for you on start (see [docker.md](docker.md) and [devcontainer.md](devcontainer.md)). The script is idempotent: a second run reports the existing install and exits. `--models-dir PATH` overrides the target directory and `--archive PATH` installs from an archive you already downloaded. Its own `--help` documents the exit codes: `0` installed or already installed, `1` failure, `2` usage error, `3` torch is not installed. Torch is checked before any download starts, so an image built with `INSTALL_TRANSKUN=0` skips the step quietly rather than reaching for the network.
+
+**Output fidelity.** Velocity is a predicted value in 1 to 127, trained against MAESTRO's recorded key-strike velocities, so it means the same thing as TransKun's and not the same thing as Basic Pitch's (see Velocity above). Notes whose decoded offset lands past the end of the audio are kept rather than clipped, because the decoder pads the window tail so the final note can terminate and truncating it would disagree with the released model. The count is recorded as `offset_past_end` in metadata so the effect is visible. Every transcribe records `output_head`, `n_stride`, `batch_size`, `thresholds`, `resampler: pedalboard`, `sample_rate: 16000`, `upstream_commit`, `checkpoint`, `weights_sha256`, `note_events_total`, `notes_kept`, `filtered_dropped` and `offset_past_end`, alongside the device and numeric-mode keys the other backends record.
+
+**Numeric reproducibility.** Numbers from this card are comparable only within one device and one numeric mode. Two results bound the range. On CPU at `batch_size=1` the vendored path is bit-for-bit identical to the upstream reference implementation, across 43 windows and both window modes, so the port itself introduces no numeric change. CPU against CUDA diverges: up to 3.3e-04 on the velocity logits, which changes 70–75 of roughly 75 note-list entries in the last bits. As the Basic Pitch and TransKun cards say, record the device and the `transcription.numeric_mode` with any published number, and see [reproducibility.md](reproducibility.md). One more measurement bears on the `batch_size` default: CPU `batch_size=4` against `batch_size=1` was bitwise identical on that machine, so batching is not recommended here for the memory reason in caveat 3 below, not because it changes the numbers.
+
+One difference from upstream is deliberate. Sonitra resamples with `pedalboard` rather than torchaudio, because upstream's audio load now depends on a torchaudio codec backend that is not installed. That changes the numbers: log-mel values move by as much as 5.4. It does not degrade the result. Onset F1 came out 0.0019–0.0028 higher through Sonitra's path than through upstream's. Benign as measured, but the audio path is not numerically the upstream one, and a paper's published figure is not directly comparable to a Sonitra run.
+
+| Property | Value |
+|---|---|
+| Sample rate | 16 kHz, pinned by the feature extractor. Resampled with `pedalboard` `resampled_to(16000)` via `read_audio_resampled` |
+| Channels | Stereo or mono input. Mean down to mono at the pinned feature rate |
+| Framework | PyTorch, plus torchaudio for the log-mel transform (2048-point FFT, 256 mel bins, 256-sample hop) |
+| Input length | Overlapping windows. `n_stride` 0 to 64 in frames of 16 ms; `0` is a single pass over the whole window |
+| Pitch range | MIDI 21 to 108 |
+| Decoder head | `output: second` (time-axis, the default and the paper's) or `output: first` (frequency-axis) |
+| Thresholds | `onset_threshold`, `offset_threshold`, `mpe_threshold`, each default 0.5, in (0, 1] |
+| Batch | `batch_size` default 1. See the throughput note below before raising it |
+| Package | Under the existing `transkun` extra, so `pip install 'sonitra[transkun]'` is all you need. No new extra |
+| Device config | Unified `cpu`, `cuda`, `cuda:N`, `GPU:N`; `GPU:N` is translated to `cuda:N` |
+| Checkpoint location | `<models_dir>/hft_transformer/maestro/model.pt` plus a `manifest.json`. `weights_path` overrides it and must point at a converted file, never the upstream `.pkl` |
+
+**Measured performance.** Measured on the maintainer's machine (RTX 4090 Laptop GPU, CPU inference via PyTorch 2.12.1) against three MAESTRO v3 test-split pieces rendered to audio from MIDI with a GM SoundFont. **These are rendered-audio numbers, not real-recording numbers.** The container used for the measurement has MIDI only, so the comparison against the real MAESTRO recordings is outstanding and has not been run.
+
+| metric | hFT-Transformer | TransKun |
+|---|---|---|
+| note onset F1 (duration-weighted) | **0.9746** (per file 0.9730–0.9801) | 0.9965 |
+| note onset+offset+velocity F1 (duration-weighted) | 0.673 | 0.796 |
+| note onset+offset F1 | 0.906 | 0.944 |
+
+Three caveats travel with these numbers, and each one matters more than the table does.
+
+1. **Velocity is the weak axis.** 0.673 against TransKun's 0.796. Onset detection is close to parity, and velocity is not. Anyone choosing between these two models on this evidence should read the velocity gap, not the onset gap.
+2. **`note.onset_offset_f1` for this model is a lower bound, and the reason is not the model.** Its training references are pedal-extended: the reference builder forces note-off at the CC64 sustain-pedal release, so a note rings until the pedal lifts. Sonitra's MIDI reader is pedal-blind — it has no `control_change` branch — so the reference durations here are 22.2 % shorter than the model's own training references (+993.5 s of reference note length measured against +180.4 s). Onset F1 is the convention-neutral number for this comparison; onset+offset is depressed by a reference-construction difference, not only by model quality. Do not read 0.906 against 0.944 as a clean capability comparison.
+3. **Throughput is fine and batching is not worth it.** CPU real-time factor 0.43–0.44, roughly 2.3× faster than realtime, and the pure-Python note decoder is only 1.9–2.1 % of CPU time, so no throughput work is needed. `batch_size` therefore stays at 1 by default: batching buys almost nothing on CPU while multiplying peak resident memory about 4.2×.
 
 ### precomputed
 

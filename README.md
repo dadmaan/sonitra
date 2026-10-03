@@ -195,6 +195,18 @@ See [docs/cli.md](docs/cli.md) for the full flag list, such as explicit path fla
 
 See [docs/configuration.md](docs/configuration.md) for the full section guide, synth and effects tables, and transcription options. For model details see [docs/model-cards.md](docs/model-cards.md). To add a new backend see [docs/adding-a-transcriber.md](docs/adding-a-transcriber.md).
 
+## Transcription backends
+
+Three trained backends ship: Spotify Basic Pitch, TransKun and Sony hFT-Transformer, plus the generic `precomputed` and `external_command` adapters. Basic Pitch is installed by default. The two piano models need torch, which the `transkun` extra provides: `pip install 'sonitra[transkun]'`.
+
+hFT-Transformer also needs its weights, which are not redistributed because they derive from MAESTRO under a non-commercial licence. Run this once:
+
+```bash
+python scripts/setup_hft_transformer.py
+```
+
+The devcontainer and the Docker images run it for you on start. See [docs/model-cards.md](docs/model-cards.md) for each model's licence, provenance and measured results.
+
 ## Evaluation metrics
 
 Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table. Scores also depend on the device and the numeric mode; see [docs/reproducibility.md](docs/reproducibility.md).
