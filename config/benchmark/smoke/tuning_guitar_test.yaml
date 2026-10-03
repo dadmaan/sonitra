@@ -1,20 +1,21 @@
-# GuitarSet tuning smoke-test: real guitar audio through the guitar effect
-# chain, benchmark-only — the run exists to prove the tuning offset transcribes
-# cleanly, not to feed a render preset.
+# GuitarSet tuning smoke test: FluidSynth renders of the GuitarSet reference
+# MIDI through the guitar effect chain, benchmark-only — the run exists to prove
+# the tuning offset transcribes cleanly, not to feed a render preset.
 # Copied from paper_experiments/guitar_only.yaml. The chain is kept whole (two
 # leading tuning slots, then gain, cabinet, delay and room) so the smoke run
 # exercises the same chain the paper conditions use, but every condition
-# switches off everything except the offset under test.
+# switches off everything except the offset under test. MIDI input means the run
+# needs the reference MIDI only, not the recordings.
 # Conditions: baseline, tune=-32c, tune=40c, tune=rt40c
-# The selection keys are left at their defaults: GuitarSet recordings run under
-# a minute, so a run is bounded by --limit rather than by a sample or filter.
+# The selection keys are left at their defaults: a run is bounded by --limit,
+# and benchmark.save_audio writes the renders so the offset can be heard.
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/smoke/tuning_guitar_test.yaml --dataset guitarset --limit 2
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
-  input_type: audio
+  input_type: midi
   bpm: 120
   sample_rate: 44100
   bit_depth: 24
@@ -169,7 +170,7 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  save_audio: false
+  save_audio: true
   resume: true
   conditions:
     - name: tune=-32c

@@ -1,19 +1,22 @@
-# Tuning-offset smoke test: real MAESTRO audio in, benchmark-only.
+# Tuning-offset smoke test: FluidSynth renders of MAESTRO reference MIDI,
+# benchmark-only — the run exists to prove the tuning offset transcribes
+# cleanly, not to feed a render preset.
 # Copied from paper_experiments/piano_only.yaml with the reverb/chorus/
 # distortion conditions dropped, so the run measures the offset alone: the two
 # leading TuningOffset slots stay disabled and the baseline is the untouched
-# signal.
-# Conditions: baseline, tune=-32c, tune=40c, tune=rt40c
+# signal. MIDI input means the run needs the reference MIDI only, not the
+# recordings.
+# Conditions: baseline, inst=piano_tune=-32c, inst=piano_tune=40c, inst=piano_tune=rt40c
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/smoke/tuning_piano_test.yaml --dataset maestro-v3 --limit 2
 #
-# MAESTRO recordings run to tens of minutes, so budget minutes per condition;
-# io.sample caps the run at two files, which keeps a smoke run short.
+# io.sample caps the run at two files, which keeps a smoke run short, and
+# benchmark.save_audio writes the renders so the offset can be heard.
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
-  input_type: audio
+  input_type: midi
   bpm: 120
   sample_rate: 44100
   bit_depth: 24
@@ -167,7 +170,7 @@ benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  save_audio: false
+  save_audio: true
   resume: true
   conditions:
     - name: inst=piano_tune=-32c

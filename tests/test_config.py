@@ -632,17 +632,19 @@ def test_tuning_smoke_configs() -> None:
         cfg = load_config(path)
         twin = load_config(_PAPER_EXPERIMENTS / twin_name)
         assert cfg.io.dataset == dataset, path
-        assert cfg.render_pipeline.input_type == InputType.AUDIO, path
+        # MIDI input synthesises from the reference, so the run needs no recordings.
+        assert cfg.render_pipeline.input_type == InputType.MIDI, path
         assert [type(e) for e in cfg.pedalboard.effects] == [type(e) for e in twin.pedalboard.effects], path
         assert [c.name for c in cfg.benchmark.conditions] == [
             f"{prefix}tune={suffix}" for suffix in ("-32c", "40c", "rt40c")
         ], path
         assert cfg.benchmark.include_baseline is True, path
+        assert cfg.benchmark.save_audio is True, path
         assert [t.type for t in cfg.transcription.transcribers] == ["basic_pitch"], path
         assert cfg.transcription.transcribers[0].device == "cpu", path
         if dataset == "maestro-v3":
-            # The test split is capped by an explicit sample, so the smoke run
-            # cannot draw one of MAESTRO's tens-of-minutes recordings.
+            # The test split is capped by an explicit sample, so a smoke run
+            # stays short.
             assert cfg.io.where == {"split": ["test"]}, path
             assert cfg.io.sample is not None, path
             assert (cfg.io.sample.n, cfg.io.sample.seed) == (2, 0), path
