@@ -61,7 +61,9 @@ Numeric reproducibility is controlled per run by two `transcription` keys. Both 
 
 You can add these effects under `pedalboard.effects`. Each effect has an `enabled` flag to turn it on or off. Pedalboard is the audio-effects library Sonitra uses.
 
-Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter. VST3 plugins start with their factory default sound. You cannot set their controls from YAML.
+Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter, TuningOffset. VST3 plugins start with their factory default sound. You cannot set their controls from YAML.
+
+`TuningOffset` shifts the whole signal by a fixed number of cents, where a cent is a hundredth of a semitone. It takes a required `cents` value; `config/source.yaml` lists every other setting it accepts, with its default and the reason for it. A slot with `cents: 0` never reaches the stretcher, so it leaves the audio untouched. Enabling one slot at `+c` and a second at `-c` sends the signal through the stretcher twice and back to its original pitch, so the processing artifact of that offset shows on its own. The shift runs through `pedalboard.time_stretch`, Rubber Band's offline stretcher, because the `PitchShift` plugin does not apply shifts measured in cents reliably: a small shift comes out as no shift at all.
 
 ## File selection
 

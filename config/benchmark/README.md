@@ -266,6 +266,8 @@ CSV was edited after the run started.
 | `smoke/guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
 | `smoke/gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |
 | `smoke/musicnet_test.yaml` | Smoke test (classical, MIDI-input; score or aligned MIDI, 44.1 kHz) | 4 |
+| `smoke/tuning_piano_test.yaml` | Smoke test (piano tuning offset; MAESTRO, MIDI-input, test split, two sampled files) | 4 |
+| `smoke/tuning_guitar_test.yaml` | Smoke test (guitar tuning offset; GuitarSet, MIDI-input) | 4 |
 | `sweeps/reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
 | `sweeps/compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
 | `sweeps/distortion_sweep.yaml` | Signal distortion (drive) | 9 |
@@ -330,6 +332,31 @@ audio mode Sonitra plays the real MAESTRO recordings, which overlap the models' 
 audio; in MIDI mode Sonitra renders its own audio, so only the note sequences overlap.
 The export that builds the model-cards table skips both probes, because a sampled run is
 not a baseline.
+
+### Tuning-offset conditions
+
+Each of the six configs in `paper_experiments/` opens its `pedalboard.effects` list with two
+`TuningOffset` slots. The offset comes first in the chain because what is out of tune is the
+instrument itself, so the shift belongs ahead of the amp, the cabinet and the room; slot 1 provides
+the return shift and exists for the round-trip control alone. Both slots ship disabled with
+`cents: 0.0` and pass the signal through unchanged, so every condition that does not address
+them renders the unprocessed signal. Those two leading slots moved every pre-existing effect slot
+up by two, so the reverb, chorus, distortion and cabinet conditions now address different indices
+than they used to. Because the resume fingerprint covers the whole config, every existing work
+directory for those six configs can no longer resume and the runs have to be redone together.
+
+Each config also gained nine tuning conditions: `tune=-32c`, `tune=-20c`, `tune=-8c`,
+`tune=8c`, `tune=12c`, `tune=20c`, `tune=-40c`, `tune=40c` and `tune=rt40c`, each name prefixed
+with `inst=piano_` in the five piano configs. Every one of them switches off all the other slots,
+so a tuning condition measures the offset and nothing else. `rt40c` is the one exception: it
+enables both slots, at +40 cents and then -40 cents, which brings the intended pitch back to where
+it started and leaves the processing artifact of two stretcher passes at that offset. Read it as an
+approximation of the artifact at the largest offset these conditions use, not as an upper limit for
+the smaller levels. The smoke configs `smoke/tuning_piano_test.yaml` and
+`smoke/tuning_guitar_test.yaml` reuse the same chain layout and run three of those conditions
+(`tune=-32c`, `tune=40c`, `tune=rt40c`) plus the baseline, as a short check before a paper run.
+Both take MIDI input, so they synthesise the dataset's reference MIDI with FluidSynth and need
+no recordings in the corpus; `save_audio` writes the renders so the offset can be heard.
 
 ---
 
