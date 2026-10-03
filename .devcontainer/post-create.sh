@@ -23,6 +23,20 @@ if [ "${1:-}" = "--print-extra" ]; then
     exit 0
 fi
 
+# The models bind mount is created by the container runtime when the host directory
+# does not exist yet, and it creates it as root -- after which the `node` user this
+# script runs as cannot write into it, and the weights download below would fail at
+# create time. Hand the directory to the current user when it is not already ours.
+# Idempotent: an /models we can already write to is left untouched, and a failure
+# here must not fail the create (the setup step reports its own problem instead).
+MODELS_DIR="${SONITRA_MODELS_DIR:-/models}"
+if [ ! -w "$MODELS_DIR" ]; then
+    echo "post-create: $MODELS_DIR is not writable by $(id -un); handing it to $(id -u):$(id -g)"
+    sudo mkdir -p "$MODELS_DIR" \
+        && sudo chown "$(id -u):$(id -g)" "$MODELS_DIR" \
+        || echo "post-create: warning: could not take ownership of $MODELS_DIR; the weights download will likely fail" >&2
+fi
+
 echo "post-create: uv sync --locked ${SYNC_EXTRAS[*]}"
 # Self-heal a broken venv (e.g. a partial sync through a Windows bind mount):
 # uv errors instead of recreating when .venv exists without bin/python.
@@ -77,3 +91,21 @@ fi
 
 # `--no-sync`: this check must not touch the environment it just built.
 uv run --no-sync python -c "import sonitra"
+
+# Install the transcriber weights into the shared models mount (scripts/
+# setup_hft_transformer.py). `--no-sync` for the same reason as above. Fail-soft:
+# the other backends work without the weights, and the hft_transformer backend
+# raises its own error naming this command when they are missing.
+#
+#   0  installed, or already installed -> nothing to say
+#   3  torch is not in this venv -> skip quietly, only note it once
+#   *  anything else -> one warning naming the command to run by hand
+setup_rc=0
+uv run --no-sync python scripts/setup_hft_transformer.py --models-dir "$MODELS_DIR" || setup_rc=$?
+case "$setup_rc" in
+    0) ;;
+    3) echo "post-create: torch is not installed, so the hft_transformer setup is skipped" ;;
+    *)
+        echo "post-create: warning: the hft_transformer weights were not installed; run 'uv run python scripts/setup_hft_transformer.py --models-dir $MODELS_DIR' by hand" >&2
+        ;;
+esac
