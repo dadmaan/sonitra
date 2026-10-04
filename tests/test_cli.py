@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -1221,3 +1222,66 @@ def test_benchmark_preflight_real_path_exits_without_traceback(
     assert "error:" in result.stderr
     assert "device 'cuda' unavailable" in _squash(result.stderr)
     assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Numeric settings come from the config, never from a process-wide export
+# ---------------------------------------------------------------------------
+
+
+def test_benchmark_cli_does_not_export_numeric_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    result = _run_benchmark_cli(config_path)
+
+    assert result.exit_code == 0, result.output
+    assert "SONITRA_NUMERIC_MODE" not in os.environ
+    assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+
+
+def test_transcribe_cli_uses_config_numeric_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+    from sonitra.transcribe.numerics import read_numeric_env
+
+    payload = yaml.safe_load(
+        _MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path / "oracle"))
+    )
+    payload["transcription"]["numeric_mode"] = "strict"
+    payload["transcription"]["gpu_memory_growth"] = True
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    (tmp_path / "test_c4.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "off")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "0")
+    recorded: list[tuple[str, bool]] = []
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return _StubTranscriber(None)
+
+    monkeypatch.setattr(protocol, "make_transcriber", factory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert recorded == [("strict", True)]

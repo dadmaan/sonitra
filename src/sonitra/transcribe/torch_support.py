@@ -25,16 +25,6 @@ def _is_cuda_device(device: str | None) -> bool:
     return device is not None and device.lower().startswith("cuda")
 
 
-def numeric_settings_from_env() -> tuple[str, bool]:
-    """Process default (numeric_mode, gpu_memory_growth) every torch backend reads."""
-    numeric_mode = os.environ.get("SONITRA_NUMERIC_MODE", "off")
-    gpu_memory_growth = (
-        os.environ.get("SONITRA_GPU_MEMORY_GROWTH", "").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
-    return numeric_mode, gpu_memory_growth
-
-
 def missing_dependency_error(module: str, *, backend: str) -> TranscriptionError:
     """TranscriptionError naming the module that failed and how to install it."""
     return TranscriptionError(

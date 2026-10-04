@@ -14,11 +14,11 @@ from sonitra.notes import make_note
 from sonitra.transcribe.base import TranscriptionError, TranscriptionResult, checkpoint_identity
 from sonitra.transcribe.configs import TranskunTranscriberConfig
 from sonitra.transcribe.devices import resolve_torch_device
+from sonitra.transcribe.numerics import read_numeric_env
 from sonitra.transcribe.protocol import register_transcriber
 from sonitra.transcribe.torch_support import (
     apply_torch_numeric_settings,
     missing_dependency_error,
-    numeric_settings_from_env,
     validate_torch_device,
 )
 
@@ -316,7 +316,7 @@ class TranskunTranscriber:
 
 @register_transcriber("transkun")
 def _build(cfg: TranskunTranscriberConfig) -> TranskunTranscriber:
-    numeric_mode, gpu_memory_growth = numeric_settings_from_env()
+    numeric_mode, gpu_memory_growth = read_numeric_env()
     return TranskunTranscriber(
         device=cfg.device,
         segment_size_sec=cfg.segment_size_sec,

@@ -45,6 +45,7 @@ from sonitra.pipeline import run_pipeline
 from sonitra.separation.protocol import make_separator
 from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
+from sonitra.transcribe.numerics import numeric_env
 from sonitra.transcribe.protocol import TranscriberProtocol, make_transcriber
 
 if TYPE_CHECKING:
@@ -332,13 +333,40 @@ def run_benchmark(
     ``None``, the runner computes the minimal unconfigured block from the
     resolved file lists, so every summary carries the same shape.
     """
+    _validate_no_input_type_sweep(config)
+    _validate_no_run_level_override(config)
+
+    # The builders read the numeric settings from the environment, and the
+    # spawned pool workers inherit it, so the config's values are published for
+    # the whole run — in this process and in every worker.
+    with numeric_env(
+        config.transcription.numeric_mode, config.transcription.gpu_memory_growth
+    ):
+        return _run_benchmark(
+            midi_paths,
+            work_dir,
+            config,
+            corpus_root,
+            audio_paths=audio_paths,
+            progress=progress,
+            selection=selection,
+        )
+
+
+def _run_benchmark(
+    midi_paths: Iterable[Path | str],
+    work_dir: Path | str,
+    config: PipelineConfig,
+    corpus_root: Path | None,
+    *,
+    audio_paths: Iterable[Path | str] | None,
+    progress: BenchmarkProgress | None,
+    selection: dict[str, Any] | None,
+) -> BenchmarkResult:
     start = time.perf_counter()
     midi_paths = [Path(path) for path in midi_paths]
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
-
-    _validate_no_input_type_sweep(config)
-    _validate_no_run_level_override(config)
 
     audio_to_reference: dict[Path, Path] | None = None
     if config.render_pipeline.input_type == InputType.AUDIO:

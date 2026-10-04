@@ -7,6 +7,15 @@ import numpy as np
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Numeric settings travel from the config to the backend builders through
+    # process environment variables, so a test that sets one must never leak it
+    # into the next test.
+    monkeypatch.delenv("SONITRA_NUMERIC_MODE", raising=False)
+    monkeypatch.delenv("SONITRA_GPU_MEMORY_GROWTH", raising=False)
+
+
 @pytest.fixture
 def midi_fixture() -> callable:
     fixtures_dir = Path(__file__).parent / "fixtures"

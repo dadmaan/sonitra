@@ -1,4 +1,4 @@
-"""Shared torch support — process numeric settings, device validation, env defaults."""
+"""Shared torch support — process numeric settings and device validation."""
 from __future__ import annotations
 
 import os
@@ -190,41 +190,6 @@ def test_numeric_warn_without_warn_only_support_logs(
         "transkun numeric_mode=warn: torch lacks warn_only; continuing unconstrained"
         in caplog.text
     )
-
-
-# ── env defaults ────────────────────────────────────────────────────────
-
-def test_numeric_settings_from_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.delenv("SONITRA_NUMERIC_MODE", raising=False)
-    monkeypatch.delenv("SONITRA_GPU_MEMORY_GROWTH", raising=False)
-    assert numeric_settings_from_env() == ("off", False)
-
-
-def test_numeric_settings_from_env_returns_mode_verbatim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "STRICT")
-    assert numeric_settings_from_env()[0] == "STRICT"
-
-
-@pytest.mark.parametrize("value", ["1", "true", "YES", "on", "  True  ", "ON"])
-def test_gpu_memory_growth_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", value)
-    assert numeric_settings_from_env()[1] is True
-
-
-@pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "  "])
-def test_gpu_memory_growth_falsy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", value)
-    assert numeric_settings_from_env()[1] is False
 
 
 # ── device validation: no framework import for cpu / non-cuda ───────────

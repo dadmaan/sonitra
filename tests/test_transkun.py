@@ -504,3 +504,20 @@ def test_transkun_cuda_build_without_device_keeps_availability_message(
     assert "CUDA is not available" in message
     assert "CPU-only build" not in message
     assert "--reinstall-package" not in message
+
+
+# ── builder reads the process environment ───────────────────────────────
+
+def test_transkun_builder_forwards_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The builder, not the transcriber, resolves the numeric settings: it runs
+    once per instance, while transcribe() runs per file."""
+    from sonitra.transcribe.configs import TranskunTranscriberConfig
+    from sonitra.transcribe.protocol import make_transcriber
+
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "strict")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "1")
+
+    transcriber = make_transcriber(TranskunTranscriberConfig())
+
+    assert transcriber.numeric_mode == "strict"
+    assert transcriber.gpu_memory_growth is True

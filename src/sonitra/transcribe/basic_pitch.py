@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from sonitra.transcribe.base import (
 )
 from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 from sonitra.transcribe.devices import resolve_tf_device
+from sonitra.transcribe.numerics import read_numeric_env
 from sonitra.transcribe.protocol import register_transcriber
 
 logger = logging.getLogger(__name__)
@@ -298,6 +298,7 @@ class BasicPitchTranscriber:
 
 @register_transcriber("basic_pitch")
 def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
+    numeric_mode, gpu_memory_growth = read_numeric_env()
     return BasicPitchTranscriber(
         onset_threshold=cfg.onset_threshold,
         frame_threshold=cfg.frame_threshold,
@@ -309,8 +310,7 @@ def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
         multiple_pitch_bends=cfg.multiple_pitch_bends,
         save_raw_outputs=cfg.save_raw_outputs,
         batch_size=cfg.batch_size,
-        numeric_mode=os.environ.get("SONITRA_NUMERIC_MODE", "off"),
-        gpu_memory_growth=os.environ.get("SONITRA_GPU_MEMORY_GROWTH", "").strip().lower()
-        in {"1", "true", "yes", "on"},
+        numeric_mode=numeric_mode,
+        gpu_memory_growth=gpu_memory_growth,
         name=cfg.name or "basic_pitch",
     )

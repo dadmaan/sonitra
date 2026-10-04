@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -43,20 +42,6 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(name="sonitra")
 
 _CLI_VERBOSE = False
-
-
-def _apply_numeric_env(cfg: Any) -> None:
-    """Export transcription numeric settings for backend builders/workers.
-
-    Backends read SONITRA_NUMERIC_MODE / SONITRA_GPU_MEMORY_GROWTH at build
-    time; benchmark pool workers inherit the env via fork. setdefault keeps
-    an explicit user export winning over YAML.
-    """
-    os.environ.setdefault("SONITRA_NUMERIC_MODE", cfg.transcription.numeric_mode)
-    os.environ.setdefault(
-        "SONITRA_GPU_MEMORY_GROWTH",
-        "1" if cfg.transcription.gpu_memory_growth else "0",
-    )
 
 
 def _progress_enabled(cfg) -> bool:
@@ -410,6 +395,7 @@ def transcribe(
     from sonitra.config import resolve_corpus_paths
     from sonitra.midi_writer import write_transcription_outputs
     from sonitra.selection import SelectionError, select_audio
+    from sonitra.transcribe.numerics import numeric_env
     from sonitra.transcribe.protocol import make_transcriber
 
     console = get_console()
@@ -418,7 +404,6 @@ def transcribe(
         set_log_level(effective_log_level(cfg))
         configure_framework_logging(effective_log_level(cfg))
         configure_onednn_opts()
-    _apply_numeric_env(cfg)
     try:
         _apply_dataset(cfg, dataset)
     except SelectionError as exc:
@@ -490,48 +475,51 @@ def transcribe(
             return f"{backend_name}: {audio_path.name} FAILED ({exc})", str(exc)
 
     try:
-        for transcriber_cfg in transcriber_configs:
-            backend = make_transcriber(transcriber_cfg)
-            failed_this = 0
-            progress: Progress | None = None
-            task_id: Any = None
-            if show_progress:
-                progress = Progress(*_progress_columns(), refresh_per_second=10)
-                task_id = progress.add_task(backend.name, total=len(audio_paths))
+        with numeric_env(
+            cfg.transcription.numeric_mode, cfg.transcription.gpu_memory_growth
+        ):
+            for transcriber_cfg in transcriber_configs:
+                backend = make_transcriber(transcriber_cfg)
+                failed_this = 0
+                progress: Progress | None = None
+                task_id: Any = None
+                if show_progress:
+                    progress = Progress(*_progress_columns(), refresh_per_second=10)
+                    task_id = progress.add_task(backend.name, total=len(audio_paths))
 
-            with progress or nullcontext():
-                if n_workers > 1:
-                    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                        future_to_path = {
-                            executor.submit(_transcribe_one, backend.name, backend.transcribe, ap): ap
-                            for ap in audio_paths
-                        }
-                        for future in as_completed(future_to_path):
-                            _, err = future.result()
+                with progress or nullcontext():
+                    if n_workers > 1:
+                        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                            future_to_path = {
+                                executor.submit(_transcribe_one, backend.name, backend.transcribe, ap): ap
+                                for ap in audio_paths
+                            }
+                            for future in as_completed(future_to_path):
+                                _, err = future.result()
+                                if progress is not None:
+                                    progress.update(task_id, advance=1)
+                                if err is not None:
+                                    failures += 1
+                                    failed_this += 1
+                                    if len(failure_details) < 10:
+                                        failure_details.append(
+                                            (backend.name, future_to_path[future].name, err)
+                                        )
+                    else:
+                        for audio_path in audio_paths:
+                            _, err = _transcribe_one(backend.name, backend.transcribe, audio_path)
                             if progress is not None:
                                 progress.update(task_id, advance=1)
                             if err is not None:
                                 failures += 1
                                 failed_this += 1
                                 if len(failure_details) < 10:
-                                    failure_details.append(
-                                        (backend.name, future_to_path[future].name, err)
-                                    )
-                else:
-                    for audio_path in audio_paths:
-                        _, err = _transcribe_one(backend.name, backend.transcribe, audio_path)
-                        if progress is not None:
-                            progress.update(task_id, advance=1)
-                        if err is not None:
-                            failures += 1
-                            failed_this += 1
-                            if len(failure_details) < 10:
-                                failure_details.append((backend.name, audio_path.name, err))
+                                    failure_details.append((backend.name, audio_path.name, err))
 
-            console.print(
-                f"[cyan]{backend.name}[/]: [green]{len(audio_paths) - failed_this} ok[/], "
-                f"[red]{failed_this} failed[/]"
-            )
+                console.print(
+                    f"[cyan]{backend.name}[/]: [green]{len(audio_paths) - failed_this} ok[/], "
+                    f"[red]{failed_this} failed[/]"
+                )
     except KeyboardInterrupt:
         console.print("[yellow]Interrupted — partial transcriptions kept[/yellow]")
         raise typer.Exit(130)
@@ -824,7 +812,6 @@ def benchmark(
         set_log_level(effective_log_level(cfg))
         configure_framework_logging(effective_log_level(cfg))
         configure_onednn_opts()
-    _apply_numeric_env(cfg)
     yaml_dataset = cfg.io.dataset
     try:
         if (

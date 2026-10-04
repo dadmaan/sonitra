@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
 from sonitra.transcribe.base import TranscriptionResult
+from sonitra.transcribe.configs import ExternalCommandTranscriberConfig
+from sonitra.transcribe.numerics import read_numeric_env
 
 
 @pytest.fixture
@@ -1118,3 +1121,117 @@ def test_parallel_benchmark_runs_end_to_end_under_spawn(
     assert len(result.records) == 4
     assert all(record.status == "succeeded" for record in result.records)
     assert any(e.status == "done" for e in progress.worker_events)
+
+
+# ── the run publishes the config's transcription numeric settings ───────
+
+
+def test_run_benchmark_library_call_uses_config_numeric_settings(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.transcription.numeric_mode = "strict"
+    benchmark_config.transcription.gpu_memory_growth = True
+    recorded: list[tuple[str, bool]] = []
+    real_factory = runner_module.make_transcriber
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return real_factory(cfg)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert recorded == [("strict", True)]
+    assert all(record.status == "succeeded" for record in result.records)
+
+
+def test_run_benchmark_config_beats_shell_env(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    benchmark_config.transcription.numeric_mode = "strict"
+    benchmark_config.transcription.gpu_memory_growth = True
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "off")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "0")
+    recorded: list[tuple[str, bool]] = []
+    real_factory = runner_module.make_transcriber
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return real_factory(cfg)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+
+    with caplog.at_level("WARNING", logger="sonitra.transcribe.numerics"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert recorded == [("strict", True)]
+    warned = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "sonitra.transcribe.numerics"
+    ]
+    assert len([m for m in warned if "SONITRA_NUMERIC_MODE" in m]) == 1
+    assert len([m for m in warned if "SONITRA_GPU_MEMORY_GROWTH" in m]) == 1
+
+
+@pytest.mark.parametrize("before", [None, "warn"])
+def test_run_benchmark_restores_env_after_run(
+    before: str | None,
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if before is None:
+        assert "SONITRA_NUMERIC_MODE" not in os.environ
+        assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+    else:
+        monkeypatch.setenv("SONITRA_NUMERIC_MODE", before)
+        monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "1")
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path / str(before), benchmark_config)
+
+    if before is None:
+        assert "SONITRA_NUMERIC_MODE" not in os.environ
+        assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+    else:
+        assert os.environ["SONITRA_NUMERIC_MODE"] == "warn"
+        assert os.environ["SONITRA_GPU_MEMORY_GROWTH"] == "1"
+
+
+def test_parallel_workers_inherit_config_numeric_settings(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = Path(__file__).parent / "fixtures" / "numeric_env_probe.py"
+    probe_output = tmp_path / "probe.txt"
+    monkeypatch.setenv("SONITRA_NUMERIC_ENV_PROBE", str(probe_output))
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.transcription.transcribers = [
+        ExternalCommandTranscriberConfig(
+            command=f"{sys.executable} {probe} {{input}} {{output}}"
+        )
+    ]
+    benchmark_config.transcription.numeric_mode = "strict"
+    benchmark_config.transcription.gpu_memory_growth = False
+
+    # No stubbing of the process pool: a spawned worker re-imports everything
+    # and reads only its inherited environment, which is the whole claim here.
+    result = run_benchmark(
+        [midi_fixture("test_c4.mid")], tmp_path / "wd", benchmark_config
+    )
+
+    assert all(record.status == "succeeded" for record in result.records)
+    lines = probe_output.read_text(encoding="utf-8").splitlines()
+    assert len(lines) >= 2
+    assert all(line.strip() == "strict" for line in lines)
