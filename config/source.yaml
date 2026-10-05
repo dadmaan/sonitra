@@ -213,12 +213,13 @@ observability:
     log_level: null # optional root log level override; DEBUG | INFO | WARNING | ERROR | CRITICAL; overrides pipeline.log_level when set
     progress: true # master switch for live progress bars in the CLI
 
-# Stem separation — planned feature, not yet implemented.
-# See ROADMAP.md for the intended design.
-# Leave enabled: false; the passthrough backend is a no-op.
+# Stem separation. Two backends: "passthrough" (a no-op that returns the mix
+# unchanged) and "demucs" (source separation; needs `pip install sonitra[demucs]`).
+# Leave enabled: false unless the stem is used, since separation re-runs the model
+# over every rendered file.
 separation:
     enabled: false
-    backend: passthrough # only "passthrough" is implemented; "demucs" is planned
+    backend: passthrough # "passthrough" (no-op) or "demucs" (needs the [demucs] extra)
     model: htdemucs
     device: cpu # unified: "cpu", "cuda", "cuda:N" or "GPU:N"; "GPU:0" → torch "cuda:0" (see transcribe/devices.py)
     stem: null
@@ -226,7 +227,7 @@ separation:
 
 transcription:
     output_dir: transcriptions
-    max_workers: 1 # parallel audio files per transcriber; safe for any rendering mode
+    max_workers: 1 # `sonitra transcribe` only, no effect in `sonitra benchmark`; the built-in models serialise inference on a per-instance lock so the gain is small there, while `external_command` really does run one subprocess per file
     numeric_mode: "off" # framework determinism + precision: off | warn (fallback) | strict (raise); strict recommended for published runs
     gpu_memory_growth: false # TF allocates GPU memory as needed; may change cuDNN algorithm choice, so it stays in the benchmark fingerprint
     transcribers:
@@ -241,7 +242,7 @@ transcription:
           melodia_trick: true # HMM/melodia post-processing smoothing (code default)
           multiple_pitch_bends: false # allow overlapping same-pitch notes w/ glissando (code default)
           save_raw_outputs: false # persist raw model outputs as CSV sidecar next to each MIDI (code default)
-          batch_size: 16 # stacked-window inference batch size, CPU only (GPU stays at 1: batched-GPU throughput is unmeasured); 16-32 recommended
+          batch_size: null # windows per inference call; null = 1 on GPU, 16 on CPU; any value applies on every device (on CUDA, values above 8 changed notes slightly in measurement)
         # Pre-exported MIDI from any external tool:
         # - type: precomputed
         #   name: klangio             # used as the output subdirectory name
@@ -271,7 +272,7 @@ transcription:
         #   batch_size: 1             # windows per forward pass; 1 is bit-reproducible, higher only changes reduction order
 
 evaluation:
-    max_workers: 1 # parallel reference/estimate pairs during scoring
+    max_workers: 1 # `sonitra evaluate` only, no effect in `sonitra benchmark`; parallel reference/estimate pairs during scoring
     note_metrics:
         enabled: true
         onset_tolerance_sec: 0.05 # ±50 ms onset matching window

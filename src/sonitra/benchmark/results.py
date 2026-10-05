@@ -107,6 +107,14 @@ def compute_fingerprint(config: PipelineConfig) -> str:
     computed under two different meanings of "condition"/"record".
     """
     data = config.model_dump(mode="json")
+    for transcriber in data.get("transcription", {}).get("transcribers", ()):
+        # Configs saved before basic_pitch's default became unset dumped
+        # batch_size as 16, so normalising keeps every existing work dir
+        # resumable. An explicit 16 and an unset value therefore hash the same,
+        # which is harmless on the CPU because both run at 16; on a GPU the
+        # row-level resume check is what catches the difference.
+        if transcriber.get("type") == "basic_pitch" and transcriber.get("batch_size") is None:
+            transcriber["batch_size"] = 16
     io_data = data.get("io", {})
     if not io_data.get("where"):
         # Filter keys are inert without a filter; dropping them keeps the hash

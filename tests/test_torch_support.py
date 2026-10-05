@@ -1,4 +1,4 @@
-"""Shared torch support — process numeric settings, device validation, env defaults."""
+"""Shared torch support — process numeric settings and device validation."""
 from __future__ import annotations
 
 import os
@@ -46,7 +46,7 @@ def _reset_numeric_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """The applied-settings cache is process-global; start every test from empty."""
     from sonitra.transcribe import torch_support
 
-    monkeypatch.setattr(torch_support, "_NUMERIC_APPLIED", None)
+    monkeypatch.setattr(torch_support, "_NUMERIC_STATE", None)
 
 
 # ── numeric settings: no torch for 'off' ────────────────────────────────
@@ -127,7 +127,7 @@ def test_numeric_cache_is_shared_across_backends(monkeypatch: pytest.MonkeyPatch
     torch_support.apply_torch_numeric_settings("warn", False, backend="b")
 
     assert len(calls) == 1
-    assert torch_support._NUMERIC_APPLIED == ("warn", False)
+    assert torch_support._NUMERIC_STATE == (("warn", False), ())
 
 
 # ── numeric settings: failure reporting ─────────────────────────────────
@@ -147,7 +147,7 @@ def test_numeric_strict_failure_names_the_backend(monkeypatch: pytest.MonkeyPatc
         torch_support.apply_torch_numeric_settings("strict", False, backend="transkun")
     assert str(exc_info.value) == "transkun strict numeric_mode failed: deterministic algorithms: det boom"
 
-    monkeypatch.setattr(torch_support, "_NUMERIC_APPLIED", None)
+    monkeypatch.setattr(torch_support, "_NUMERIC_STATE", None)
     with pytest.raises(TranscriptionError) as other:
         torch_support.apply_torch_numeric_settings("strict", False, backend="torchy")
     assert str(other.value) == "torchy strict numeric_mode failed: deterministic algorithms: det boom"
@@ -190,41 +190,6 @@ def test_numeric_warn_without_warn_only_support_logs(
         "transkun numeric_mode=warn: torch lacks warn_only; continuing unconstrained"
         in caplog.text
     )
-
-
-# ── env defaults ────────────────────────────────────────────────────────
-
-def test_numeric_settings_from_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.delenv("SONITRA_NUMERIC_MODE", raising=False)
-    monkeypatch.delenv("SONITRA_GPU_MEMORY_GROWTH", raising=False)
-    assert numeric_settings_from_env() == ("off", False)
-
-
-def test_numeric_settings_from_env_returns_mode_verbatim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "STRICT")
-    assert numeric_settings_from_env()[0] == "STRICT"
-
-
-@pytest.mark.parametrize("value", ["1", "true", "YES", "on", "  True  ", "ON"])
-def test_gpu_memory_growth_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", value)
-    assert numeric_settings_from_env()[1] is True
-
-
-@pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "  "])
-def test_gpu_memory_growth_falsy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    from sonitra.transcribe.torch_support import numeric_settings_from_env
-
-    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", value)
-    assert numeric_settings_from_env()[1] is False
 
 
 # ── device validation: no framework import for cpu / non-cuda ───────────
@@ -468,8 +433,6 @@ def test_transkun_forwards_resolved_device_to_numeric_settings(
     """Strict numeric mode on an accelerator only sets the cuBLAS workspace when
     the backend hands the shared helper its resolved device, so that handoff is
     pinned here rather than left to inspection."""
-    from unittest.mock import patch
-
     from sonitra.transcribe import transkun as transkun_module
     from sonitra.transcribe.base import TranscriptionError
 
@@ -488,10 +451,13 @@ def test_transkun_forwards_resolved_device_to_numeric_settings(
     )
 
     transcriber = transkun_module.TranskunTranscriber(device="GPU:0", numeric_mode="strict")
-    # stopping at the first optional import keeps the test free of weights and audio
-    with patch.dict(sys.modules, {"moduleconf": None}):
-        with pytest.raises(TranscriptionError) as exc_info:
-            transcriber.transcribe("unused.wav")
+    # Stopping at the first optional import keeps the test free of weights and
+    # audio. Only this key is stubbed: replacing the whole mapping would also drop
+    # torch if it happened to be imported here for the first time, and importing a
+    # native extension twice in one process corrupts its state.
+    monkeypatch.setitem(sys.modules, "moduleconf", None)
+    with pytest.raises(TranscriptionError) as exc_info:
+        transcriber.transcribe("unused.wav")
     assert "moduleconf" in str(exc_info.value)
     assert seen == {"mode": "strict", "backend": "transkun", "device": "cuda:0"}
 

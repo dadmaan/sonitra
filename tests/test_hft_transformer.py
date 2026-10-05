@@ -176,6 +176,23 @@ def test_hft_unknown_numeric_mode_raises() -> None:
         assert HftTransformerTranscriber(numeric_mode=mode).numeric_mode == mode
 
 
+def test_hft_transformer_builder_forwards_numeric_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The builder, not the transcriber, resolves the numeric settings: it runs
+    once per instance, while transcribe() runs per file."""
+    from sonitra.transcribe.configs import HftTransformerTranscriberConfig
+    from sonitra.transcribe.protocol import make_transcriber
+
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "strict")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "1")
+
+    transcriber = make_transcriber(HftTransformerTranscriberConfig())
+
+    assert transcriber.numeric_mode == "strict"
+    assert transcriber.gpu_memory_growth is True
+
+
 # ── import deferral ────────────────────────────────────────────────────
 
 def _run_subprocess(code: str) -> subprocess.CompletedProcess[str]:

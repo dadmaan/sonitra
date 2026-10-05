@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -10,7 +11,7 @@ import pytest
 from sonitra.cli import evaluate, init
 from sonitra.config import SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
-from sonitra.transcribe.base import TranscriptionResult
+from sonitra.transcribe.base import NumericSettingsError, TranscriptionResult
 
 
 def test_init_writes_working_basic_pitch_config(tmp_path: Path) -> None:
@@ -1220,4 +1221,176 @@ def test_benchmark_preflight_real_path_exits_without_traceback(
     assert isinstance(result.exception, SystemExit)
     assert "error:" in result.stderr
     assert "device 'cuda' unavailable" in _squash(result.stderr)
+    assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Numeric settings come from the config, never from a process-wide export
+# ---------------------------------------------------------------------------
+
+
+def test_benchmark_cli_does_not_export_numeric_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    result = _run_benchmark_cli(config_path)
+
+    assert result.exit_code == 0, result.output
+    assert "SONITRA_NUMERIC_MODE" not in os.environ
+    assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+
+
+def test_transcribe_cli_uses_config_numeric_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+    from sonitra.transcribe.numerics import read_numeric_env
+
+    payload = yaml.safe_load(
+        _MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path / "oracle"))
+    )
+    payload["transcription"]["numeric_mode"] = "strict"
+    payload["transcription"]["gpu_memory_growth"] = True
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    (tmp_path / "test_c4.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "off")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "0")
+    recorded: list[tuple[str, bool]] = []
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return _StubTranscriber(None)
+
+    monkeypatch.setattr(protocol, "make_transcriber", factory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert recorded == [("strict", True)]
+
+
+# ---------------------------------------------------------------------------
+# A strict numeric failure aborts the transcribe run instead of failing files
+# ---------------------------------------------------------------------------
+
+
+class _StrictNumericStub:
+    """Transcriber stub that rejects the run's numeric settings outright."""
+
+    name = "stub"
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.error = error
+        self.calls = 0
+
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        raise NumericSettingsError("boom")
+
+    def transcribe(self, audio_path):
+        self.calls += 1
+        if self.error is not None and self.calls >= 2:
+            raise self.error
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def test_transcribe_strict_failure_exits_1_before_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+
+    (tmp_path / "test_c4.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+    monkeypatch.setattr(protocol, "make_transcriber", lambda cfg: _StrictNumericStub())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "boom" in _squash(result.stderr)
+    assert not list((tmp_path / "out").rglob("*.mid"))
+
+
+def test_transcribe_strict_failure_mid_run_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+
+    (tmp_path / "piece_0.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    (tmp_path / "piece_1.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+    monkeypatch.setattr(
+        protocol,
+        "make_transcriber",
+        lambda cfg: _StrictNumericStub(NumericSettingsError("boom")),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "boom" in _squash(result.stderr)
+    # A fatal numeric failure is not a per-file failure: the run must not report
+    # an "N ok, M failed" tally for it.
+    assert "failed" not in _squash(result.output)
+
+
+def test_benchmark_strict_failure_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.benchmark import runner as runner_module
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _StrictNumericStub()
+    )
+
+    result = CliRunner().invoke(app, ["benchmark", "--config", str(config_path)])
+
+    assert result.exit_code == 1, result.output
+    assert "boom" in _squash(result.stderr)
     assert "Traceback" not in result.output

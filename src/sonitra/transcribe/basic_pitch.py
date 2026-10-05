@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -10,15 +9,29 @@ import numpy as np
 
 from sonitra.notes import make_note
 from sonitra.transcribe.base import (
+    NumericSettingsError,
     TranscriptionError,
     TranscriptionResult,
     checkpoint_identity,
 )
 from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 from sonitra.transcribe.devices import resolve_tf_device
+from sonitra.transcribe.numerics import read_numeric_env
 from sonitra.transcribe.protocol import register_transcriber
 
 logger = logging.getLogger(__name__)
+
+#: The batch used when the config leaves batch_size unset. Stacked windows
+#: amortise the CPU cost per window, while an accelerator keeps one window per
+#: call by default: batch 1 reproduces upstream per-window inference exactly.
+_CPU_DEFAULT_BATCH = 16
+_ACCELERATOR_DEFAULT_BATCH = 1
+
+
+def resolve_effective_batch(batch_size: int | None, tf_device: str) -> int:
+    if batch_size is not None:
+        return batch_size
+    return _CPU_DEFAULT_BATCH if "cpu" in tf_device.lower() else _ACCELERATOR_DEFAULT_BATCH
 
 
 def _basic_pitch_package_version() -> str:
@@ -38,19 +51,32 @@ def _basic_pitch_package_version() -> str:
         return "unknown"
 
 
-_NUMERIC_APPLIED: tuple[str, bool] | None = None
+#: What this process already applied to TensorFlow, as the requested settings
+#: plus the fallbacks they hit. TF refuses repeated setup once the device is
+#: initialised, so the answer is cached per process rather than per file.
+_NUMERIC_STATE: tuple[tuple[str, bool], tuple[str, ...]] | None = None
 
 
-def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
+def _apply_numeric_settings(
+    numeric_mode: str, gpu_memory_growth: bool
+) -> tuple[str, ...]:
     """Apply process-global TF numeric settings ahead of model load.
 
-    Skips when the same settings already applied in this process (TF raises
-    once the device is initialised). strict raises TranscriptionError on
-    failure; warn logs and falls back.
+    Returns the fallbacks that had to be accepted, empty when the requested
+    settings were applied in full. A strict failure raises
+    :class:`~sonitra.transcribe.base.NumericSettingsError` on every call and
+    leaves the cache unset, so the next file is not told "already applied" about
+    settings that never took effect; every other fallback is returned, cached and
+    logged once per process.
     """
-    global _NUMERIC_APPLIED
-    if _NUMERIC_APPLIED == (numeric_mode, gpu_memory_growth):
-        return
+    global _NUMERIC_STATE
+    settings = (numeric_mode, gpu_memory_growth)
+    if _NUMERIC_STATE is not None and _NUMERIC_STATE[0] == settings:
+        return _NUMERIC_STATE[1]
+    if numeric_mode == "off" and not gpu_memory_growth:
+        # The default CPU path asks for nothing, so TensorFlow is never imported.
+        _NUMERIC_STATE = (settings, ())
+        return ()
     import tensorflow as tf
 
     failures: list[str] = []
@@ -70,12 +96,17 @@ def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
             tf.config.experimental.enable_tensor_float_32_execution(False)
         except (AttributeError, RuntimeError) as exc:
             failures.append(f"TF32 disable: {exc}")
-    _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
+    if failures and numeric_mode == "strict":
+        raise NumericSettingsError(
+            f"basic_pitch strict numeric_mode failed: {'; '.join(failures)}"
+        )
     if failures:
-        message = "; ".join(failures)
-        if numeric_mode == "strict":
-            raise TranscriptionError(f"basic_pitch strict numeric_mode failed: {message}")
-        logger.warning("basic_pitch numeric settings fell back (%s)", message)
+        logger.warning(
+            "basic_pitch numeric settings fell back (%s)", "; ".join(failures)
+        )
+    fallbacks = tuple(failures)
+    _NUMERIC_STATE = (settings, fallbacks)
+    return fallbacks
 
 
 class BasicPitchTranscriber:
@@ -104,7 +135,7 @@ class BasicPitchTranscriber:
         save_raw_outputs: bool = False,
         numeric_mode: str = "off",
         gpu_memory_growth: bool = False,
-        batch_size: int = 16,
+        batch_size: int | None = None,
         name: str = "basic_pitch",
     ) -> None:
         self.onset_threshold = float(onset_threshold)
@@ -124,7 +155,7 @@ class BasicPitchTranscriber:
             )
         self.numeric_mode = mode
         self.gpu_memory_growth = bool(gpu_memory_growth)
-        self.batch_size = int(batch_size)
+        self.batch_size = None if batch_size is None else int(batch_size)
         self.name = name
         self._model: Any | None = None
         self._lock = threading.RLock()
@@ -172,6 +203,10 @@ class BasicPitchTranscriber:
                 )
         return tf_device, True
 
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        """Process-global numeric settings for this backend, with the fallbacks it hit."""
+        return _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
+
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
         import logging as _logging
 
@@ -196,7 +231,7 @@ class BasicPitchTranscriber:
                 "basic-pitch is not installed; it should be present after `pip install sonitra`."
             ) from exc
 
-        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
+        numeric_fallbacks = self.apply_numeric_settings()
 
         from sonitra.storage import read_audio_basic_pitch
 
@@ -208,9 +243,10 @@ class BasicPitchTranscriber:
         n_overlapping_frames = 30
         overlap_len = n_overlapping_frames * FFT_HOP
         hop_size = AUDIO_N_SAMPLES - overlap_len
-        # CPU-only batching. GPU stays at batch 1: batched-GPU throughput is
-        # unmeasured; batch 1 reproduces upstream per-window inference exactly.
-        effective_batch = self.batch_size if "cpu" in tf_device.lower() else 1
+        # An unset batch is 1 on a GPU and 16 on the CPU; a set value applies on
+        # any device. Batch 1 on CUDA reproduces upstream per-window inference
+        # exactly, and batches above 8 changed notes slightly in measurement.
+        effective_batch = resolve_effective_batch(self.batch_size, tf_device)
 
         audio, _sample_rate = read_audio_basic_pitch(str(audio_path))
         original_length = int(audio.shape[0])
@@ -282,6 +318,10 @@ class BasicPitchTranscriber:
             "requested_device": self.device,
             "device_available": _available,
             "numeric_mode": self.numeric_mode,
+            "gpu_memory_growth": self.gpu_memory_growth,
+            "numeric_fallbacks": list(numeric_fallbacks),
+            "batch_size": self.batch_size,
+            "effective_batch": effective_batch,
             "filtered_dropped": filtered_dropped,
             "note_events_total": len(note_events),
             "notes_kept": len(notes),
@@ -298,6 +338,7 @@ class BasicPitchTranscriber:
 
 @register_transcriber("basic_pitch")
 def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
+    numeric_mode, gpu_memory_growth = read_numeric_env()
     return BasicPitchTranscriber(
         onset_threshold=cfg.onset_threshold,
         frame_threshold=cfg.frame_threshold,
@@ -309,8 +350,7 @@ def _build(cfg: BasicPitchTranscriberConfig) -> BasicPitchTranscriber:
         multiple_pitch_bends=cfg.multiple_pitch_bends,
         save_raw_outputs=cfg.save_raw_outputs,
         batch_size=cfg.batch_size,
-        numeric_mode=os.environ.get("SONITRA_NUMERIC_MODE", "off"),
-        gpu_memory_growth=os.environ.get("SONITRA_GPU_MEMORY_GROWTH", "").strip().lower()
-        in {"1", "true", "yes", "on"},
+        numeric_mode=numeric_mode,
+        gpu_memory_growth=gpu_memory_growth,
         name=cfg.name or "basic_pitch",
     )

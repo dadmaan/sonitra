@@ -5,7 +5,7 @@ site_description = "Sonitra: A Controlled Benchmarking Toolkit for Automatic Mus
 repo_url = "https://github.com/dadmaan/sonitra"
 repo_name = "dadmaan/sonitra"
 
-# Navigation pages are not yet written; see ROADMAP.md for planned documentation.
+# Navigation is not configured yet; see ROADMAP.md for the planned structure.
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"

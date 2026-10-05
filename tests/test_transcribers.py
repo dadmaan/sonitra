@@ -516,7 +516,9 @@ def test_basic_pitch_builder_forwards_numeric_env(monkeypatch: pytest.MonkeyPatc
 def test_basic_pitch_builder_forwards_batch_size() -> None:
     from sonitra.transcribe.configs import BasicPitchTranscriberConfig
 
-    assert make_transcriber(BasicPitchTranscriberConfig()).batch_size == 16
+    # Unset means "let the device decide", so the builder forwards None rather
+    # than resolving a number the config never asked for.
+    assert make_transcriber(BasicPitchTranscriberConfig()).batch_size is None
     assert make_transcriber(BasicPitchTranscriberConfig(batch_size=32)).batch_size == 32
 
 
@@ -539,3 +541,233 @@ def test_basic_pitch_batched_matches_single(tmp_path: Path) -> None:
     single = BasicPitchTranscriber(device="cpu", batch_size=1).transcribe(audio_path)
     batched = BasicPitchTranscriber(device="cpu", batch_size=2).transcribe(audio_path)
     assert batched.notes == single.notes
+
+
+@pytest.mark.slow
+def test_basic_pitch_metadata_records_numeric_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-strict fallback is recorded on the row, so a results table can
+    show that determinism was not actually in force."""
+    pytest.importorskip("basic_pitch")
+    import basic_pitch.inference as inference_module
+    import numpy as np
+    from scipy.io import wavfile
+
+    from sonitra.transcribe import basic_pitch as basic_pitch_module
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    t = np.linspace(0.0, 0.5, int(sample_rate * 0.5), endpoint=False)
+    signal = (0.5 * np.sin(2.0 * np.pi * 440.0 * t)).astype(np.float32)
+    audio_path = tmp_path / "a.wav"
+    wavfile.write(audio_path, sample_rate, signal)
+
+    class _SilentModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def predict(self, batch):
+            return {
+                "onset": np.zeros((1, 60, 88), np.float32),
+                "contour": np.zeros((1, 60, 264), np.float32),
+                "note": np.zeros((1, 60, 88), np.float32),
+            }
+
+    monkeypatch.setattr(inference_module, "Model", _SilentModel)
+
+    # Scoped to the warned run: the default run must reach the real guard to show
+    # that settings which applied cleanly record no fallback at all.
+    with monkeypatch.context() as warned_guard:
+        warned_guard.setattr(
+            basic_pitch_module,
+            "_apply_numeric_settings",
+            lambda numeric_mode, gpu_memory_growth: ("memory growth: boom",),
+        )
+        warned = BasicPitchTranscriber(
+            numeric_mode="warn", gpu_memory_growth=True
+        ).transcribe(audio_path)
+    assert warned.metadata["numeric_fallbacks"] == ["memory growth: boom"]
+    assert warned.metadata["gpu_memory_growth"] is True
+
+    default = BasicPitchTranscriber().transcribe(audio_path)
+    assert default.metadata["numeric_fallbacks"] == []
+    assert default.metadata["gpu_memory_growth"] is False
+
+
+def test_basic_pitch_apply_numeric_settings_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sonitra.transcribe import basic_pitch as basic_pitch_module
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    calls: list[tuple[str, bool]] = []
+
+    def fake(numeric_mode: str, gpu_memory_growth: bool) -> tuple[str, ...]:
+        calls.append((numeric_mode, gpu_memory_growth))
+        return ("memory growth: boom",)
+
+    monkeypatch.setattr(basic_pitch_module, "_apply_numeric_settings", fake)
+
+    transcriber = BasicPitchTranscriber(numeric_mode="warn", gpu_memory_growth=True)
+
+    assert transcriber.apply_numeric_settings() == ("memory growth: boom",)
+    assert calls == [("warn", True)]
+
+
+# ── effective batch: an explicit value applies on every device ───────────
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "tf_device", "expected"),
+    [
+        (None, "cpu", 16),
+        (None, "CPU:0", 16),
+        (None, "/cpu:0", 16),
+        (None, "GPU:0", 1),
+        (None, "GPU:1", 1),
+        (None, "/device:GPU:0", 1),
+        (1, "cpu", 1),
+        (8, "cpu", 8),
+        (32, "cpu", 32),
+        (2, "GPU:0", 2),
+        (8, "GPU:0", 8),
+        (16, "GPU:0", 16),
+        (64, "GPU:0", 64),
+    ],
+)
+def test_resolve_effective_batch(
+    batch_size: int | None, tf_device: str, expected: int
+) -> None:
+    from sonitra.transcribe.basic_pitch import resolve_effective_batch
+
+    assert resolve_effective_batch(batch_size, tf_device) == expected
+
+
+def _record_batch_sizes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    device: str,
+    batch_size: int | None = None,
+) -> list[int]:
+    """Transcribe silence and report the window count of every batch handed to the model."""
+    pytest.importorskip("basic_pitch")
+    import basic_pitch.inference as inference_module
+    import numpy as np
+    from basic_pitch.constants import ANNOT_N_FRAMES
+    from scipy.io import wavfile
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    silence = np.zeros(int(sample_rate * 35.0), dtype=np.float32)
+    audio_path = tmp_path / "silence.wav"
+    wavfile.write(audio_path, sample_rate, silence)
+
+    seen: list[int] = []
+
+    class _BatchRecordingModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def predict(self, batch):
+            seen.append(int(batch.shape[0]))
+            frames = int(batch.shape[0])
+            return {
+                "note": np.zeros((frames, ANNOT_N_FRAMES, 88), np.float32),
+                "onset": np.zeros((frames, ANNOT_N_FRAMES, 88), np.float32),
+                "contour": np.zeros((frames, ANNOT_N_FRAMES, 264), np.float32),
+            }
+
+    monkeypatch.setattr(inference_module, "Model", _BatchRecordingModel)
+    if device != "cpu":
+        # The stub runs no TensorFlow op, so the accelerator is only a name the
+        # backend has to resolve and batch against.
+        monkeypatch.setattr(
+            BasicPitchTranscriber,
+            "validate_device",
+            lambda self: (device, True),
+        )
+
+    kwargs = {} if batch_size is None else {"batch_size": batch_size}
+    BasicPitchTranscriber(device=device, **kwargs).transcribe(audio_path)
+    return seen
+
+
+def test_basic_pitch_gpu_unset_runs_batch_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _record_batch_sizes(tmp_path, monkeypatch, device="GPU:0") == [1] * 22
+
+
+def test_basic_pitch_cpu_unset_runs_batch_16(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _record_batch_sizes(tmp_path, monkeypatch, device="cpu") == [16, 6]
+
+
+def test_basic_pitch_gpu_explicit_batch_applies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _record_batch_sizes(
+        tmp_path, monkeypatch, device="GPU:0", batch_size=8
+    ) == [8, 8, 6]
+
+
+def test_basic_pitch_gpu_explicit_batch_has_no_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _record_batch_sizes(
+        tmp_path, monkeypatch, device="GPU:0", batch_size=64
+    ) == [22]
+
+
+def test_basic_pitch_cpu_explicit_batch_applies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _record_batch_sizes(
+        tmp_path, monkeypatch, device="cpu", batch_size=8
+    ) == [8, 8, 6]
+
+
+def test_basic_pitch_metadata_records_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("basic_pitch")
+    import basic_pitch.inference as inference_module
+    import numpy as np
+    from basic_pitch.constants import ANNOT_N_FRAMES
+    from scipy.io import wavfile
+
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    silence = np.zeros(int(sample_rate * 2.0), dtype=np.float32)
+    audio_path = tmp_path / "silence.wav"
+    wavfile.write(audio_path, sample_rate, silence)
+
+    class _SilentModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def predict(self, batch):
+            frames = int(batch.shape[0])
+            return {
+                "note": np.zeros((frames, ANNOT_N_FRAMES, 88), np.float32),
+                "onset": np.zeros((frames, ANNOT_N_FRAMES, 88), np.float32),
+                "contour": np.zeros((frames, ANNOT_N_FRAMES, 264), np.float32),
+            }
+
+    monkeypatch.setattr(inference_module, "Model", _SilentModel)
+    monkeypatch.setattr(
+        BasicPitchTranscriber, "validate_device", lambda self: ("GPU:0", True)
+    )
+
+    explicit = BasicPitchTranscriber(device="GPU:0", batch_size=8).transcribe(audio_path)
+    assert explicit.metadata["batch_size"] == 8
+    assert explicit.metadata["effective_batch"] == 8
+
+    unset = BasicPitchTranscriber(device="GPU:0").transcribe(audio_path)
+    assert unset.metadata["batch_size"] is None
+    assert unset.metadata["effective_batch"] == 1

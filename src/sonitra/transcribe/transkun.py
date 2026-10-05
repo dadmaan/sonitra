@@ -14,11 +14,11 @@ from sonitra.notes import make_note
 from sonitra.transcribe.base import TranscriptionError, TranscriptionResult, checkpoint_identity
 from sonitra.transcribe.configs import TranskunTranscriberConfig
 from sonitra.transcribe.devices import resolve_torch_device
+from sonitra.transcribe.numerics import read_numeric_env
 from sonitra.transcribe.protocol import register_transcriber
 from sonitra.transcribe.torch_support import (
     apply_torch_numeric_settings,
     missing_dependency_error,
-    numeric_settings_from_env,
     validate_torch_device,
 )
 
@@ -103,9 +103,9 @@ def _transkun_package_version() -> str:
 
 def _apply_numeric_settings(
     numeric_mode: str, gpu_memory_growth: bool, *, device: str | None = None
-) -> None:
+) -> tuple[str, ...]:
     """Apply process-global torch numeric settings for this backend."""
-    apply_torch_numeric_settings(
+    return apply_torch_numeric_settings(
         numeric_mode, gpu_memory_growth, backend="transkun", device=device
     )
 
@@ -154,6 +154,12 @@ class TranskunTranscriber:
         """
         return validate_torch_device(self.device, backend="transkun")
 
+    def apply_numeric_settings(self, device: str | None = None) -> tuple[str, ...]:
+        """Process-global numeric settings for this backend, with the fallbacks it hit."""
+        return _apply_numeric_settings(
+            self.numeric_mode, self.gpu_memory_growth, device=device
+        )
+
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
         # Fail fast on a missing accelerator; also the backstop for worker
         # subprocesses and direct library use.
@@ -164,7 +170,7 @@ class TranskunTranscriber:
         except ImportError as exc:
             raise _missing_dependency("torch") from exc
 
-        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth, device=resolved)
+        numeric_fallbacks = self.apply_numeric_settings(device=resolved)
 
         # lazy load of transkun package itself
         try:
@@ -298,6 +304,7 @@ class TranskunTranscriber:
             "requested_device": self.device,
             "device_available": _available,
             "numeric_mode": self.numeric_mode,
+            "numeric_fallbacks": list(numeric_fallbacks),
             "filtered_dropped": filtered_dropped,
             "note_events_total": raw_count,
             "notes_kept": len(notes),
@@ -316,7 +323,7 @@ class TranskunTranscriber:
 
 @register_transcriber("transkun")
 def _build(cfg: TranskunTranscriberConfig) -> TranskunTranscriber:
-    numeric_mode, gpu_memory_growth = numeric_settings_from_env()
+    numeric_mode, gpu_memory_growth = read_numeric_env()
     return TranskunTranscriber(
         device=cfg.device,
         segment_size_sec=cfg.segment_size_sec,

@@ -261,6 +261,38 @@ def test_basic_pitch_config_accepts_new_knobs() -> None:
     assert cfg.save_raw_outputs is True
 
 
+def test_basic_pitch_batch_size_defaults_to_none() -> None:
+    # Unset lets the device decide, rather than pinning the old CPU default on
+    # every device including an accelerator.
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+
+    assert BasicPitchTranscriberConfig().batch_size is None
+
+
+def test_basic_pitch_batch_size_null_in_yaml() -> None:
+    from sonitra.config import PipelineConfig
+
+    cfg = PipelineConfig.model_validate(
+        {
+            **_minimal_config_dict(),
+            "transcription": {
+                "transcribers": [{"type": "basic_pitch", "batch_size": None}]
+            },
+        }
+    )
+    assert cfg.transcription.transcribers[0].batch_size is None
+
+
+def test_basic_pitch_batch_size_must_be_positive() -> None:
+    from pydantic import ValidationError
+
+    from sonitra.transcribe.configs import BasicPitchTranscriberConfig
+
+    with pytest.raises(ValidationError) as excinfo:
+        BasicPitchTranscriberConfig(batch_size=0)
+    assert "batch_size" in str(excinfo.value)
+
+
 def test_basic_pitch_config_still_forbids_unknown_keys() -> None:
     # ConfigError comes from PipelineConfig.model_validate re-raising pydantic's
     # ValidationError when the basic_pitch transcriber block carries an unknown key.
@@ -438,10 +470,12 @@ def test_maestro_test_presets_differ_from_piano_only_only_by_filter_and_transcri
         diff = _differing_keys(base, _flatten(cfg.model_dump(mode="json")))
         assert {key for key in diff if not key.startswith("io.where.")} == shared | extra, path
         assert "io.where.split" in diff, path
-        # basic_pitch keeps piano_only's settings apart from the device.
+        # basic_pitch keeps piano_only's settings apart from the device and the
+        # batch: piano_only leaves batch_size unset (1 on a GPU), while these
+        # split presets run it on the CPU with an explicit 16.
         base_bp = base_cfg.transcription.transcribers[0].model_dump(mode="json")
         bp = cfg.transcription.transcribers[0].model_dump(mode="json")
-        assert {k for k in base_bp if base_bp[k] != bp[k]} == {"device"}, path
+        assert {k for k in base_bp if base_bp[k] != bp[k]} == {"device", "batch_size"}, path
 
 
 def test_maestro_train_probes_sample_train_split() -> None:
@@ -662,3 +696,76 @@ def test_source_yaml_documents_tuning_offset() -> None:
         assert re.search(rf"^[ \t]*#[ \t]+{field}:", body, re.M), field
     # The engine choice is the reason the offset is not a native plugin.
     assert "time_stretch" in body
+
+
+def test_benchmark_presets_pass_run_level_validation() -> None:
+    """No shipped preset may ship a run-level override the runner refuses.
+
+    Conditions and sweeps are expanded per condition, while the CLI resolves the
+    dataset, the file selection and the run directory once; an override of those
+    would be recorded and silently ignored. This guards the presets against
+    shipping one, and it fails with the offending path and key rather than on the
+    first preset that happens to break.
+    """
+    from sonitra.benchmark import runner as runner_module
+
+    config_dir = Path(__file__).parent.parent / "config"
+    presets = sorted(p for p in config_dir.rglob("*.yaml") if p.name != "source.yaml")
+
+    offenders: list[str] = []
+    for path in presets:
+        try:
+            runner_module._validate_no_run_level_override(load_config(path))
+        except ValueError as exc:
+            offenders.append(f"{path.relative_to(config_dir)}: {exc}")
+
+    assert not offenders, "presets override run-level keys:\n" + "\n".join(offenders)
+
+
+def test_benchmark_presets_do_not_set_standalone_worker_keys() -> None:
+    """A benchmark preset carries no worker key it cannot act on.
+
+    ``transcription.max_workers`` is read by ``sonitra transcribe`` and
+    ``evaluation.max_workers`` by ``sonitra evaluate``; ``sonitra benchmark``
+    reads neither, so a value here only invites the reader to believe it
+    parallelises the study. The raw YAML is read rather than a loaded config so
+    an absent key cannot be masked by the schema default of 1.
+    """
+    import yaml
+
+    benchmark_dir = Path(__file__).resolve().parent.parent / "config" / "benchmark"
+    presets = sorted(benchmark_dir.rglob("*.yaml"))
+    assert presets, "the benchmark preset walk found nothing"
+
+    offenders: list[str] = []
+    for path in presets:
+        raw = yaml.safe_load(path.read_text()) or {}
+        for section in ("transcription", "evaluation"):
+            if "max_workers" in (raw.get(section) or {}):
+                offenders.append(
+                    f"{path.relative_to(benchmark_dir)}: {section}.max_workers="
+                    f"{raw[section]['max_workers']}"
+                )
+
+    assert not offenders, "inert worker keys in benchmark presets:\n" + "\n".join(offenders)
+
+
+def test_source_yaml_worker_key_comments() -> None:
+    """The reference must say which command each worker key applies to.
+
+    Two identically named keys sit under different sections, and only one of
+    them affects a benchmark, so each comment names its own command.
+    """
+    text = default_config_path().read_text()
+    expected = {
+        "transcription": "sonitra transcribe",
+        "evaluation": "sonitra evaluate",
+    }
+
+    for section, command in expected.items():
+        # Locate the key by scanning the section's body, since line numbers drift.
+        body = re.search(rf"^{section}:\n(?P<lines>(?:[ \t]+.*\n)+)", text, re.M)
+        assert body, f"config/source.yaml has no {section} section"
+        match = re.search(r"^[ \t]+max_workers:.*$", body.group("lines"), re.M)
+        assert match, f"config/source.yaml {section} section documents no max_workers"
+        assert command in match.group(0), match.group(0)

@@ -30,12 +30,14 @@ The long input lasted 363.0 s with 222 windows. Numeric mode was off.
 
 - Graphics card was NVIDIA GeForce RTX 4090 Laptop GPU with 13510 MB of memory. Driver version was 581.29.
 - TF version was 2.15.0 with CUDA 12.2 and cuDNN 8. Python version was 3.11.16.
-- Code commit was 3c53295. The harness check guard_ok was true on every run. No production file was edited.
+- Code commit was 3c53295. The forced batch was verified on every run. No production file was edited.
 - Numeric mode was off. The loader was read_audio_basic_pitch. It stayed constant for all runs.
-- gpu_memory_growth was false. Batch size came only from the harness setting. The production guard line stayed in place.
-- Long input file was inputs/long_render.wav. Checksum md5 was db83146d902aebe516c885471dd6c3d1. Duration was 363.0 s with 222 windows.
-- Short set held 20 files under inputs/bsed20/. The files span 5 distortion conditions over piano stems 1 to 4. All 20 checksums differ.
+- gpu_memory_growth was false. The batch size came from the measurement's own setting rather than the config: production ran the GPU at batch 1 throughout.
+- Long input duration was 363.0 s with 222 windows. Its bytes are pinned by checksum md5 db83146d902aebe516c885471dd6c3d1.
+- Short set held 20 files drawn from the `bsed` distortion set. The files span 5 distortion conditions over piano stems 1 to 4. All 20 checksums differ.
 - Each setting ran in one fresh interpreter process. The long input ran first. Batches ran in ascending order. Devices alternated between cpu and cuda.
+- CUDA timings waited for the card before stopping the clock, and moving each batch's output to numpy serialised the work, so the clock covered what the card did.
+- The page cache was not dropped: provisioning reads were the cold touch and every timed run ran warm.
 - All 31 timed configurations finished. No OOM occurred.
 
 ## Batch curves
@@ -117,43 +119,9 @@ Peak graphics memory on the long input by batch:
 
 Peak memory grew with batch size. Batch 8 used 279 MB. Batch 64 used 1998 MB. No setting ran out of memory.
 
-## Reproduction
-
-Full sweep command:
-
-```
-uv run --no-sync python misc/20260922_gpu_batch_measure/sweep.py sweep --input both --numeric off
-```
-
-Single setting command:
-
-```
-uv run --no-sync python misc/20260922_gpu_batch_measure/sweep.py cell --device cuda --batch 8 --numeric off --input L
-```
-
-CUDA runs waited with tf.reduce_sum(tf.zeros((1024,), tf.float32)).numpy() inside tf.device(tf_device) after the predict loop. Predict to numpy materialisation also serialised each batch.
-
-Page cache was not dropped. Provisioning reads were the cold touch. All timed runs were warm.
-
-Data manifest under misc/20260922_gpu_batch_measure/:
-
-- run_header.json at misc/20260922_gpu_batch_measure/run_header.json holds the full fingerprint.
-- data/summary.json holds per setting medians with min and max plus speedups.
-- data/strict_rerun.json holds the strict rerun timings with zeroing results.
-- Long input curve files are data/batch_curve_L_cpu.csv with data/batch_curve_L_cuda.csv.
-- Short set curve files are data/batch_curve_B_cpu.csv with data/batch_curve_B_cuda.csv.
-- Parity files are data/parity_L.csv with data/parity_B.csv.
-- Per run phase rows match data/phase_times_L_cpu_8_off.jsonl style paths, one file per input and device and batch and numeric mode.
-- Per pass note files match data/notes_L_cuda_8_off_p0_long_render.wav.json style paths. Activation references are data/refacts_L_cpu.npz with data/refacts_L_cuda.npz plus the short set pair.
-- data/launch_order.json records launch order with return codes.
-- inputs/long_render.wav with inputs/long_render.meta.json pins the long input bytes with duration and window count.
-- inputs/bsed20/ with inputs/bsed20.meta.json pins the 20 short files with stems and conditions.
-- Harness file is misc/20260922_gpu_batch_measure/sweep.py with md5 4f59cfa47063588ec809df6cabf01960.
-- Production file src/sonitra/transcribe/basic_pitch.py kept the guard line effective_batch = self.batch_size if "cpu" in tf_device.lower() else 1.
-
 ## Limitations and follow ups
 
-- Long input was the existing file at /tmp/x.wav, staged as inputs/long_render.wav. Stem and render provenance is unrecoverable. Checksum pins the bytes.
+- The long input's render provenance is unrecoverable: which MIDI produced it is unknown. Its bytes are pinned by the checksum above.
 - Short set holds distortion_sweep piano stems. It is not BSED-20. Timing used 20 transcribe calls per pass. Parity reading covers 20 distinct files over 4 stems.
 - Each setting ran in one fresh interpreter. Single setting runs had no pair mate. State could not leak across settings.
 - Compute time covers the predict loop only. Unwrap and note assembly count toward post time.
@@ -161,4 +129,4 @@ Data manifest under misc/20260922_gpu_batch_measure/:
 - Strict equality to CPU is unreachable in off mode. Even CUDA batch 1 differs from CPU by dF1 0.00056.
 - Batch 8 won over batch 16 on fidelity. Medians sat 0.6 ms apart. Ranges overlapped.
 
-A follow up may lift the batch 1 guard in basic_pitch.py behind a config flag. It should add a regression test. This report authorizes no code change.
+The rule as built: an unset `batch_size` means 1 on a GPU and 16 on the CPU, and a value set in the config applies on every device with no cap. Each row records the batch that ran as `effective_batch` in `transcriber_metadata`, so a published number can be checked against the setting that produced it.

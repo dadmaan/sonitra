@@ -8,12 +8,11 @@
 # is pure waste; for routine use prefer the equivalence harness and keep this
 # preset for the occasional published methods run.
 #
-# NOTE: `transcription.numeric_mode` + `gpu_memory_growth` are process-global:
-# runner builds transcribers once from base config (runner.py:271,506), so
-# per-condition overrides are recorded in BenchmarkRecord.overrides but NOT
-# applied — one file with warn/strict conditions would falsely show ~0 delta.
-# Run once per mode with top-level `transcription.numeric_mode: "off"/warn/strict`
-# (3 separate runs). Keep "off" quoted (YAML 1.1 bool trap).
+# NOTE: `transcription.numeric_mode` and `gpu_memory_growth` are process-global,
+# and the transcribers are built once from the base config, so the run refuses a
+# condition or sweep that overrides `transcription.numeric_mode`. Run once per mode
+# with top-level `transcription.numeric_mode: "off"/warn/strict` (3 separate runs).
+# Keep "off" quoted (YAML 1.1 bool trap).
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/methods/numerics_check.yaml --dataset test --limit 2 --seed 123
@@ -99,7 +98,6 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 1
   numeric_mode: "off" # baseline; rerun with warn/strict at top level (see header)
   gpu_memory_growth: false
   transcribers:
@@ -140,7 +138,6 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 1
 
 benchmark:
   results_path: benchmark_results.jsonl
