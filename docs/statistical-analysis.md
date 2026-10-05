@@ -99,6 +99,27 @@ python scripts/export_regression_table.py \
 
 The regression table gains `meta.composition_year`. The script writes `<output>.provenance.json` next to the enriched CSV. That file logs input checksums, the exact command, and coverage. The annotation file uses `|` as a separator. Quoting is off by default because the comp-year file has unbalanced quotes. `--require-full-coverage` stops with an error if any row finds no match.
 
+### Own tuning offset (optional enrichment)
+
+`meta.own_tuning_cents` records how far a recording sits from A440, the standard reference pitch. It is a property of the performance, not of the piece, because a recording and its score can disagree about pitch. `scripts/estimate_tuning.py` measures it from the audio and reports a per-reference median, and `scripts/enrich_metadata.py` attaches that to the metadata CSV exactly as it attaches the composition year. Measure first, then enrich, and export against the enriched file with the same export flags:
+
+```bash
+python scripts/estimate_tuning.py \
+  --recordings corpus/maestro-v3/recordings \
+  --references corpus/maestro-v3/midi \
+  --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --join-column midi_filename \
+  --output corpus/maestro-v3/metadata/maestro-v3.0.0-own-tuning.csv
+
+python scripts/enrich_metadata.py \
+  --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --annotations corpus/maestro-v3/metadata/maestro-v3.0.0-own-tuning.csv \
+  --on midi_filename=midi_filename --add own_tuning_cents=own_tuning_cents \
+  --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-tuning.csv
+```
+
+The regression table gains `meta.own_tuning_cents`, which the generic `--covariate` flag accepts as it stands. One figure is not computed: the analysis scripts do not derive an effective-cents value, which would combine the offset a benchmark condition applied with the recording's own measured tuning, so that value cannot be used as a covariate yet.
+
 ## Running it
 
 ```bash

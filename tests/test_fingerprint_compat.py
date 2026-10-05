@@ -10,7 +10,10 @@ from sonitra.benchmark.results import compute_fingerprint
 from sonitra.config import PipelineConfig, load_config
 
 GOLDEN_VALID_CONFIG = "114b31a404838203a35a46cb8dbc25548b5462b5930a0ac72667c7eb0a403721"
-GOLDEN_PIANO_ONLY_PRESET = "3840432d6e2f670ab9372c89d570359d9b2c9401eec5454442ac8f19f082f069"
+# Re-captured when piano_only.yaml gained two leading tuning-offset slots and
+# nine tuning conditions, so existing work dirs for the paper configs stop
+# resuming and have to be re-run together.
+GOLDEN_PIANO_ONLY_PRESET = "8ff383745f82e281ea5ad321476bbfa56527cefa145f961bea3964968be8d26d"
 
 
 def test_fingerprint_golden_minimal_config() -> None:

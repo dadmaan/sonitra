@@ -2,6 +2,7 @@ import pytest
 import pedalboard
 
 from sonitra.config import load_config
+from sonitra.effects import EffectsChain
 from sonitra.effects.builtin_effects import (
     ChorusConfig,
     CompressorConfig,
@@ -15,9 +16,11 @@ from sonitra.effects.builtin_effects import (
     LowShelfFilterConfig,
     PeakFilterConfig,
     ReverbConfig,
+    TuningOffsetConfig,
     VST3PluginConfig,
 )
 from sonitra.effects.chain_builder import (
+    TuningOffsetStage,
     build_effects_chain,
     build_effects_chain_from_config,
 )
@@ -25,9 +28,9 @@ from sonitra.effects.chain_builder import (
 
 # ── Basic construction ───────────────────────────────────────────────
 
-def test_build_empty_chain_returns_pedalboard():
+def test_build_empty_chain_returns_empty_effects_chain():
     board = build_effects_chain([])
-    assert isinstance(board, pedalboard.Pedalboard)
+    assert isinstance(board, EffectsChain)
     assert len(board) == 0
 
 
@@ -220,6 +223,7 @@ def test_all_effects_disabled_returns_empty_chain():
             ),
             pedalboard.PeakFilter,
         ),
+        (TuningOffsetConfig(cents=10.0, enabled=True), TuningOffsetStage),
     ],
 )
 def test_all_builtin_effect_types_instantiate(effect_cfg, expected_cls):
@@ -249,5 +253,5 @@ def test_vst3_effect_guard_rejects_instrument(vital_vst_path):
 def test_build_from_pipeline_config(config_fixture):
     cfg = load_config(config_fixture("config_valid.yaml"))
     board = build_effects_chain_from_config(cfg)
-    assert isinstance(board, pedalboard.Pedalboard)
+    assert isinstance(board, EffectsChain)
     assert len(board) == 3

@@ -33,6 +33,9 @@ dependencies = [
     # (previously transitive via librosa).
     "soundfile",
     "soxr",
+    # Direct: scripts/estimate_tuning.py calls librosa.estimate_tuning;
+    # previously only transitive via basic-pitch.
+    "librosa>=0.11.0,<0.12",
 ]
 
 [project.optional-dependencies]

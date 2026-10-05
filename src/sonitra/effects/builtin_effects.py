@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class _EffectBase(BaseModel):
@@ -97,6 +98,30 @@ class PeakFilterConfig(_EffectBase):
     q: float
 
 
+class TuningOffsetConfig(_EffectBase):
+    type: Literal["TuningOffset"] = "TuningOffset"
+    cents: float
+    high_quality: bool = True
+    transient_mode: Literal["crisp", "mixed", "smooth"] = "crisp"
+    transient_detector: Literal["compound", "percussive", "soft"] = "compound"
+    retain_phase_continuity: bool = True
+    use_long_fft_window: bool | None = None
+    use_time_domain_smoothing: bool = False
+    preserve_formants: bool = True
+
+    @field_validator("cents")
+    @classmethod
+    def validate_cents(cls, value: float) -> float:
+        # A non-finite offset is always broken config plumbing, and an unbounded one
+        # would ask the stretcher for something no instrument could have produced.
+        if not math.isfinite(value) or not -1200.0 <= value <= 1200.0:
+            raise ValueError(
+                "cents must be finite and within [-1200, 1200] "
+                f"(got {value})"
+            )
+        return value
+
+
 EffectConfig = Annotated[
     Union[
         CompressorConfig,
@@ -112,6 +137,7 @@ EffectConfig = Annotated[
         HighShelfFilterConfig,
         LowShelfFilterConfig,
         PeakFilterConfig,
+        TuningOffsetConfig,
     ],
     Field(discriminator="type"),
 ]

@@ -21,7 +21,7 @@
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
-  input_type: midi
+  input_type: audio
   bpm: 120
   sample_rate: 44100
   bit_depth: 24
@@ -37,7 +37,11 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
-  dataset: null
+  dataset: maestro-v3
+  metadata_csv: maestro-v3.0.0.csv
+  join_column: midi_filename
+  where:
+    split: [test]
 
 dawdreamer:
   block_size: 512
@@ -116,11 +120,16 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
+  max_workers: 1
+  numeric_mode: strict # deterministic kernels, TF32 off
+  # TensorFlow otherwise reserves most GPU memory, even with basic_pitch on CPU,
+  # and starves TransKun in the same process.
+  gpu_memory_growth: true
   transcribers:
     - type: basic_pitch
       enabled: true
-      device: GPU:0   # explicit for portability; see ./README.md
+      # CPU batches windows (batch_size); results match GPU under strict numerics.
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -129,6 +138,15 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+      batch_size: 16
+    - type: transkun
+      enabled: true
+      # Raises rather than silently falling back when CUDA is absent.
+      device: cuda
+      segment_size_sec: null
+      segment_hop_sec: null
+      weights_path: null
+      conf_path: null
 
 evaluation:
   note_metrics:

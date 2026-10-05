@@ -36,26 +36,52 @@ pedalboard:
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
   effects:
-    # Declaration order == signal chain order. Do not reorder: the slot
-    # indices are referenced by every condition below.
-    - type: Distortion        # index 0 — amp preamp gain stage
+    # The tuning offset leads the chain: what is out of tune is the instrument
+    # itself, so the shift belongs ahead of the amp, cabinet and room. Slot 1
+    # exists only for the round-trip control, which shifts +c then -c to expose
+    # the processing artifacts at the largest offset. Both slots ship disabled,
+    # and a zero-cent slot is a passthrough, so a chain that declares either one
+    # without switching it on leaves the signal unprocessed.
+    - type: TuningOffset      # index 0 — the instrument's own tuning offset
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    - type: TuningOffset      # index 1 — return leg, used by the round trip only
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    # Declaration order == signal chain order. Do not reorder: every condition
+    # below addresses the leading tuning slots and the effects by index.
+    - type: Distortion        # index 2 — amp preamp gain stage
       drive_db: 25.0
       enabled: false
-    - type: HighpassFilter    # index 1 — cabinet LF roll-off, 6 dB/oct @ 75 Hz
+    - type: HighpassFilter    # index 3 — cabinet LF roll-off, 6 dB/oct @ 75 Hz
       cutoff_frequency_hz: 75.0
       enabled: false
-    - type: LowpassFilter     # index 2 — cabinet HF pole 1 of 2
+    - type: LowpassFilter     # index 4 — cabinet HF pole 1 of 2
       cutoff_frequency_hz: 7200.0
       enabled: false
-    - type: LowpassFilter     # index 3 — cabinet HF pole 2 of 2 (-3 dB ~5.0 kHz)
+    - type: LowpassFilter     # index 5 — cabinet HF pole 2 of 2 (-3 dB ~5.0 kHz)
       cutoff_frequency_hz: 7200.0
       enabled: false
-    - type: Delay             # index 4 — slapback, 1/16 note at 120 BPM
+    - type: Delay             # index 6 — slapback, 1/16 note at 120 BPM
       delay_seconds: 0.125
       feedback: 0.30
       mix: 0.40
       enabled: false
-    - type: Reverb            # index 5 — room ambience (params match piano study)
+    - type: Reverb            # index 7 — room ambience (params match piano study)
       room_size: 0.4
       damping: 0.5
       wet_level: 0.0
@@ -135,479 +161,579 @@ benchmark:
   conditions:
     - name: gain=off_cab=off_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=off_cab=off_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=off_cab=off_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=off_cab=off_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=off_cab=off_rev=0.9_dly=on
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=off_cab=on_rev=off_dly=off
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
     - name: gain=off_cab=on_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: false
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=off_cab=on_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
+        pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=off_cab=on_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=off_cab=on_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
+        pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=off_cab=on_rev=0.9_dly=on
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=15_cab=off_rev=off_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
     - name: gain=15_cab=off_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=15_cab=off_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=15_cab=off_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=15_cab=off_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=15_cab=off_rev=0.9_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=15_cab=on_rev=off_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
     - name: gain=15_cab=on_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: false
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=15_cab=on_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
+        pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=15_cab=on_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=15_cab=on_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
+        pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=15_cab=on_rev=0.9_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 15
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 15
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=25_cab=off_rev=off_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
     - name: gain=25_cab=off_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=25_cab=off_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=25_cab=off_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=25_cab=off_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=25_cab=off_rev=0.9_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=25_cab=on_rev=off_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
     - name: gain=25_cab=on_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: false
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=25_cab=on_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
+        pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=25_cab=on_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=25_cab=on_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: false
+        pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=25_cab=on_rev=0.9_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 25
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 25
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=35_cab=off_rev=off_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
     - name: gain=35_cab=off_rev=off_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
     - name: gain=35_cab=off_rev=0.3_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=35_cab=off_rev=0.3_dly=on
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
     - name: gain=35_cab=off_rev=0.9_dly=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
     - name: gain=35_cab=off_rev=0.9_dly=on
       overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
+    - name: gain=35_cab=on_rev=off_dly=off
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: gain=35_cab=on_rev=off_dly=on
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: false
+    - name: gain=35_cab=on_rev=0.3_dly=off
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
+    - name: gain=35_cab=on_rev=0.3_dly=on
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.3
+        pedalboard.effects.7.dry_level: 0.7
+    - name: gain=35_cab=on_rev=0.9_dly=off
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
+    - name: gain=35_cab=on_rev=0.9_dly=on
+      overrides:
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
+        pedalboard.effects.6.enabled: true
+        pedalboard.effects.7.enabled: true
+        pedalboard.effects.7.wet_level: 0.9
+        pedalboard.effects.7.dry_level: 0.1
+    - name: tune=-32c
+      overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
+        pedalboard.effects.0.cents: -32.0
         pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
-    - name: gain=35_cab=on_rev=off_dly=off
-      overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
-    - name: gain=35_cab=on_rev=off_dly=on
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=-20c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: true
+        pedalboard.effects.0.cents: -20.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
         pedalboard.effects.5.enabled: false
-    - name: gain=35_cab=on_rev=0.3_dly=off
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=-8c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
+        pedalboard.effects.0.cents: -8.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
-    - name: gain=35_cab=on_rev=0.3_dly=on
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=8c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.3
-        pedalboard.effects.5.dry_level: 0.7
-    - name: gain=35_cab=on_rev=0.9_dly=off
-      overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
+        pedalboard.effects.0.cents: 8.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
-    - name: gain=35_cab=on_rev=0.9_dly=on
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=12c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.drive_db: 35
+        pedalboard.effects.0.cents: 12.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=20c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 20.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=-40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -40.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=rt40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
         pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-        pedalboard.effects.5.wet_level: 0.9
-        pedalboard.effects.5.dry_level: 0.1
+        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
   sweeps: []
   max_workers: 2
