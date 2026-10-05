@@ -539,3 +539,75 @@ def test_basic_pitch_batched_matches_single(tmp_path: Path) -> None:
     single = BasicPitchTranscriber(device="cpu", batch_size=1).transcribe(audio_path)
     batched = BasicPitchTranscriber(device="cpu", batch_size=2).transcribe(audio_path)
     assert batched.notes == single.notes
+
+
+@pytest.mark.slow
+def test_basic_pitch_metadata_records_numeric_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-strict fallback is recorded on the row, so a results table can
+    show that determinism was not actually in force."""
+    pytest.importorskip("basic_pitch")
+    import basic_pitch.inference as inference_module
+    import numpy as np
+    from scipy.io import wavfile
+
+    from sonitra.transcribe import basic_pitch as basic_pitch_module
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    sample_rate = 22050
+    t = np.linspace(0.0, 0.5, int(sample_rate * 0.5), endpoint=False)
+    signal = (0.5 * np.sin(2.0 * np.pi * 440.0 * t)).astype(np.float32)
+    audio_path = tmp_path / "a.wav"
+    wavfile.write(audio_path, sample_rate, signal)
+
+    class _SilentModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def predict(self, batch):
+            return {
+                "onset": np.zeros((1, 60, 88), np.float32),
+                "contour": np.zeros((1, 60, 264), np.float32),
+                "note": np.zeros((1, 60, 88), np.float32),
+            }
+
+    monkeypatch.setattr(inference_module, "Model", _SilentModel)
+
+    # Scoped to the warned run: the default run must reach the real guard to show
+    # that settings which applied cleanly record no fallback at all.
+    with monkeypatch.context() as warned_guard:
+        warned_guard.setattr(
+            basic_pitch_module,
+            "_apply_numeric_settings",
+            lambda numeric_mode, gpu_memory_growth: ("memory growth: boom",),
+        )
+        warned = BasicPitchTranscriber(
+            numeric_mode="warn", gpu_memory_growth=True
+        ).transcribe(audio_path)
+    assert warned.metadata["numeric_fallbacks"] == ["memory growth: boom"]
+    assert warned.metadata["gpu_memory_growth"] is True
+
+    default = BasicPitchTranscriber().transcribe(audio_path)
+    assert default.metadata["numeric_fallbacks"] == []
+    assert default.metadata["gpu_memory_growth"] is False
+
+
+def test_basic_pitch_apply_numeric_settings_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sonitra.transcribe import basic_pitch as basic_pitch_module
+    from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
+
+    calls: list[tuple[str, bool]] = []
+
+    def fake(numeric_mode: str, gpu_memory_growth: bool) -> tuple[str, ...]:
+        calls.append((numeric_mode, gpu_memory_growth))
+        return ("memory growth: boom",)
+
+    monkeypatch.setattr(basic_pitch_module, "_apply_numeric_settings", fake)
+
+    transcriber = BasicPitchTranscriber(numeric_mode="warn", gpu_memory_growth=True)
+
+    assert transcriber.apply_numeric_settings() == ("memory growth: boom",)
+    assert calls == [("warn", True)]

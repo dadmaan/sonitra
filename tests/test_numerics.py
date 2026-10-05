@@ -170,3 +170,148 @@ def test_numeric_env_warns_on_each_entry(
         ENV_NUMERIC_MODE in message or ENV_GPU_MEMORY_GROWTH in message
         for message in messages
     )
+
+# ── per-backend guards: strict is fatal, a fallback is reported once ─────
+
+
+def _fake_gpu(tf: object, monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Report one GPU to the guard and return the list it records growth calls in."""
+    monkeypatch.setattr(
+        tf.config, "list_physical_devices", lambda kind: [object()], raising=False
+    )
+    monkeypatch.setattr(tf.config.experimental, "enable_op_determinism", lambda: None)
+    monkeypatch.setattr(
+        tf.config.experimental, "enable_tensor_float_32_execution", lambda flag: None
+    )
+    return []
+
+
+def test_basic_pitch_strict_failure_raises_every_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tf = pytest.importorskip("tensorflow")
+
+    from sonitra.transcribe import basic_pitch
+    from sonitra.transcribe.base import NumericSettingsError
+
+    _fake_gpu(tf, monkeypatch)
+
+    def set_memory_growth(gpu: object, grow: bool) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(tf.config.experimental, "set_memory_growth", set_memory_growth)
+
+    # The state stays unset on a strict failure, so the next file must fail the
+    # same way instead of inheriting an unverified "already applied" answer.
+    for _ in range(2):
+        with pytest.raises(NumericSettingsError):
+            basic_pitch._apply_numeric_settings("strict", True)
+
+
+def test_basic_pitch_warn_failure_returns_fallbacks_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    tf = pytest.importorskip("tensorflow")
+
+    from sonitra.transcribe import basic_pitch
+
+    calls = _fake_gpu(tf, monkeypatch)
+
+    def set_memory_growth(gpu: object, grow: bool) -> None:
+        calls.append(gpu)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(tf.config.experimental, "set_memory_growth", set_memory_growth)
+
+    with caplog.at_level("WARNING", logger="sonitra.transcribe.basic_pitch"):
+        first = basic_pitch._apply_numeric_settings("warn", True)
+        second = basic_pitch._apply_numeric_settings("warn", True)
+
+    assert len(first) == 1
+    assert first[0].startswith("memory growth:")
+    assert second == first
+    assert len(calls) == 1, "the framework was called again for settings already resolved"
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "sonitra.transcribe.basic_pitch"
+    ]
+    assert len(warnings) == 1
+
+
+def test_basic_pitch_success_returns_no_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tf = pytest.importorskip("tensorflow")
+
+    from sonitra.transcribe import basic_pitch
+
+    _fake_gpu(tf, monkeypatch)
+    monkeypatch.setattr(
+        tf.config.experimental, "set_memory_growth", lambda gpu, grow: None
+    )
+
+    assert basic_pitch._apply_numeric_settings("warn", True) == ()
+
+
+def test_basic_pitch_default_settings_skip_tensorflow_import() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "from sonitra.transcribe import basic_pitch; "
+        "import sys; "
+        "basic_pitch._apply_numeric_settings('off', False); "
+        "assert 'tensorflow' not in sys.modules, 'tensorflow imported for off/False'; "
+        "print('ok')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert result.stdout.strip().splitlines()[-1] == "ok"
+
+
+def test_transkun_strict_failure_raises_every_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+
+    from sonitra.transcribe import torch_support
+    from sonitra.transcribe.base import NumericSettingsError
+
+    def boom(mode: bool, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(torch, "use_deterministic_algorithms", boom)
+
+    for _ in range(2):
+        with pytest.raises(NumericSettingsError):
+            torch_support.apply_torch_numeric_settings(
+                "strict", False, backend="transkun"
+            )
+
+
+def test_transkun_warn_only_typeerror_is_a_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+
+    from sonitra.transcribe import torch_support
+
+    real = torch.use_deterministic_algorithms
+
+    def without_warn_only(mode: bool, **kwargs: object) -> None:
+        if "warn_only" in kwargs:
+            raise TypeError("unexpected keyword argument 'warn_only'")
+        real(mode, **kwargs)
+
+    monkeypatch.setattr(torch, "use_deterministic_algorithms", without_warn_only)
+
+    fallbacks = torch_support.apply_torch_numeric_settings(
+        "warn", False, backend="transkun"
+    )
+
+    assert len(fallbacks) == 1
+    assert "warn_only" in fallbacks[0]

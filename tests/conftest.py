@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+#: Modules holding a process-global "numeric settings already applied" cache:
+#: basic_pitch has its own, torch_support holds the one shared by every torch
+#: backend. Resetting by name keeps the reset off the import path.
+_NUMERIC_STATE_MODULES = (
+    "sonitra.transcribe.basic_pitch",
+    "sonitra.transcribe.torch_support",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -14,6 +23,15 @@ def _isolate_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # into the next test.
     monkeypatch.delenv("SONITRA_NUMERIC_MODE", raising=False)
     monkeypatch.delenv("SONITRA_GPU_MEMORY_GROWTH", raising=False)
+    # The frameworks refuse repeated setup within one process, so each backend
+    # caches what it already applied. A test that applies settings must not let
+    # the next test inherit that cache; only already-imported modules are reset,
+    # so the reset never pulls a backend onto the import path.
+    for name in _NUMERIC_STATE_MODULES:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        monkeypatch.setattr(module, "_NUMERIC_STATE", None, raising=False)
 
 
 @pytest.fixture

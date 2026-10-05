@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +20,7 @@ from sonitra.config import ConditionSection, PipelineConfig, SweepSection
 from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
-from sonitra.transcribe.base import TranscriptionResult
+from sonitra.transcribe.base import NumericSettingsError, TranscriptionError, TranscriptionResult
 from sonitra.transcribe.configs import ExternalCommandTranscriberConfig
 from sonitra.transcribe.numerics import read_numeric_env
 
@@ -1235,3 +1237,186 @@ def test_parallel_workers_inherit_config_numeric_settings(
     lines = probe_output.read_text(encoding="utf-8").splitlines()
     assert len(lines) >= 2
     assert all(line.strip() == "strict" for line in lines)
+
+
+# ── a strict numeric failure aborts the run; other errors stay fail-soft ─
+
+
+class _NumericPreflightStub:
+    """Transcriber stub whose numeric preflight rejects the requested settings."""
+
+    name = "stub"
+
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        raise NumericSettingsError("boom")
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+class _DevicePreflightStub:
+    """Transcriber stub whose device preflight rejects the requested device."""
+
+    name = "stub"
+
+    def validate_device(self) -> tuple[str, bool]:
+        raise TranscriptionError("boom")
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+class _FailingCallStub:
+    """Transcriber stub that records one marker per file and fails from a chosen call on."""
+
+    name = "stub"
+
+    def __init__(
+        self,
+        *,
+        fail_from_call: int,
+        error: BaseException,
+        marker_dir: Path | None = None,
+    ) -> None:
+        self.fail_from_call = fail_from_call
+        self.error = error
+        self.marker_dir = marker_dir
+        self.calls = 0
+
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        return ()
+
+    def transcribe(self, audio_path):
+        self.calls += 1
+        if self.marker_dir is not None:
+            (self.marker_dir / f"marker-{uuid.uuid4().hex}").write_text(str(audio_path))
+        if self.calls >= self.fail_from_call:
+            raise self.error
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def _result_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text().splitlines() if line.strip()
+    ]
+
+
+def test_preflight_strict_failure_aborts_before_anything_is_written(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _NumericPreflightStub()
+    )
+
+    with pytest.raises(NumericSettingsError, match=r"^stub: boom"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    results_file = tmp_path / benchmark_config.benchmark.results_path
+    assert not (tmp_path / "config.yaml").exists()
+    assert not results_file.with_name(results_file.name + ".fingerprint").exists()
+    assert not results_file.exists()
+    assert not (tmp_path / "audio").exists()
+
+
+def test_preflight_keeps_error_class(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _DevicePreflightStub()
+    )
+
+    with pytest.raises(TranscriptionError) as excinfo:
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert not isinstance(excinfo.value, NumericSettingsError)
+    assert str(excinfo.value).startswith("stub: ")
+
+
+def test_serial_strict_failure_mid_run_is_fatal(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _FailingCallStub(fail_from_call=2, error=NumericSettingsError("boom"))
+    monkeypatch.setattr(runner_module, "make_transcriber", lambda cfg: stub)
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+
+    with pytest.raises(NumericSettingsError):
+        run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    rows = _result_rows(tmp_path / benchmark_config.benchmark.results_path)
+    assert [row["status"] for row in rows] == ["succeeded"]
+    assert rows[0]["midi_path"] == str(midi_paths[0])
+
+
+def test_other_transcription_errors_stay_fail_soft(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _FailingCallStub(fail_from_call=2, error=TranscriptionError("boom"))
+    monkeypatch.setattr(runner_module, "make_transcriber", lambda cfg: stub)
+
+    result = run_benchmark(
+        [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")],
+        tmp_path,
+        benchmark_config,
+    )
+
+    rows = _result_rows(result.results_path)
+    assert len(rows) == len(result.records)
+    failed = [row for row in rows if row["status"] == "failed"]
+    succeeded = [row for row in rows if row["status"] == "succeeded"]
+    assert failed and succeeded
+    assert all("boom" in row["error"] for row in failed)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the fork context is Linux-only")
+def test_parallel_strict_failure_is_fatal_and_cancels(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # fork keeps the patched factory and its counters visible in the workers,
+    # which is what makes the per-file markers countable from here.
+    real_get_context = multiprocessing.get_context
+    monkeypatch.setattr(
+        runner_module.multiprocessing,
+        "get_context",
+        lambda method: real_get_context("fork"),
+    )
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.benchmark.include_baseline = False
+    benchmark_config.benchmark.sweeps = [
+        SweepSection(
+            parameter="render_pipeline.duration_padding_sec",
+            values=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+            name="padding",
+        )
+    ]
+    work_dir = tmp_path / "wd"
+    monkeypatch.setattr(
+        runner_module,
+        "make_transcriber",
+        lambda cfg: _FailingCallStub(
+            fail_from_call=1, error=NumericSettingsError("boom"), marker_dir=tmp_path
+        ),
+    )
+
+    with pytest.raises(NumericSettingsError):
+        run_benchmark([midi_fixture("test_c4.mid")], work_dir, benchmark_config)
+
+    rows = _result_rows(work_dir / benchmark_config.benchmark.results_path)
+    assert all(row["status"] != "failed" for row in rows)
+    assert len(list(tmp_path.glob("marker-*"))) < 8

@@ -9,15 +9,15 @@ from __future__ import annotations
 import logging
 import os
 
-from sonitra.transcribe.base import TranscriptionError
+from sonitra.transcribe.base import NumericSettingsError, TranscriptionError
 from sonitra.transcribe.devices import resolve_torch_device
 
 logger = logging.getLogger(__name__)
 
-# The torch settings this process applied, as (numeric_mode, gpu_memory_growth).
-# They mutate process-global torch state, so one cache is shared by every backend
-# rather than one per backend module.
-_NUMERIC_APPLIED: tuple[str, bool] | None = None
+# What this process already applied to torch, as the requested settings plus the
+# fallbacks they hit. Torch's flags are process-global, so every torch backend
+# shares this one cache rather than keeping one per backend module.
+_NUMERIC_STATE: tuple[tuple[str, bool], tuple[str, ...]] | None = None
 
 
 def _is_cuda_device(device: str | None) -> bool:
@@ -40,24 +40,31 @@ def apply_torch_numeric_settings(
     *,
     backend: str,
     device: str | None = None,
-) -> None:
+) -> tuple[str, ...]:
     """Apply process-global torch numeric settings ahead of model load.
 
-    warn maps to ``warn_only=True`` with fallback to unconstrained when the
-    torch build lacks it; strict raises. TF32 is deterministic but less
+    Returns the fallbacks that had to be accepted, empty when the requested
+    settings were applied in full. ``warn`` maps to ``warn_only=True`` and falls
+    back to unconstrained when the torch build lacks that keyword; ``strict``
+    raises :class:`~sonitra.transcribe.base.NumericSettingsError` on every call
+    and leaves the shared cache unset, so the next file is not told "already
+    applied" about settings that never took effect. Any other fallback is
+    returned, cached and logged once per process. TF32 is deterministic but less
     accurate (~10 vs 23 mantissa bits), so it is off in both modes.
-    ``gpu_memory_growth`` is TF-only (torch already grows its cache);
-    accepted for a uniform section schema. Skips repeats per process.
+    ``gpu_memory_growth`` is TF-only (torch already grows its cache); accepted for
+    a uniform section schema.
 
     ``device`` is the resolved device, used only to decide the cuBLAS workspace
     below; ``None`` means not resolved yet and counts as non-CUDA.
     """
-    global _NUMERIC_APPLIED
-    if _NUMERIC_APPLIED == (numeric_mode, gpu_memory_growth):
-        return
+    global _NUMERIC_STATE
+    settings = (numeric_mode, gpu_memory_growth)
+    if _NUMERIC_STATE is not None and _NUMERIC_STATE[0] == settings:
+        return _NUMERIC_STATE[1]
     if numeric_mode == "off":
-        _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
-        return
+        # Nothing to ask of torch, so it is never imported for the default path.
+        _NUMERIC_STATE = (settings, ())
+        return ()
     import torch
 
     failures: list[str] = []
@@ -65,10 +72,13 @@ def apply_torch_numeric_settings(
         if numeric_mode == "warn":
             try:
                 torch.use_deterministic_algorithms(True, warn_only=True)
-            except TypeError:
+            except TypeError as exc:
+                # The keyword itself is missing, so the flag could not be set at
+                # all: a fallback the caller has to record, not a hard failure.
                 logger.warning(
                     "%s numeric_mode=warn: torch lacks warn_only; continuing unconstrained", backend
                 )
+                failures.append(f"warn_only unsupported: {exc}")
         else:
             if numeric_mode == "strict" and _is_cuda_device(device):
                 # deterministic cuBLAS needs a fixed workspace size
@@ -82,12 +92,15 @@ def apply_torch_numeric_settings(
         torch.backends.cuda.matmul.allow_tf32 = False
     except AttributeError as exc:
         failures.append(f"precision flags: {exc}")
-    _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
+    if failures and numeric_mode == "strict":
+        raise NumericSettingsError(
+            f"{backend} strict numeric_mode failed: {'; '.join(failures)}"
+        )
     if failures:
-        message = "; ".join(failures)
-        if numeric_mode == "strict":
-            raise TranscriptionError(f"{backend} strict numeric_mode failed: {message}")
-        logger.warning("%s numeric settings fell back (%s)", backend, message)
+        logger.warning("%s numeric settings fell back (%s)", backend, "; ".join(failures))
+    fallbacks = tuple(failures)
+    _NUMERIC_STATE = (settings, fallbacks)
+    return fallbacks
 
 
 def validate_torch_device(device: str, *, backend: str) -> tuple[str, bool]:

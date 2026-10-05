@@ -9,6 +9,7 @@ import numpy as np
 
 from sonitra.notes import make_note
 from sonitra.transcribe.base import (
+    NumericSettingsError,
     TranscriptionError,
     TranscriptionResult,
     checkpoint_identity,
@@ -38,19 +39,32 @@ def _basic_pitch_package_version() -> str:
         return "unknown"
 
 
-_NUMERIC_APPLIED: tuple[str, bool] | None = None
+#: What this process already applied to TensorFlow, as the requested settings
+#: plus the fallbacks they hit. TF refuses repeated setup once the device is
+#: initialised, so the answer is cached per process rather than per file.
+_NUMERIC_STATE: tuple[tuple[str, bool], tuple[str, ...]] | None = None
 
 
-def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
+def _apply_numeric_settings(
+    numeric_mode: str, gpu_memory_growth: bool
+) -> tuple[str, ...]:
     """Apply process-global TF numeric settings ahead of model load.
 
-    Skips when the same settings already applied in this process (TF raises
-    once the device is initialised). strict raises TranscriptionError on
-    failure; warn logs and falls back.
+    Returns the fallbacks that had to be accepted, empty when the requested
+    settings were applied in full. A strict failure raises
+    :class:`~sonitra.transcribe.base.NumericSettingsError` on every call and
+    leaves the cache unset, so the next file is not told "already applied" about
+    settings that never took effect; every other fallback is returned, cached and
+    logged once per process.
     """
-    global _NUMERIC_APPLIED
-    if _NUMERIC_APPLIED == (numeric_mode, gpu_memory_growth):
-        return
+    global _NUMERIC_STATE
+    settings = (numeric_mode, gpu_memory_growth)
+    if _NUMERIC_STATE is not None and _NUMERIC_STATE[0] == settings:
+        return _NUMERIC_STATE[1]
+    if numeric_mode == "off" and not gpu_memory_growth:
+        # The default CPU path asks for nothing, so TensorFlow is never imported.
+        _NUMERIC_STATE = (settings, ())
+        return ()
     import tensorflow as tf
 
     failures: list[str] = []
@@ -70,12 +84,17 @@ def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
             tf.config.experimental.enable_tensor_float_32_execution(False)
         except (AttributeError, RuntimeError) as exc:
             failures.append(f"TF32 disable: {exc}")
-    _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
+    if failures and numeric_mode == "strict":
+        raise NumericSettingsError(
+            f"basic_pitch strict numeric_mode failed: {'; '.join(failures)}"
+        )
     if failures:
-        message = "; ".join(failures)
-        if numeric_mode == "strict":
-            raise TranscriptionError(f"basic_pitch strict numeric_mode failed: {message}")
-        logger.warning("basic_pitch numeric settings fell back (%s)", message)
+        logger.warning(
+            "basic_pitch numeric settings fell back (%s)", "; ".join(failures)
+        )
+    fallbacks = tuple(failures)
+    _NUMERIC_STATE = (settings, fallbacks)
+    return fallbacks
 
 
 class BasicPitchTranscriber:
@@ -172,6 +191,10 @@ class BasicPitchTranscriber:
                 )
         return tf_device, True
 
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        """Process-global numeric settings for this backend, with the fallbacks it hit."""
+        return _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
+
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
         import logging as _logging
 
@@ -196,7 +219,7 @@ class BasicPitchTranscriber:
                 "basic-pitch is not installed; it should be present after `pip install sonitra`."
             ) from exc
 
-        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
+        numeric_fallbacks = self.apply_numeric_settings()
 
         from sonitra.storage import read_audio_basic_pitch
 
@@ -282,6 +305,8 @@ class BasicPitchTranscriber:
             "requested_device": self.device,
             "device_available": _available,
             "numeric_mode": self.numeric_mode,
+            "gpu_memory_growth": self.gpu_memory_growth,
+            "numeric_fallbacks": list(numeric_fallbacks),
             "filtered_dropped": filtered_dropped,
             "note_events_total": len(note_events),
             "notes_kept": len(notes),

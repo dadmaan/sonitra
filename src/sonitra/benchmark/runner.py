@@ -45,6 +45,7 @@ from sonitra.pipeline import run_pipeline
 from sonitra.separation.protocol import make_separator
 from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
+from sonitra.transcribe.base import NumericSettingsError
 from sonitra.transcribe.numerics import numeric_env
 from sonitra.transcribe.protocol import TranscriberProtocol, make_transcriber
 
@@ -54,24 +55,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _preflight_devices(transcribers: Sequence[TranscriberProtocol]) -> None:
-    """Fail fast when a configured accelerator is absent.
+def _preflight_transcribers(transcribers: Sequence[TranscriberProtocol]) -> None:
+    """Resolve every transcriber's device and numeric settings before anything is written.
 
-    Runs exactly once in the parent before the first render. Backends without
-    a ``validate_device`` method (``external_command``, ``precomputed``) are
-    skipped naturally via ``getattr``. A missing GPU aborts the whole run
-    rather than dropping that transcriber.
+    Runs exactly once in the parent, ahead of the fingerprint and config.yaml
+    writes. Backends without a ``validate_device`` or ``apply_numeric_settings``
+    method (``external_command``, ``precomputed``) are skipped via ``getattr``. A
+    missing accelerator or a strict numeric failure aborts the whole run rather
+    than dropping that transcriber or degrading to one failed file. The original
+    exception class is preserved so a caller can still tell a numeric failure
+    from a device failure.
     """
     from sonitra.transcribe.base import TranscriptionError
 
     for transcriber in transcribers:
-        validate = getattr(transcriber, "validate_device", None)
-        if validate is None:
-            continue
-        try:
-            validate()
-        except TranscriptionError as exc:
-            raise TranscriptionError(f"{transcriber.name}: {exc}") from exc
+        steps = (
+            getattr(transcriber, "validate_device", None),
+            getattr(transcriber, "apply_numeric_settings", None),
+        )
+        for step in steps:
+            if step is None:
+                continue
+            try:
+                step()
+            except TranscriptionError as exc:
+                raise type(exc)(f"{transcriber.name}: {exc}") from exc
 
 
 # Shared queue through which worker subprocesses stream per-record events to
@@ -400,7 +408,7 @@ def _run_benchmark(
     transcribers = [make_transcriber(cfg) for cfg in transcriber_configs]
     transcriber_names = [t.name for t in transcribers]
 
-    _preflight_devices(transcribers)  # raises TranscriptionError naming the transcriber
+    _preflight_transcribers(transcribers)  # raises naming the transcriber
 
     conditions = expand_conditions(config.benchmark)
     condition_order = [condition.name for condition in conditions]
@@ -542,18 +550,26 @@ def _run_benchmark(
                         audio_to_reference,
                     )
                 ] = condition
-            for future in as_completed(futures):
-                condition = futures[future]
-                condition_name, condition_seconds, condition_records = future.result()
-                condition_wall[condition_name] = condition_seconds
-                for record in condition_records:
-                    writer.write(record)
-                    records.append(record)
-                if progress is not None:
-                    progress.on_condition_done(condition.name)
-        if event_queue is not None and drainer is not None:
-            event_queue.put(None)  # sentinel: drainer thread may exit
-            drainer.join()
+            try:
+                for future in as_completed(futures):
+                    condition = futures[future]
+                    condition_name, condition_seconds, condition_records = future.result()
+                    condition_wall[condition_name] = condition_seconds
+                    for record in condition_records:
+                        writer.write(record)
+                        records.append(record)
+                    if progress is not None:
+                        progress.on_condition_done(condition.name)
+            except BaseException:
+                # Without cancelling, the pool drains every already-queued
+                # condition before the fatal error surfaces, so a run that can no
+                # longer be trusted would keep rendering and transcribing.
+                executor.shutdown(wait=True, cancel_futures=True)
+                raise
+            finally:
+                if event_queue is not None and drainer is not None:
+                    event_queue.put(None)  # sentinel: drainer thread may exit
+                    drainer.join()
     else:
         for condition in conditions:
             logger.info("Benchmark condition '%s' (%d overrides)", condition.name, len(condition.overrides))
@@ -952,6 +968,11 @@ def _evaluate_one(
             evaluate_seconds=evaluate_seconds,
             transcriber_metadata=dict(getattr(result, "metadata", {}) or {}),
         )
+    except NumericSettingsError:
+        # A strict numeric failure is fatal for the whole run: recording it as one
+        # failed file would let the rest of the run produce rows whose determinism
+        # was never established. Every other transcription failure still is one row.
+        raise
     except Exception as exc:  # noqa: BLE001 - benchmark logs and continues
         logger.exception("Transcription failed: %s on %s", transcriber.name, audio_path)
         record = BenchmarkRecord(

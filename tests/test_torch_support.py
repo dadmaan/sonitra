@@ -46,7 +46,7 @@ def _reset_numeric_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """The applied-settings cache is process-global; start every test from empty."""
     from sonitra.transcribe import torch_support
 
-    monkeypatch.setattr(torch_support, "_NUMERIC_APPLIED", None)
+    monkeypatch.setattr(torch_support, "_NUMERIC_STATE", None)
 
 
 # ── numeric settings: no torch for 'off' ────────────────────────────────
@@ -127,7 +127,7 @@ def test_numeric_cache_is_shared_across_backends(monkeypatch: pytest.MonkeyPatch
     torch_support.apply_torch_numeric_settings("warn", False, backend="b")
 
     assert len(calls) == 1
-    assert torch_support._NUMERIC_APPLIED == ("warn", False)
+    assert torch_support._NUMERIC_STATE == (("warn", False), ())
 
 
 # ── numeric settings: failure reporting ─────────────────────────────────
@@ -147,7 +147,7 @@ def test_numeric_strict_failure_names_the_backend(monkeypatch: pytest.MonkeyPatc
         torch_support.apply_torch_numeric_settings("strict", False, backend="transkun")
     assert str(exc_info.value) == "transkun strict numeric_mode failed: deterministic algorithms: det boom"
 
-    monkeypatch.setattr(torch_support, "_NUMERIC_APPLIED", None)
+    monkeypatch.setattr(torch_support, "_NUMERIC_STATE", None)
     with pytest.raises(TranscriptionError) as other:
         torch_support.apply_torch_numeric_settings("strict", False, backend="torchy")
     assert str(other.value) == "torchy strict numeric_mode failed: deterministic algorithms: det boom"
@@ -433,8 +433,6 @@ def test_transkun_forwards_resolved_device_to_numeric_settings(
     """Strict numeric mode on an accelerator only sets the cuBLAS workspace when
     the backend hands the shared helper its resolved device, so that handoff is
     pinned here rather than left to inspection."""
-    from unittest.mock import patch
-
     from sonitra.transcribe import transkun as transkun_module
     from sonitra.transcribe.base import TranscriptionError
 
@@ -453,10 +451,13 @@ def test_transkun_forwards_resolved_device_to_numeric_settings(
     )
 
     transcriber = transkun_module.TranskunTranscriber(device="GPU:0", numeric_mode="strict")
-    # stopping at the first optional import keeps the test free of weights and audio
-    with patch.dict(sys.modules, {"moduleconf": None}):
-        with pytest.raises(TranscriptionError) as exc_info:
-            transcriber.transcribe("unused.wav")
+    # Stopping at the first optional import keeps the test free of weights and
+    # audio. Only this key is stubbed: replacing the whole mapping would also drop
+    # torch if it happened to be imported here for the first time, and importing a
+    # native extension twice in one process corrupts its state.
+    monkeypatch.setitem(sys.modules, "moduleconf", None)
+    with pytest.raises(TranscriptionError) as exc_info:
+        transcriber.transcribe("unused.wav")
     assert "moduleconf" in str(exc_info.value)
     assert seen == {"mode": "strict", "backend": "transkun", "device": "cuda:0"}
 

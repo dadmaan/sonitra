@@ -392,9 +392,12 @@ def transcribe(
     """Transcribe audio files to MIDI with the configured transcribers."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    from rich.markup import escape
+
     from sonitra.config import resolve_corpus_paths
     from sonitra.midi_writer import write_transcription_outputs
     from sonitra.selection import SelectionError, select_audio
+    from sonitra.transcribe.base import NumericSettingsError
     from sonitra.transcribe.numerics import numeric_env
     from sonitra.transcribe.protocol import make_transcriber
 
@@ -471,6 +474,10 @@ def transcribe(
             result = backend_transcribe(audio_path)
             write_transcription_outputs(result, midi_path)
             return f"{backend_name}: {audio_path.name} -> {midi_path}", None
+        except NumericSettingsError:
+            # Fatal for the run, not a per-file failure: every remaining file would
+            # be transcribed under settings that are known not to be in force.
+            raise
         except Exception as exc:  # noqa: BLE001 - CLI reports and continues
             return f"{backend_name}: {audio_path.name} FAILED ({exc})", str(exc)
 
@@ -480,6 +487,11 @@ def transcribe(
         ):
             for transcriber_cfg in transcriber_configs:
                 backend = make_transcriber(transcriber_cfg)
+                apply_numeric = getattr(backend, "apply_numeric_settings", None)
+                if apply_numeric is not None:
+                    # Resolved before the first file so a strict failure costs
+                    # nothing instead of landing halfway through the batch.
+                    apply_numeric()
                 failed_this = 0
                 progress: Progress | None = None
                 task_id: Any = None
@@ -523,6 +535,9 @@ def transcribe(
     except KeyboardInterrupt:
         console.print("[yellow]Interrupted — partial transcriptions kept[/yellow]")
         raise typer.Exit(130)
+    except NumericSettingsError as exc:
+        _stderr_console().print(f"[red]error: {escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
 
     if failures:
         table = Table(title="Transcription failures", title_style="bold red")
@@ -917,9 +932,10 @@ def benchmark(
         console.print("[yellow]Interrupted — partial results kept in manifests[/yellow]")
         raise typer.Exit(130)
     except TranscriptionError as exc:
-        # Raised by the device preflight before any render (missing optional
-        # backend or absent accelerator). Per-file failures never reach here:
-        # the run records them and continues.
+        # Raised by the preflight before any render (missing optional backend,
+        # absent accelerator, or a strict numeric failure) and re-raised by a
+        # worker condition that hits one mid-run. Ordinary per-file failures
+        # never reach here: the run records them and continues.
         _stderr_console().print(f"[red]error: {escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from exc
 

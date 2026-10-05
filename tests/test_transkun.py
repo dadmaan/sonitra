@@ -521,3 +521,49 @@ def test_transkun_builder_forwards_numeric_env(monkeypatch: pytest.MonkeyPatch) 
 
     assert transcriber.numeric_mode == "strict"
     assert transcriber.gpu_memory_growth is True
+
+
+# ── row metadata records a non-strict numeric fallback ─────────────────
+
+
+@pytest.mark.slow
+def test_transkun_metadata_records_numeric_fallbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("transkun")
+    import numpy as np
+
+    from sonitra.storage import write_audio
+    from sonitra.transcribe import transkun as transkun_module
+    from sonitra.transcribe.transkun import TranskunTranscriber
+
+    sample_rate = 44100
+    t = np.linspace(0.0, 0.5, int(sample_rate * 0.5), endpoint=False)
+    tone = np.stack([0.5 * np.sin(2.0 * np.pi * 440.0 * t)] * 2)
+    audio_path = tmp_path / "tone.wav"
+    write_audio(tone, audio_path, sample_rate=sample_rate, bit_depth=24, output_format="wav")
+
+    class _EmptyModel:
+        """Stands in for the loaded checkpoint: transcribe() skips the load when
+        ``_model`` is already set, so no weights are needed."""
+
+        def transcribe(self, x, **kwargs):
+            return []
+
+    # Scoped to the warned run: the default run must reach the real guard to show
+    # that settings which applied cleanly record no fallback at all.
+    with monkeypatch.context() as warned_guard:
+        warned_guard.setattr(
+            transkun_module,
+            "_apply_numeric_settings",
+            lambda numeric_mode, gpu_memory_growth, device=None: ("determinism: boom",),
+        )
+        warned = TranskunTranscriber(numeric_mode="warn", gpu_memory_growth=True)
+        warned._model = _EmptyModel()
+        result = warned.transcribe(audio_path)
+    assert result.metadata["numeric_fallbacks"] == ["determinism: boom"]
+    assert "gpu_memory_growth" not in result.metadata
+
+    default = TranskunTranscriber()
+    default._model = _EmptyModel()
+    assert default.transcribe(audio_path).metadata["numeric_fallbacks"] == []

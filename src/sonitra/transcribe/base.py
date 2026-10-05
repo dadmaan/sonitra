@@ -27,6 +27,10 @@ class TranscriptionError(RuntimeError):
     pass
 
 
+class NumericSettingsError(TranscriptionError):
+    """Requested numeric settings could not be applied under numeric_mode: strict; fatal for the whole run."""
+
+
 @dataclass
 class TranscriptionResult:
     """Output of a transcriber: note dicts in the midi_reader schema."""
