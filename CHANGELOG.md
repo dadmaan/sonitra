@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.5.0-dev.4] - 2026-10-05
+
 ### Added
 
 - A benchmark run now warns instead of ignoring an inert worker count: `src/sonitra/benchmark/runner.py` logs `transcription.max_workers=<n> has no effect in sonitra benchmark (it applies to sonitra transcribe); use benchmark.max_workers to run conditions in parallel`, and the matching line for `evaluation.max_workers` naming `sonitra evaluate`, each once per run and only when the value is above 1, so a config that leaves them at the default stays quiet. A benchmark parallelises conditions, not files within a condition, so `benchmark.max_workers` is the key that does the work there. Covered by `tests/test_benchmark_runner.py::test_benchmark_warns_on_inert_transcription_workers`, `::test_benchmark_warns_on_inert_evaluation_workers` and `::test_benchmark_silent_on_default_workers`.
@@ -373,7 +375,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
 - Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve the relative subpath from the corpus root in all output paths. Two files in different subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no longer overwrite each other on disk or silently cross-pair during evaluation. (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.3...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.4...HEAD
+[0.5.0-dev.4]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.3...v0.5.0-dev.4
 [0.5.0-dev.3]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.2...v0.5.0-dev.3
 [0.5.0-dev.2]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.1...v0.5.0-dev.2
 [0.5.0-dev.1]: https://github.com/dadmaan/sonitra/compare/v0.4.0...v0.5.0-dev.1
