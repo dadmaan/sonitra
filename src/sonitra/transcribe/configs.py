@@ -26,7 +26,11 @@ class BasicPitchTranscriberConfig(_TranscriberBase):
     melodia_trick: bool = True            # HMM/melodia post-processing smoothing
     multiple_pitch_bends: bool = False    # allow overlapping same-pitch notes w/ glissando
     save_raw_outputs: bool = False        # Feature 2 gate: persist raw model outputs as CSV sidecar
-    batch_size: int = Field(default=16, ge=1)  # stacked-window inference batch, CPU only
+    # Windows per inference call. Unset means 1 on a GPU and 16 on the CPU; any
+    # set value applies on every device, because batches above 8 changed notes
+    # slightly in measurement on CUDA while batch 1 reproduces upstream
+    # per-window inference exactly.
+    batch_size: int | None = Field(default=None, ge=1)
 
 
 class ExternalCommandTranscriberConfig(_TranscriberBase):

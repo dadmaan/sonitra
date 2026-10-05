@@ -21,6 +21,18 @@ from sonitra.transcribe.protocol import register_transcriber
 
 logger = logging.getLogger(__name__)
 
+#: The batch used when the config leaves batch_size unset. Stacked windows
+#: amortise the CPU cost per window, while an accelerator keeps one window per
+#: call by default: batch 1 reproduces upstream per-window inference exactly.
+_CPU_DEFAULT_BATCH = 16
+_ACCELERATOR_DEFAULT_BATCH = 1
+
+
+def resolve_effective_batch(batch_size: int | None, tf_device: str) -> int:
+    if batch_size is not None:
+        return batch_size
+    return _CPU_DEFAULT_BATCH if "cpu" in tf_device.lower() else _ACCELERATOR_DEFAULT_BATCH
+
 
 def _basic_pitch_package_version() -> str:
     """Best-effort package version for provenance metadata."""
@@ -123,7 +135,7 @@ class BasicPitchTranscriber:
         save_raw_outputs: bool = False,
         numeric_mode: str = "off",
         gpu_memory_growth: bool = False,
-        batch_size: int = 16,
+        batch_size: int | None = None,
         name: str = "basic_pitch",
     ) -> None:
         self.onset_threshold = float(onset_threshold)
@@ -143,7 +155,7 @@ class BasicPitchTranscriber:
             )
         self.numeric_mode = mode
         self.gpu_memory_growth = bool(gpu_memory_growth)
-        self.batch_size = int(batch_size)
+        self.batch_size = None if batch_size is None else int(batch_size)
         self.name = name
         self._model: Any | None = None
         self._lock = threading.RLock()
@@ -231,9 +243,10 @@ class BasicPitchTranscriber:
         n_overlapping_frames = 30
         overlap_len = n_overlapping_frames * FFT_HOP
         hop_size = AUDIO_N_SAMPLES - overlap_len
-        # CPU-only batching. GPU stays at batch 1: batched-GPU throughput is
-        # unmeasured; batch 1 reproduces upstream per-window inference exactly.
-        effective_batch = self.batch_size if "cpu" in tf_device.lower() else 1
+        # An unset batch is 1 on a GPU and 16 on the CPU; a set value applies on
+        # any device. Batch 1 on CUDA reproduces upstream per-window inference
+        # exactly, and batches above 8 changed notes slightly in measurement.
+        effective_batch = resolve_effective_batch(self.batch_size, tf_device)
 
         audio, _sample_rate = read_audio_basic_pitch(str(audio_path))
         original_length = int(audio.shape[0])
@@ -307,6 +320,8 @@ class BasicPitchTranscriber:
             "numeric_mode": self.numeric_mode,
             "gpu_memory_growth": self.gpu_memory_growth,
             "numeric_fallbacks": list(numeric_fallbacks),
+            "batch_size": self.batch_size,
+            "effective_batch": effective_batch,
             "filtered_dropped": filtered_dropped,
             "note_events_total": len(note_events),
             "notes_kept": len(notes),

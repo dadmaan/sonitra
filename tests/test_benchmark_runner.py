@@ -5,6 +5,7 @@ import json
 import math
 import multiprocessing
 import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -15,13 +16,17 @@ import yaml
 
 from sonitra.benchmark import runner as runner_module
 from sonitra.benchmark.host_info import collect_host_info
+from sonitra.benchmark.results import BenchmarkRecord
 from sonitra.benchmark.runner import run_benchmark
 from sonitra.config import ConditionSection, PipelineConfig, SweepSection
 from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
 from sonitra.transcribe.base import NumericSettingsError, TranscriptionError, TranscriptionResult
-from sonitra.transcribe.configs import ExternalCommandTranscriberConfig
+from sonitra.transcribe.configs import (
+    BasicPitchTranscriberConfig,
+    ExternalCommandTranscriberConfig,
+)
 from sonitra.transcribe.numerics import read_numeric_env
 
 
@@ -1432,3 +1437,160 @@ def test_parallel_strict_failure_is_fatal_and_cancels(
     rows = _result_rows(work_dir / benchmark_config.benchmark.results_path)
     assert all(row["status"] != "failed" for row in rows)
     assert len(list(tmp_path.glob("marker-*"))) < 8
+
+
+# ── resume refuses to mix rows transcribed at two different batch sizes ───
+
+
+def _basic_pitch_config(
+    *,
+    name: str | None = None,
+    device: str = "cpu",
+    batch_size: int | None = None,
+) -> BasicPitchTranscriberConfig:
+    return BasicPitchTranscriberConfig(name=name, device=device, batch_size=batch_size)
+
+
+def _resume_record(
+    *,
+    transcriber: str = "basic_pitch",
+    status: str = "succeeded",
+    metadata: dict | None = None,
+    name: str = "a.mid",
+) -> BenchmarkRecord:
+    return BenchmarkRecord(
+        condition="baseline",
+        transcriber=transcriber,
+        midi_path=name,
+        audio_path=name,
+        status=status,
+        transcriber_metadata={} if metadata is None else metadata,
+    )
+
+
+def _validate_batches(
+    records: list[BenchmarkRecord], configs: list[BasicPitchTranscriberConfig], tmp_path: Path
+) -> None:
+    runner_module._validate_resume_batches(
+        records, configs, tmp_path / "benchmark_results.jsonl"
+    )
+
+
+def test_resume_batches_old_gpu_rows_default(
+    tmp_path: Path,
+) -> None:
+    _validate_batches(
+        [_resume_record(), _resume_record(metadata={})],
+        [_basic_pitch_config(device="cuda", batch_size=None)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_old_gpu_rows_explicit(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _validate_batches(
+            [_resume_record(), _resume_record()],
+            [_basic_pitch_config(device="cuda", batch_size=8)],
+            tmp_path,
+        )
+    assert "now runs at batch 8" in str(excinfo.value)
+    assert "ran at batch 1" in str(excinfo.value)
+
+
+def test_resume_batches_new_gpu_rows_same(tmp_path: Path) -> None:
+    _validate_batches(
+        [_resume_record(metadata={"effective_batch": 8})],
+        [_basic_pitch_config(device="cuda", batch_size=8)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_new_rows_changed(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _validate_batches(
+            [_resume_record(metadata={"effective_batch": 16})],
+            [_basic_pitch_config(device="cpu", batch_size=8)],
+            tmp_path,
+        )
+    assert "now runs at batch 8" in str(excinfo.value)
+    assert "ran at batch 16" in str(excinfo.value)
+
+
+def test_resume_batches_old_cpu_rows(tmp_path: Path) -> None:
+    _validate_batches(
+        [_resume_record(), _resume_record()],
+        [_basic_pitch_config(device="cpu", batch_size=None)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_failed_rows_ignored(tmp_path: Path) -> None:
+    _validate_batches(
+        [
+            _resume_record(status="failed"),
+            _resume_record(status="render_failed", name="b.mid"),
+        ],
+        [_basic_pitch_config(device="cuda", batch_size=8)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_other_transcriber_ignored(tmp_path: Path) -> None:
+    _validate_batches(
+        [_resume_record(transcriber="transkun"), _resume_record(transcriber="oracle")],
+        [_basic_pitch_config(device="cuda", batch_size=8)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_named_basic_pitch(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _validate_batches(
+            [_resume_record(transcriber="bp"), _resume_record(transcriber="bp", name="b.mid")],
+            [_basic_pitch_config(device="cuda", batch_size=8, name="bp")],
+            tmp_path,
+        )
+    assert "'bp'" in str(excinfo.value)
+
+
+class _NamedStubTranscriber:
+    """Minimal transcriber stub for the resume-mismatch integration check."""
+
+    name = "basic_pitch"
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def test_resume_refuses_batch_mismatch_before_writing(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark_config.transcription.transcribers = [
+        BasicPitchTranscriberConfig(device="cpu", batch_size=8)
+    ]
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _NamedStubTranscriber()
+    )
+    midi_paths = [midi_fixture("test_c4.mid")]
+
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    results_file = tmp_path / benchmark_config.benchmark.results_path
+    rows = [json.loads(line) for line in results_file.read_text().splitlines() if line.strip()]
+    assert rows, "the first run must write at least one row"
+    rewritten = []
+    for row in rows:
+        row["transcriber_metadata"] = {**row.get("transcriber_metadata", {}), "effective_batch": 16}
+        rewritten.append(json.dumps(row))
+    results_file.write_text("\n".join(rewritten) + "\n")
+
+    fingerprint_file = results_file.with_name(results_file.name + ".fingerprint")
+    watched = [results_file, fingerprint_file, tmp_path / "config.yaml"]
+    before = [path.read_bytes() for path in watched]
+
+    benchmark_config.benchmark.resume = True
+    shutil.rmtree(tmp_path / "audio", ignore_errors=True)
+    with pytest.raises(ValueError, match="batch"):
+        run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    assert [path.read_bytes() for path in watched] == before

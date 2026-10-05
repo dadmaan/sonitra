@@ -14,6 +14,10 @@ GOLDEN_VALID_CONFIG = "114b31a404838203a35a46cb8dbc25548b5462b5930a0ac72667c7eb0
 # nine tuning conditions, so existing work dirs for the paper configs stop
 # resuming and have to be re-run together.
 GOLDEN_PIANO_ONLY_PRESET = "8ff383745f82e281ea5ad321476bbfa56527cefa145f961bea3964968be8d26d"
+# basic_pitch with an explicit batch_size on CUDA
+GOLDEN_BATCH8_PRESET = "62cb6d5be8506d539c1c5c51ba496aba922f8f47f46ce97e4134e20e50950fc9"
+# basic_pitch on CPU with batch_size left unset in the YAML (16 was the schema default)
+GOLDEN_CPU_UNSET_BASIC_PITCH = "5ee1bd2c4672273f8608ae922597214e11bfc95f2103e0366494cd2e4e1bcb95"
 
 
 def test_fingerprint_golden_minimal_config() -> None:
@@ -34,6 +38,36 @@ def test_fingerprint_golden_piano_only_preset() -> None:
         / "piano_only.yaml"
     )
     assert compute_fingerprint(load_config(path)) == GOLDEN_PIANO_ONLY_PRESET
+
+
+def test_fingerprint_golden_batch8_preset() -> None:
+    # Protects an explicit batch_size on CUDA: a failure here changes every
+    # benchmark fingerprint, so every existing work dir stops resuming;
+    # re-capture only as a deliberate, CHANGELOG'd decision.
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "benchmark"
+        / "transkun"
+        / "transkun_baseline_gpu_batch8_strict.yaml"
+    )
+    assert compute_fingerprint(load_config(path)) == GOLDEN_BATCH8_PRESET
+
+
+def test_fingerprint_golden_cpu_unset_basic_pitch() -> None:
+    # Guards the unset-value normalisation: this preset leaves batch_size unset,
+    # so it may only keep hashing as the old schema default while the unset value
+    # normalises to it. A failure here changes every benchmark fingerprint, so
+    # every existing work dir stops resuming; re-capture only as a deliberate,
+    # CHANGELOG'd decision.
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "benchmark"
+        / "transkun"
+        / "transkun_baseline.yaml"
+    )
+    assert compute_fingerprint(load_config(path)) == GOLDEN_CPU_UNSET_BASIC_PITCH
 
 
 def _valid_payload() -> dict[str, Any]:
@@ -86,3 +120,19 @@ def test_fingerprint_ignores_benchmark_dir() -> None:
     config = PipelineConfig.model_validate(payload)
     assert config.benchmark.benchmark_dir == "runs/anywhere"
     assert compute_fingerprint(config) == GOLDEN_VALID_CONFIG
+
+
+def _fingerprint_with_basic_pitch(**transcriber_keys: Any) -> str:
+    payload = _valid_payload()
+    payload["transcription"] = {"transcribers": [{"type": "basic_pitch", **transcriber_keys}]}
+    return compute_fingerprint(PipelineConfig.model_validate(payload))
+
+
+def test_fingerprint_unset_batch_size_hashes_as_16() -> None:
+    # An unset value normalises to the old schema default, so a work dir written
+    # before the default became "unset" still resumes.
+    assert _fingerprint_with_basic_pitch() == _fingerprint_with_basic_pitch(batch_size=16)
+
+
+def test_fingerprint_explicit_batch_still_counts() -> None:
+    assert _fingerprint_with_basic_pitch() != _fingerprint_with_basic_pitch(batch_size=8)

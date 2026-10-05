@@ -241,7 +241,7 @@ transcription:
           melodia_trick: true # HMM/melodia post-processing smoothing (code default)
           multiple_pitch_bends: false # allow overlapping same-pitch notes w/ glissando (code default)
           save_raw_outputs: false # persist raw model outputs as CSV sidecar next to each MIDI (code default)
-          batch_size: 16 # stacked-window inference batch size, CPU only (GPU stays at 1: batched-GPU throughput is unmeasured); 16-32 recommended
+          batch_size: null # windows per inference call; null = 1 on GPU, 16 on CPU; any value applies on every device (on CUDA, values above 8 changed notes slightly in measurement)
         # Pre-exported MIDI from any external tool:
         # - type: precomputed
         #   name: klangio             # used as the output subdirectory name

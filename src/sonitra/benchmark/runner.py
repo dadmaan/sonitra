@@ -51,6 +51,7 @@ from sonitra.transcribe.protocol import TranscriberProtocol, make_transcriber
 
 if TYPE_CHECKING:
     from sonitra.terminal import BenchmarkProgress
+    from sonitra.transcribe.configs import TranscriberConfig
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +272,68 @@ def _validate_no_run_level_override(config: PipelineConfig) -> None:
             )
 
 
+def _validate_resume_batches(
+    records: Sequence[BenchmarkRecord],
+    transcriber_configs: Sequence[TranscriberConfig],
+    results_file: Path,
+) -> None:
+    """Refuse to resume a basic_pitch run whose batch size changed.
+
+    The batch size is invisible to the fingerprint (an unset value normalises to
+    the old schema default), so a resume is the one place a run can silently mix
+    rows transcribed under two different batch sizes. For every enabled
+    basic_pitch config the batch those rows would run at now is
+    ``resolve_effective_batch(cfg.batch_size, resolve_tf_device(cfg.device))``;
+    each existing ``succeeded`` row of that transcriber ran at its own recorded
+    ``effective_batch`` when present, else at *now* (CPU behaviour did not
+    change) and otherwise at the single batch the old guard forced on an
+    accelerator. ``failed``/``render_failed`` rows carry no notes and are
+    ignored, as are rows from any other transcriber. The device itself is in the
+    fingerprint, so a resume can never change it.
+
+    Runs in the resume branch right after the records are loaded, so a mismatch
+    aborts before the results, the fingerprint or the config snapshot are
+    written.
+
+    Raises:
+        ValueError: If any existing row of a basic_pitch transcriber ran at a
+            batch size other than the one it would run at now.
+    """
+    # Imported here: a backend module must stay off the runner's load path.
+    from sonitra.transcribe.basic_pitch import resolve_effective_batch
+    from sonitra.transcribe.devices import resolve_tf_device
+
+    for transcriber in transcriber_configs:
+        if not transcriber.enabled or transcriber.type != "basic_pitch":
+            continue
+        name = transcriber.name or "basic_pitch"
+        tf_device = resolve_tf_device(transcriber.device, backend=transcriber.type)
+        now = resolve_effective_batch(transcriber.batch_size, tf_device)
+        on_cpu = "cpu" in tf_device.lower()
+        mismatched = 0
+        then = now
+        for record in records:
+            if record.transcriber != name or record.status != "succeeded":
+                continue
+            metadata = record.transcriber_metadata or {}
+            if "effective_batch" in metadata:
+                ran_at = metadata["effective_batch"]
+            elif on_cpu:
+                # CPU batching is unchanged, so an older row already ran at `now`.
+                ran_at = now
+            else:
+                ran_at = 1  # what the old guard forced on any accelerator
+            if ran_at != now:
+                mismatched += 1
+                then = ran_at
+        if mismatched:
+            raise ValueError(
+                f"cannot resume: basic_pitch transcriber '{name}' now runs at batch "
+                f"{now} but {mismatched} existing row(s) in '{results_file}' ran at "
+                f"batch {then}; start a new work_dir"
+            )
+
+
 def _selection_files_sha256(units: Sequence[Path], corpus_root: Path | None) -> str:
     """Hash unit paths relative to *corpus_root*, POSIX, sorted, newline-joined.
 
@@ -461,6 +524,7 @@ def _run_benchmark(
                     f"dir was started ({resolved_selection.get('metadata_csv')})"
                 )
         records = load_records(results_file)
+        _validate_resume_batches(records, transcriber_configs, results_file)
     elif results_file.exists():
         logger.info(
             "benchmark.resume is false; discarding existing results at '%s'", results_file

@@ -4,10 +4,8 @@
 # Requires a CUDA host. Both backends raise rather than silently using CPU when
 # no GPU is present. CPU twin: transkun_baseline_batch16_strict.yaml (strict, batch 16).
 #
-# NOTE: batch sizes above 1 on GPU take effect only once the batch-1 guard in
-# basic_pitch transcribe is lifted behind config; until then the effective GPU
-# batch stays 1 — verify the effective batch in per-row run metadata before
-# publishing timings.
+# Each basic_pitch row records batch_size (as configured) and effective_batch (what
+# ran) in transcriber_metadata; check effective_batch before publishing timings.
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/transkun/transkun_baseline_gpu_batch8_strict.yaml --dataset maestro-v3 --limit 1
