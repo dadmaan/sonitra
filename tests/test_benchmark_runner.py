@@ -545,6 +545,18 @@ _RUN_LEVEL_KEYS = [
     "io.sample",
     "io.sample.n",
     "benchmark.benchmark_dir",
+    # The whole transcription section, because the transcribers and their numeric
+    # settings are built once per run from the base config before any condition
+    # executes. A per-condition override of anything under it — the numeric keys,
+    # a transcriber's own parameters, even the section itself — would be recorded
+    # in BenchmarkRecord.overrides and never applied, reporting a false "no
+    # difference" for the sweep that asked for it.
+    "transcription.numeric_mode",
+    "transcription.gpu_memory_growth",
+    "transcription.transcribers.0.onset_threshold",
+    "transcription.output_dir",
+    "transcription.max_workers",
+    "transcription",
 ]
 
 

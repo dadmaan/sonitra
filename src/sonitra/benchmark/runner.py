@@ -228,9 +228,10 @@ _RUN_LEVEL_KEYS = frozenset(
         "io.where",
         "io.sample",
         "benchmark.benchmark_dir",
+        "transcription",
     }
 )
-_RUN_LEVEL_PREFIXES = ("io.where.", "io.sample.")
+_RUN_LEVEL_PREFIXES = ("io.where.", "io.sample.", "transcription.")
 
 
 def _is_run_level_key(key: str) -> bool:
@@ -245,6 +246,12 @@ def _validate_no_run_level_override(config: PipelineConfig) -> None:
     ``io`` selection keys or ``benchmark.benchmark_dir`` here would be
     recorded in ``BenchmarkRecord.overrides`` but silently ignored -- the same
     hazard as ``render_pipeline.input_type``.
+
+    The ``transcription`` section is run-level for a second reason: the
+    transcribers and their numeric settings are built once, from the base
+    config, before any condition executes, so an override of anything under
+    it would be recorded and never applied either. A sweep that appeared to
+    change a threshold, or a batch size, would report no difference.
 
     Raises:
         ValueError: If any condition or sweep overrides a run-level key.

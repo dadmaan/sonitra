@@ -662,3 +662,27 @@ def test_source_yaml_documents_tuning_offset() -> None:
         assert re.search(rf"^[ \t]*#[ \t]+{field}:", body, re.M), field
     # The engine choice is the reason the offset is not a native plugin.
     assert "time_stretch" in body
+
+
+def test_benchmark_presets_pass_run_level_validation() -> None:
+    """No shipped preset may ship a run-level override the runner refuses.
+
+    Conditions and sweeps are expanded per condition, while the CLI resolves the
+    dataset, the file selection and the run directory once; an override of those
+    would be recorded and silently ignored. This guards the presets against
+    shipping one, and it fails with the offending path and key rather than on the
+    first preset that happens to break.
+    """
+    from sonitra.benchmark import runner as runner_module
+
+    config_dir = Path(__file__).parent.parent / "config"
+    presets = sorted(p for p in config_dir.rglob("*.yaml") if p.name != "source.yaml")
+
+    offenders: list[str] = []
+    for path in presets:
+        try:
+            runner_module._validate_no_run_level_override(load_config(path))
+        except ValueError as exc:
+            offenders.append(f"{path.relative_to(config_dir)}: {exc}")
+
+    assert not offenders, "presets override run-level keys:\n" + "\n".join(offenders)
