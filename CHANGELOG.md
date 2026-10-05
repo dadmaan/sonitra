@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
+
 ### Added
 
 - GAPS (Guitar-Aligned Performance Scores v1.1; Riley et al., ISMIR 2024)
@@ -736,7 +738,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to
   `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/dadmaan/sonitra/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.1.0
