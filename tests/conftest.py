@@ -32,6 +32,11 @@ def _isolate_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
         if module is None:
             continue
         monkeypatch.setattr(module, "_NUMERIC_STATE", None, raising=False)
+    # A pool worker outlives any single test, so a cached transcriber must not
+    # survive into the next one; only an already-imported runner is touched.
+    if "sonitra.benchmark.runner" in sys.modules:
+        runner_module = sys.modules["sonitra.benchmark.runner"]
+        monkeypatch.setattr(runner_module, "_WORKER_TRANSCRIBERS", {})
 
 
 @pytest.fixture

@@ -46,7 +46,7 @@ from sonitra.separation.protocol import make_separator
 from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
 from sonitra.transcribe.base import NumericSettingsError
-from sonitra.transcribe.numerics import numeric_env
+from sonitra.transcribe.numerics import numeric_env, read_numeric_env
 from sonitra.transcribe.protocol import TranscriberProtocol, make_transcriber
 
 if TYPE_CHECKING:
@@ -87,6 +87,43 @@ def _preflight_transcribers(transcribers: Sequence[TranscriberProtocol]) -> None
 # the parent. Set by the ProcessPoolExecutor initializer; None in the parent
 # (and in serial mode, where no subprocesses exist).
 _WORKER_EVENTS: multiprocessing.Queue | None = None
+
+# Transcribers a worker process has already built, keyed by config plus the
+# numeric settings in force when it was built. Populated only inside pool
+# workers, which live exactly as long as one run_benchmark call.
+_WORKER_TRANSCRIBERS: dict[tuple[str, tuple[str, bool]], TranscriberProtocol] = {}
+
+
+def _worker_transcribers(
+    cfgs: Sequence[TranscriberConfig],
+) -> list[TranscriberProtocol]:
+    """Build each transcriber once per worker process, then reuse the instance.
+
+    Every backend loads its model lazily on first use and the model dies with
+    the instance, so building per condition reloads it once per condition and
+    charges the load to that condition's first ``transcribe_seconds``. The cache
+    lives as long as the worker, which the pool ends at the end of the run.
+
+    The key carries the numeric settings as well as the config: they are
+    process-global, and a run can enter the numeric block with different values,
+    so an instance built under other settings must never be served for these.
+
+    Reuse is safe because no condition or sweep can override anything under
+    ``transcription`` (see :func:`_validate_no_run_level_override`), so every
+    condition of a run asks for exactly these configs.
+    """
+    # One snapshot for the whole call: the environment cannot change mid-loop, so
+    # every config of one condition shares the same numeric settings.
+    settings = read_numeric_env()
+    built: list[TranscriberProtocol] = []
+    for cfg in cfgs:
+        key = (cfg.model_dump_json(), settings)
+        transcriber = _WORKER_TRANSCRIBERS.get(key)
+        if transcriber is None:
+            transcriber = make_transcriber(cfg)
+            _WORKER_TRANSCRIBERS[key] = transcriber
+        built.append(transcriber)
+    return built
 
 
 def _drain_events(event_queue: multiprocessing.Queue, progress: BenchmarkProgress) -> None:
@@ -732,8 +769,9 @@ def _condition_worker(
 ) -> tuple[str, float, list[BenchmarkRecord]]:
     """Run one benchmark condition in a subprocess (for ProcessPoolExecutor).
 
-    Recreates transcribers and metrics from configs so no non-picklable state
-    crosses the process boundary. Returns ``(condition.name, wall_seconds,
+    Recreates the metrics from the condition config, while the transcribers are
+    built once per worker process and reused by every condition it runs, so each
+    model loads once per worker. Returns ``(condition.name, wall_seconds,
     records)`` where *wall_seconds* is the whole-condition wall-clock
     (render + separate + transcribe + evaluate) measured with
     ``time.perf_counter()``. Records are returned without writing to disk so
@@ -742,7 +780,11 @@ def _condition_worker(
     Path]) and cross the process boundary unchanged; both are None in MIDI
     mode.
     """
-    transcribers = [make_transcriber(cfg) for cfg in transcriber_cfgs]
+    # Reuse is safe here: no condition or sweep can change a transcriber setting,
+    # because the runner rejects any override under the ``transcription`` prefix,
+    # so one instance per config is the right one for every condition this worker
+    # runs.
+    transcribers = _worker_transcribers(transcriber_cfgs)
     symbolic_metrics = make_symbolic_metrics(condition_config.evaluation)
     audio_metrics = make_audio_metrics(condition_config.evaluation)
     wall_start = time.perf_counter()

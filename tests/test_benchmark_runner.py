@@ -1594,3 +1594,148 @@ def test_resume_refuses_batch_mismatch_before_writing(
         run_benchmark(midi_paths, tmp_path, benchmark_config)
 
     assert [path.read_bytes() for path in watched] == before
+
+
+# ── a worker builds each transcriber once for its whole lifetime ──────────
+
+
+class _CountingStubTranscriber:
+    """Minimal transcriber stub whose name comes from its config."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def _counting_factory(calls: list[str]) -> object:
+    """A ``make_transcriber`` stand-in that records one entry per build."""
+
+    def factory(cfg):
+        calls.append(cfg.name or cfg.type)
+        return _CountingStubTranscriber(cfg.name or cfg.type)
+
+    return factory
+
+
+def test_worker_transcribers_built_once_per_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+    cfgs = [
+        BasicPitchTranscriberConfig(name="a"),
+        BasicPitchTranscriberConfig(name="b"),
+    ]
+
+    first = runner_module._worker_transcribers(cfgs)
+    second = runner_module._worker_transcribers(cfgs)
+
+    assert calls == ["a", "b"]
+    assert [t.name for t in second] == ["a", "b"]
+    assert all(new is old for new, old in zip(second, first))
+
+
+def test_worker_transcribers_distinct_configs_built_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+
+    runner_module._worker_transcribers([BasicPitchTranscriberConfig(name="a")])
+    runner_module._worker_transcribers([BasicPitchTranscriberConfig(name="b")])
+
+    assert calls == ["a", "b"]
+
+
+def test_worker_transcribers_rebuild_when_numeric_env_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sonitra.transcribe.numerics import numeric_env
+
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+    cfgs = [BasicPitchTranscriberConfig(name="a")]
+
+    with numeric_env("off", False):
+        runner_module._worker_transcribers(cfgs)
+    with numeric_env("strict", False):
+        runner_module._worker_transcribers(cfgs)
+
+    assert calls == ["a", "a"]
+
+
+def test_condition_worker_reuses_transcribers_across_conditions(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sonitra.benchmark.conditions import Condition
+    from sonitra.evaluation.types import notes_from_dicts
+
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+    midi_paths = [midi_fixture("test_c4.mid")]
+    references = {midi_paths[0]: notes_from_dicts(parse_midi(midi_paths[0]))}
+    cfgs = [BasicPitchTranscriberConfig(name="a")]
+
+    outcomes = [
+        runner_module._condition_worker(
+            Condition(name=name, overrides={}),
+            benchmark_config,
+            midi_paths,
+            references,
+            cfgs,
+            tmp_path,
+            None,
+        )
+        for name in ("baseline", "second")
+    ]
+
+    assert calls == ["a"]
+    assert [name for name, _seconds, _records in outcomes] == ["baseline", "second"]
+    for _name, _seconds, records in outcomes:
+        assert [record.status for record in records] == ["succeeded"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the fork context is Linux-only")
+def test_parallel_run_builds_once_per_worker(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # fork keeps the patched factory visible in the workers, so a marker file per
+    # build counts the builds each worker made; production stays on spawn.
+    real_get_context = multiprocessing.get_context
+    monkeypatch.setattr(
+        runner_module.multiprocessing,
+        "get_context",
+        lambda method: real_get_context("fork"),
+    )
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.benchmark.include_baseline = False
+    benchmark_config.benchmark.sweeps = [
+        SweepSection(
+            parameter="render_pipeline.duration_padding_sec",
+            values=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+            name="padding",
+        )
+    ]
+    markers = tmp_path / "builds"
+    markers.mkdir()
+    parent_pid = os.getpid()
+
+    def factory(cfg):
+        (markers / f"build-{os.getpid()}-{uuid.uuid4().hex}").write_text("built")
+        return _CountingStubTranscriber(cfg.name or cfg.type)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path / "wd", benchmark_config)
+
+    assert all(record.status == "succeeded" for record in result.records)
+    assert len(result.records) == 6  # one row per condition, one transcriber
+    # The parent's own preflight build is not a worker build, so it does not count.
+    worker_builds = [
+        marker
+        for marker in markers.iterdir()
+        if not marker.name.startswith(f"build-{parent_pid}-")
+    ]
+    assert len(worker_builds) <= 2
