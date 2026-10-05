@@ -131,7 +131,8 @@ evaluation:
     harmony_window_sec: 2.0
   dtw:
     # Deviation from benchmark_test.yaml (enabled: true): DTW is already
-    # skipped in audio mode (runner.py:757), so true would log a warning
+    # skipped in audio mode (the runner's evaluation.dtw audio-mode
+    # warning), so true would log a warning
     # every run with no dtw.* data.
     enabled: false
     frame_size: 4096
@@ -143,8 +144,9 @@ benchmark:
   include_baseline: true
   baseline_name: baseline
   # A rendered pass over MusicNet is ~ few GB per condition; four conditions
-  # would retain ~ tens of GB. runner.py:687 reclaims each condition's audio
-  # when this is false, capping peak at one condition.
+  # would retain ~ tens of GB. The runner reclaims each condition's audio
+  # (_cleanup_condition_audio) when this is false, capping peak at one
+  # condition.
   save_audio: false
   resume: false
   conditions:

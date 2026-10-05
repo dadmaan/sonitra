@@ -213,12 +213,13 @@ observability:
     log_level: null # optional root log level override; DEBUG | INFO | WARNING | ERROR | CRITICAL; overrides pipeline.log_level when set
     progress: true # master switch for live progress bars in the CLI
 
-# Stem separation — planned feature, not yet implemented.
-# See ROADMAP.md for the intended design.
-# Leave enabled: false; the passthrough backend is a no-op.
+# Stem separation. Two backends: "passthrough" (a no-op that returns the mix
+# unchanged) and "demucs" (source separation; needs `pip install sonitra[demucs]`).
+# Leave enabled: false unless the stem is used, since separation re-runs the model
+# over every rendered file.
 separation:
     enabled: false
-    backend: passthrough # only "passthrough" is implemented; "demucs" is planned
+    backend: passthrough # "passthrough" (no-op) or "demucs" (needs the [demucs] extra)
     model: htdemucs
     device: cpu # unified: "cpu", "cuda", "cuda:N" or "GPU:N"; "GPU:0" → torch "cuda:0" (see transcribe/devices.py)
     stem: null

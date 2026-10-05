@@ -27,8 +27,8 @@ def test_gpu_transcription_works_in_spawned_worker_after_parent_preflight(
     if not tf.config.list_physical_devices("GPU"):
         pytest.skip("no GPU visible to TensorFlow")
 
-    # The parent initialises CUDA exactly as the benchmark preflight does;
-    # workers must still be able to use the GPU.
+    # The parent runs the same checks as the benchmark preflight (device check
+    # and numeric settings); spawned workers must still be able to use the GPU.
     BasicPitchTranscriber(device="GPU:0").validate_device()
 
     sample_rate = 22050

@@ -4,15 +4,15 @@ Sonitra produces comparable numbers; this note records where that comparability 
 
 ## How equivalence is measured
 
-`compare_variants.py` renders each file once, transcribes the same audio with variants A and B, and reports A-vs-B directly plus each variant against the reference MIDI as ΔF1 = |F1_A − F1_B|. F1 is a 0-to-1 score for how closely predicted notes match a reference, where 1 is a perfect match. Sonitra computes it four ways: note onset; onset+offset; onset+offset+velocity; and frame by frame, giving the keys `note.onset_f1`, `note.onset_offset_f1`, `note.onset_offset_velocity_f1` and `frame.f1`. The control arm (the same variant run twice) must report exactly zero; that zero is the noise floor. Any non-zero ΔF1 is then judged against the benchmark `summary.json` degradation table (materiality).
+Each comparison renders every file once, transcribes the same audio with variants A and B, and reports A-vs-B directly plus each variant against the reference MIDI, both as ΔF1 = |F1_A − F1_B|. F1 is a 0-to-1 score for how closely predicted notes match a reference, where 1 is a perfect match. Sonitra computes it four ways: note onset; onset+offset; onset+offset+velocity; and frame by frame, giving the keys `note.onset_f1`, `note.onset_offset_f1`, `note.onset_offset_velocity_f1` and `frame.f1`. The control arm (the same variant run twice) must report exactly zero; that zero is the noise floor. Any non-zero ΔF1 is then judged against the benchmark `summary.json` degradation table (materiality).
 
 ## Scope
 
-Measured: `basic_pitch` and `transkun`, both neural backends, and separately `hft_transformer`. These are not one experiment. Each backend was measured against its own bounds, so read the arm table together with the conditions named beside it and do not carry one backend's result across to another.
+Measured: `basic_pitch` and `transkun`, both neural backends, and separately `hft_transformer`. These are not one experiment. Each backend was measured against its own bounds, so read the comparison table together with the conditions named beside it and do not carry one backend's result across to another.
 
-All Phase-2 and Phase-3e numbers below use the `bsed` dataset at `--limit 20` with `batch_size=1`, except the timing profile, which uses a 363 s MAESTRO render. Region of validity, stated plainly because it is easy to over-read: the precursor measurement was `basic_pitch`-only, and arm 2b is what confirms the finding on `transkun`.
+Every comparison below uses the `bsed` dataset at `--limit 20` with `batch_size=1`, except the timing profile, which uses a 363 s MAESTRO render. Region of validity, stated plainly because it is easy to over-read: the precursor measurement was `basic_pitch`-only, and the `transkun` cpu vs cuda row is what confirms the finding on `transkun`.
 
-Measured for `hft_transformer`, to different bounds. On CPU at `batch_size=1` the vendored network and note decoder are bit-for-bit identical to the upstream reference implementation, checked across 43 windows and both window modes, so the port itself adds no numeric change. CPU against CUDA diverges by up to 3.3e-04 on the velocity logits, which changes 70–75 of roughly 75 note-list entries in the last bits. CPU `batch_size=4` against `batch_size=1` was bitwise identical on that machine. It has not been run through the `bsed` arm design below, and the `transkun` rows there do not cover it.
+Measured for `hft_transformer`, to different bounds. On CPU at `batch_size=1` the vendored network and note decoder are bit-for-bit identical to the upstream reference implementation, checked across 43 windows and both window modes, so the port itself adds no numeric change. CPU against CUDA diverges by up to 3.3e-04 on the velocity logits, which changes 70–75 of roughly 75 note-list entries in the last bits. CPU `batch_size=4` against `batch_size=1` was bitwise identical on that machine. It has not been run through the `bsed` comparison design below, and the `transkun` rows there do not cover it.
 
 Measured: nothing else. `precomputed` and `external_command` are not neural (they replay a stored file or shell out to a command), so device and numeric-mode settings do not apply to them. Do not extend these numbers to any backend that was not run.
 
@@ -28,26 +28,26 @@ Steady-state per 363 s file (222 windows): 2.85 s inference (56%), 1.89 s post-p
 
 Precursor (basic_pitch only): CPU vs GPU moved one note (1781 vs 1780 events); GPU batch-size shifts reach 1.29e-02 against 8.05e-07 on CPU. A note activation is a probability, and onset detection cuts off at 0.5, so a shift that large can flip a note.
 
-Phase-2 arms, each the same config pair over `bsed` (`--limit 20`, `batch_size=1`):
+Each row below is the same config pair over `bsed` (`--limit 20`, `batch_size=1`):
 
-| Arm | Comparison | Files changed | Largest ΔF1 (four keys) | Note-count Δ |
-| --- | --- | --- | --- | --- |
-| 2d | same variant twice (noise floor, n=19) | 0/19 | exactly 0, all keys | 0 |
-| 2a | `basic_pitch` cpu vs cuda | 1/20 | onset 0.00455, frame 0.00425, +offset 0.00092, velocity 9e-5 | max 1, mean 0.05 |
-| 2b | `transkun` cpu vs cuda | 4/20 | frame 0.00689, onset 0.00536, +offset 0.00560, velocity 0.00566 | max 1, mean 0.15 |
-| 2c | `basic_pitch` cpu vs itself, `TF_ENABLE_ONEDNN_OPTS=1` vs `=0` | 1/19 | frame 8.8e-5 only; note-level and note-count 0 | 0 |
+| Comparison | Files changed | Largest ΔF1 (four keys) | Note-count Δ |
+| --- | --- | --- | --- |
+| same variant twice (noise floor, n=19) | 0/19 | exactly 0, all keys | 0 |
+| `basic_pitch` cpu vs cuda | 1/20 | onset 0.00455, frame 0.00425, +offset 0.00092, velocity 9e-5 | max 1, mean 0.05 |
+| `transkun` cpu vs cuda | 4/20 | frame 0.00689, onset 0.00536, +offset 0.00560, velocity 0.00566 | max 1, mean 0.15 |
+| `basic_pitch` cpu against itself, `TF_ENABLE_ONEDNN_OPTS=1` vs `=0` | 1/19 | frame 8.8e-5 only; note-level and note-count 0 | 0 |
 
-2d is the noise floor: identical config twice is exactly zero on all four keys, so any non-zero arm delta is real and not run-to-run noise.
+The same-variant-twice row is the noise floor: identical config twice is exactly zero on all four keys, so any non-zero delta above is real and not run-to-run noise.
 
-2b is the generalisation. `transkun` is a Transformer with a semi-CRF decoder (semi-CRF: a sequence decoder that picks note boundaries jointly, rather than thresholding each frame alone), structurally different from `basic_pitch`'s small CNN. It diverges on device too, so device divergence is not a `basic_pitch`/CNN artefact.
+The `transkun` cpu vs cuda row is the generalisation. `transkun` is a Transformer with a semi-CRF decoder (semi-CRF: a sequence decoder that picks note boundaries jointly, rather than thresholding each frame alone), structurally different from `basic_pitch`'s small CNN. It diverges on device too, so device divergence is not a `basic_pitch`/CNN artefact.
 
-2c is CPU against itself under a documented TensorFlow flag (`TF_ENABLE_ONEDNN_OPTS`; oneDNN is TensorFlow's CPU maths library, and the flag switches its custom kernels on or off). Note-level and note-count differences are exactly zero; only one file's `frame.f1` differs, by 8.8e-5. A same-environment two-process control is exactly zero, so that delta can be attributed to the flag. CPU self-divergence is real but limited to frame metrics at 8.8e-5.
+The oneDNN row is CPU against itself under a documented TensorFlow flag (`TF_ENABLE_ONEDNN_OPTS`; oneDNN is TensorFlow's CPU maths library, and the flag switches its custom kernels on or off). Note-level and note-count differences are exactly zero; only one file's `frame.f1` differs, by 8.8e-5. A same-environment two-process control is exactly zero, so that delta can be attributed to the flag. CPU self-divergence is real but limited to frame metrics at 8.8e-5.
 
 Materiality. The largest real condition effect on the same four keys in an existing `summary.json` degradation table is |Δnote.onset_f1| 0.7922 (`corpus/guitarset/benchmark/guitar_only_MIDI`, condition `gain=35_cab=off_rev=0.9_dly=on`, basic_pitch); the largest maestro-v3 effect is 0.7044. The device-induced maximum of 0.0069 is about 115x and 102x smaller respectively. That makes device divergence a documentation note, not a disqualifying effect.
 
 `transcription.numeric_mode` (`off`/`warn`/`strict`, default `off`) is process-global (it configures the whole program, not one transcriber), stays in the run fingerprint (the hash that tags a set of results, so changing the mode starts a new set), and is recorded per-row in transcriber metadata; `warn` falls back where `strict` raises. The value in the config is the one that applies, in `sonitra benchmark`, in `sonitra transcribe` and in a direct `run_benchmark()` call alike. Each run writes that value into the process environment before it builds any backend. An already-exported value that differs from the config is ignored, with a warning naming both values. Under `strict`, a setting that cannot be applied stops the whole run, rather than recording one failed row and then letting the remaining files run with the settings only partly applied. `config/benchmark/methods/numerics_check.yaml` is a transcription-only methods preset, not a model comparison. The preset is top-level-only: the run refuses a condition or sweep that overrides `transcription.numeric_mode`, so compare modes with one run per mode.
 
-Phase-3e acceptance re-ran 2a and 2b with `numeric_mode: strict` on both sides. Both arms left 0/20 files changed, all four keys exactly 0, so the switch removes the divergence without crashing. Median per-file runtime with model-load warmup excluded is unchanged: basic_pitch cpu 0.200 → 0.199 s and cuda 0.103 → 0.100 s, transkun cpu 7.71 → 7.44 s, transkun cuda 1.315 → 1.377 s (+4.7%). No material cost.
+Acceptance of the switch re-ran the `basic_pitch` cpu vs cuda and `transkun` cpu vs cuda comparisons with `numeric_mode: strict` on both sides. Both left 0/20 files changed, all four keys exactly 0, so the switch removes the divergence without crashing. Median per-file runtime with model-load warmup excluded is unchanged: basic_pitch cpu 0.200 → 0.199 s and cuda 0.103 → 0.100 s, transkun cpu 7.71 → 7.44 s, transkun cuda 1.315 → 1.377 s (+4.7%). No material cost.
 
 ## Audio loaders
 

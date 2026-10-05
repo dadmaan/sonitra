@@ -34,8 +34,9 @@ larger driver of transcription failure than anything modelled here.
   the larger driver of transcription failure; see the framing note above.
 - Wow/flutter (speed instability) — not modelled; not expressible as a
   stationary filter.
-- Reduced medium level / dynamic range — cancelled by post-effects peak
-  normalisation, which runs after the whole chain. See Section 4.
+- Reduced medium level / dynamic range — not modelled. Nothing here emulates the
+  attenuation or compression a physically degraded medium applies. See Section 4
+  for what this does mean for the conditions' own level and dynamics.
 - The RIAA curve — a vinyl-LP (post-1954) mastering/playback convention, not
   shellac-78; transparent on a calibrated chain and not itself a source of
   vintage coloration.
@@ -140,30 +141,33 @@ attributed to "how hard vintage shellac recordings are."
 
 ---
 
-## 4. Confound disclosure: post-effects normalisation
+## 4. Confound disclosure: normalisation runs before the chain
 
 `normalisation.pre_effects: true` is set in this config (departing from
 `config/benchmark/sweeps/effects_combinations.yaml`, which leaves it `false`) so that
 `Distortion` drive and `Compressor` threshold behave deterministically instead
 of depending on whatever level FluidSynth happened to produce for a given
-file. This is a correctness fix, not the confound.
+file. This is a correctness fix.
 
-The confound is that **post-effects peak normalisation stays on**
-(`normalisation.enabled: true`, `mode: peak`, `target_db: -1.0`), and it runs
-*after* the entire pedalboard effects chain. That means every condition
-reaches the transcriber at -1 dBFS peak, regardless of how much energy the
-filters removed — the shellac conditions' +3/+5 dB `PeakFilter` boosts are
-therefore effectively small *cuts* of everything else in the signal, once
-renormalised.
+The same flag decides which stage runs. `src/sonitra/normaliser.py`'s
+`normalise_from_config` applies normalisation at the "pre" stage when
+`pre_effects` is true and returns the audio unchanged at the "post" stage, so
+**peak normalisation to -1 dBFS happens once, before the effects chain, and
+nothing normalises afterwards.** Every condition therefore reaches the
+transcriber at whatever level the chain left it at.
 
-**These conditions explicitly do not model vintage media's reduced absolute
-level or reduced dynamic range.** That reduction is a real property of
-playback from a physically degraded medium, but it is cancelled here by
-design so that transcription-relevant spectral/dynamics changes are not
-confounded with a simple gain difference basic-pitch would trivially
-compensate for. If a future study wants to measure the level/dynamic-range
-effect specifically, it needs a config with post-effects normalisation
-disabled or reworked — out of scope for this file.
+That is worth stating plainly, because the conditions differ in more than
+spectral shape: highpass and lowpass stages remove energy, the `PeakFilter`
+boosts add some back, and `Distortion` and `Compressor` change the level and
+the dynamic range in passing. So level and dynamics move between conditions as
+a side effect of the filters rather than by design, and a difference measured
+between two conditions carries that movement with it.
+
+**These conditions therefore do not model vintage media's reduced absolute
+level or reduced dynamic range, and they do not cancel it either.** It is
+simply absent from the design. A study that wants to measure the level or
+dynamic-range effect specifically needs a config that varies it deliberately,
+which this one does not.
 
 ---
 

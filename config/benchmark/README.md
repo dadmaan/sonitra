@@ -156,13 +156,16 @@ when set, otherwise the last dotted segment of `sweep.parameter`. Examples:
 
 ## Worker notes
 
-- `render_pipeline.max_workers` controls parallelism within a single condition's render
-  render_pipeline. **Must stay at `1` for DawDreamer modes** (DawDreamer/JUCE global state
-  is not thread-safe). FluidSynth and Pedalboard modes can use higher values, but all
-  configs in this directory default to `1` for safety.
-- `benchmark.max_workers` controls how many conditions run in parallel subprocesses.
-  Each subprocess gets its own JUCE instance. Can be increased to speed up large
-  sweeps on multi-core machines. Defaults to `1` in all configs here.
+- `render_pipeline.max_workers` controls parallelism within a single condition's
+  render. It only takes effect with `synth_backend: pedalboard_instrument`. **Must
+  stay at `1` for DawDreamer modes** (DawDreamer/JUCE global state is not
+  thread-safe). Values differ per preset; many set `8`.
+- `benchmark.max_workers` controls how many conditions run in parallel
+  subprocesses. Each subprocess gets its own JUCE instance, and each loads its own
+  copy of every transcription model. Values differ per preset: some set `2`, others
+  leave it at `1`.
+- [docs/configuration.md](../../docs/configuration.md#parallelism-max_workers)
+  explains both keys in full.
 
 ---
 
@@ -285,12 +288,15 @@ CSV was edited after the run started.
 | `venue_acoustics/venue_scenarios.yaml` | Room acoustics (RT60-calibrated: studio, recital hall, symphony hall, cathedral) | 5 |
 | `rotary_speaker/rotary_scenarios.yaml` | Leslie rotary speaker character (chorale/tremolo) | 3 |
 
-`old_recording/vintage_scenarios.yaml` is a **phase-1 bandwidth-and-dynamics
-ablation** for three vintage recording chains (78rpm shellac, early tape, AM
-radio), not a full vintage-audio simulation — surface noise, hiss, hum, and
-wow/flutter are deferred to a later phase. See
-`old_recording/README.md` for the full grounding, measured calibration
-tables, and interpretation constraints before drawing conclusions from it.
+`old_recording/vintage_scenarios.yaml` is a bandwidth-and-dynamics ablation for three
+vintage recording chains (78rpm shellac, early tape, AM radio), not a measurement
+of how hard vintage recordings are for AMT. Each condition enables part of the
+eight-slot effect chain: cascaded highpass/lowpass pairs for bandwidth, one
+PeakFilter for presence or head-bump resonance, Distortion for saturation, and
+Compressor for era level control. Not modelled: surface noise, crackle, hiss,
+mains hum, wow/flutter. See `old_recording/README.md` for the full grounding,
+measured calibration tables, and interpretation constraints before drawing
+conclusions from it.
 
 `telephone_channel/telephone_scenarios.yaml`, `venue_acoustics/venue_scenarios.yaml`,
 and `rotary_speaker/rotary_scenarios.yaml` follow the same grounded-scenario
