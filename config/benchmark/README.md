@@ -140,6 +140,8 @@ Paths address nested sections and indexed list elements:
 - `pedalboard.effects.1.wet_level` — second element of the `effects` list, `wet_level` key
 - `pedalboard.effects.0.enabled` — boolean toggle on the first effect
 
+A condition or sweep may not name a key under `transcription`, as the bare section or as a `transcription.*` path: the run stops with an error, because its transcribers are built once before any condition executes.
+
 Paths must resolve to existing keys. Unknown keys raise a `KeyError` at validation time.
 
 ### Sweep condition naming

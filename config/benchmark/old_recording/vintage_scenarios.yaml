@@ -3,12 +3,16 @@
 # (78rpm shellac disc, early reel-to-reel tape, AM radio broadcast), each at
 # two severities, against a common baseline.
 #
-# Phase 1 scope only: bandwidth-and-dynamics ablation. Does NOT model surface
-# noise/crackle/hiss/mains hum or wow/flutter (deferred to phase 2), and post-
-# effects peak normalisation cancels any modelling of reduced medium level or
-# dynamic range. See ./README.md for full grounding, measured calibration
-# tables, and interpretation constraints before drawing conclusions from
-# results produced by this config.
+# Bandwidth-and-dynamics ablation, not a measurement of how hard vintage
+# recordings are for AMT. Each condition enables part of the eight-slot chain:
+# cascaded highpass/lowpass pairs for bandwidth, one PeakFilter for presence or
+# head-bump resonance, Distortion for saturation, Compressor for era level
+# control. The AM conditions use no highpass, because AM was a top-end
+# constraint. Not modelled: surface noise, crackle, hiss, mains hum, wow/flutter.
+# Peak normalisation runs before the chain, so those filter, drive and threshold
+# values do not depend on each file's level. See ./README.md for grounding,
+# measured calibration tables, and interpretation constraints before drawing
+# conclusions from results produced by this config.
 #
 # Conditions (named only, no sweeps): 7 total — baseline + 3 eras x 2 severities.
 #

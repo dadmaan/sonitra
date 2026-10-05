@@ -93,7 +93,7 @@ Sonitra excludes files on disk that have no metadata row and prints a warning na
 
 The CLI flags `--limit` and `--seed` write into `io.sample` (`--seed` alone needs an existing sample). A benchmark run records the values in its `config.yaml`, and they are part of the resume fingerprint (the config record that decides whether a stopped benchmark run can continue). Every selection error (a missing metadata CSV, an unknown column or value, or a filter that matches nothing) prints an error and exits with code 1 before any work starts. `--dataset` cannot re-point a filter: if the config filters one dataset and `--dataset` names a different one, Sonitra exits with an error.
 
-Benchmark conditions and sweeps cannot override `io.dataset`, `io.metadata_csv`, `io.join_column`, `io.where`, `io.sample`, or `benchmark.benchmark_dir`, because the run reads those keys once before it starts.
+Benchmark conditions and sweeps cannot override `io.dataset`, `io.metadata_csv`, `io.join_column`, `io.where`, `io.sample`, `benchmark.benchmark_dir`, or any key under `transcription`: the run resolves the first group before it starts, and builds its transcribers, with their numeric settings, before any condition executes. A run that tries stops with an error before any work starts.
 
 For the MAESTRO test split:
 
