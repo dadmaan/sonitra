@@ -161,4 +161,4 @@ Data manifest under misc/20260922_gpu_batch_measure/:
 - Strict equality to CPU is unreachable in off mode. Even CUDA batch 1 differs from CPU by dF1 0.00056.
 - Batch 8 won over batch 16 on fidelity. Medians sat 0.6 ms apart. Ranges overlapped.
 
-A follow up may lift the batch 1 guard in basic_pitch.py behind a config flag. It should add a regression test. This report authorizes no code change.
+The rule as built: an unset `batch_size` means 1 on a GPU and 16 on the CPU, and a value set in the config applies on every device with no cap. Each row records the batch that ran as `effective_batch` in `transcriber_metadata`, so a published number can be checked against the setting that produced it.
