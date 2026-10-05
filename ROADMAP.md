@@ -61,9 +61,9 @@ multi-instrument sets such as Slakh2100, and auto downloads for them.
 
 ## Additional transcription backends
 
-**Status:** TransKun landed. More backends still planned.
+**Status:** TransKun and hFT-Transformer landed. More backends still planned.
 
-Sonitra now uses Basic Pitch and TransKun plus generic `precomputed` and `external_command` adapters. Basic Pitch is Spotify's free transcription tool. TransKun is a PyTorch piano tool (Transformer encoder into neural semi-CRF, MIT, v2.0.1) that you add with `pip install sonitra[transkun]` and `type: transkun`. `external_command` lets you call any outside transcriber. Direct support for more AMT tools, such as MT3 and Omnizart, is still planned. MT3 is a Google multi-instrument transcription model. See [Model cards](docs/model-cards.md) and [Adding a transcriber](docs/adding-a-transcriber.md).
+Sonitra now uses Basic Pitch, TransKun and Sony hFT-Transformer plus generic `precomputed` and `external_command` adapters. Basic Pitch is Spotify's free transcription tool. TransKun is a PyTorch piano tool (Transformer encoder into neural semi-CRF, MIT, v2.0.1) that you add with `pip install sonitra[transkun]` and `type: transkun`. hFT-Transformer is Sony's ISMIR 2023 piano tool (two-level frequency-then-time Transformer, MIT code) selected with `type: hft_transformer`; it needs the same `transkun` extra for torch plus a one-time `python scripts/setup_hft_transformer.py`, because its weights are not redistributed. Both piano models are measured against MAESTRO V3-rendered audio only so far; the real-recording comparison is not done. `external_command` lets you call any outside transcriber. Direct support for more AMT tools, such as MT3 and Omnizart, is still planned. MT3 is a Google multi-instrument transcription model. See [Model cards](docs/model-cards.md) and [Adding a transcriber](docs/adding-a-transcriber.md).
 
 ## User-facing documentation site (Zensical)
 

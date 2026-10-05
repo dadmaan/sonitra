@@ -61,10 +61,33 @@ class TranskunTranscriberConfig(_TranscriberBase):
     conf_path: Path | str | None = None
 
 
+class HftTransformerTranscriberConfig(_TranscriberBase):
+    """Sony hFT-Transformer piano transcription (requires the transkun extra + setup script)."""
+
+    type: Literal["hft_transformer"] = "hft_transformer"
+    device: str = "cpu"
+    checkpoint: Literal["maestro"] = "maestro"
+    weights_path: Path | str | None = None
+    # The decoder has two head sets: a frequency axis and a time axis. "second" is the
+    # time-axis set the model reports in its paper, so it is the default.
+    output: Literal["first", "second"] = "second"
+    # Window stride, in frames of 16 ms. Overlap sharpens onsets but costs compute in
+    # proportion. 0 keeps the plain whole-window pass; the bound is num_frame / 2 (64),
+    # because the strided pass reads num_frame // 2 frames starting at n_stride, and above
+    # that bound the slice runs off the end of the window and acceptance stops being
+    # monotonic in the input length.
+    n_stride: int = Field(default=0, ge=0, le=64)
+    onset_threshold: float = Field(default=0.5, gt=0, le=1)
+    offset_threshold: float = Field(default=0.5, gt=0, le=1)
+    mpe_threshold: float = Field(default=0.5, gt=0, le=1)
+    batch_size: int = Field(default=1, ge=1)
+
+
 TranscriberConfig = Annotated[
     Union[
         BasicPitchTranscriberConfig,
         ExternalCommandTranscriberConfig,
+        HftTransformerTranscriberConfig,
         PrecomputedTranscriberConfig,
         TranskunTranscriberConfig,
     ],

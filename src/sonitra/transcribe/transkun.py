@@ -6,7 +6,6 @@ Requires the optional ``transkun`` extra
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,12 @@ from sonitra.transcribe.base import TranscriptionError, TranscriptionResult, che
 from sonitra.transcribe.configs import TranskunTranscriberConfig
 from sonitra.transcribe.devices import resolve_torch_device
 from sonitra.transcribe.protocol import register_transcriber
+from sonitra.transcribe.torch_support import (
+    apply_torch_numeric_settings,
+    missing_dependency_error,
+    numeric_settings_from_env,
+    validate_torch_device,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +37,7 @@ def _resolve_device(device: str) -> str:
 
 def _missing_dependency(module: str) -> TranscriptionError:
     """TranscriptionError naming the module that failed and how to install it."""
-    return TranscriptionError(
-        f"transkun backend unavailable: no module named '{module}'. "
-        "In a repo checkout: `uv sync --locked --extra transkun --extra dev` "
-        "(GPU: `--extra transkun-gpu`). Standalone: `pip install 'sonitra[transkun]'`."
-    )
+    return missing_dependency_error(module, backend="transkun")
 
 
 def _notes_to_dicts(notes: Any) -> list[dict[str, Any]]:
@@ -100,51 +101,13 @@ def _transkun_package_version() -> str:
         return "unknown"
 
 
-_NUMERIC_APPLIED: tuple[str, bool] | None = None
-
-
-def _apply_numeric_settings(numeric_mode: str, gpu_memory_growth: bool) -> None:
-    """Apply process-global torch numeric settings ahead of model load.
-
-    warn maps to ``warn_only=True`` with fallback to unconstrained when the
-    torch build lacks it; strict raises. TF32 is deterministic but less
-    accurate (~10 vs 23 mantissa bits), so it is off in both modes.
-    ``gpu_memory_growth`` is TF-only (torch already grows its cache);
-    accepted for a uniform section schema. Skips repeats per process.
-    """
-    global _NUMERIC_APPLIED
-    if _NUMERIC_APPLIED == (numeric_mode, gpu_memory_growth):
-        return
-    if numeric_mode == "off":
-        _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
-        return
-    import torch
-
-    failures: list[str] = []
-    try:
-        if numeric_mode == "warn":
-            try:
-                torch.use_deterministic_algorithms(True, warn_only=True)
-            except TypeError:
-                logger.warning(
-                    "transkun numeric_mode=warn: torch lacks warn_only; continuing unconstrained"
-                )
-        else:
-            torch.use_deterministic_algorithms(True)
-    except RuntimeError as exc:
-        failures.append(f"deterministic algorithms: {exc}")
-    try:
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
-    except AttributeError as exc:
-        failures.append(f"precision flags: {exc}")
-    _NUMERIC_APPLIED = (numeric_mode, gpu_memory_growth)
-    if failures:
-        message = "; ".join(failures)
-        if numeric_mode == "strict":
-            raise TranscriptionError(f"transkun strict numeric_mode failed: {message}")
-        logger.warning("transkun numeric settings fell back (%s)", message)
+def _apply_numeric_settings(
+    numeric_mode: str, gpu_memory_growth: bool, *, device: str | None = None
+) -> None:
+    """Apply process-global torch numeric settings for this backend."""
+    apply_torch_numeric_settings(
+        numeric_mode, gpu_memory_growth, backend="transkun", device=device
+    )
 
 
 class TranskunTranscriber:
@@ -189,47 +152,7 @@ class TranskunTranscriber:
         accelerator was requested but is absent. CPU short-circuits with no
         framework import.
         """
-        resolved = _resolve_device(self.device)
-        low = resolved.lower()
-        if low in ("cpu", "cpu:0"):
-            return resolved, True
-        if not low.startswith("cuda"):
-            return resolved, True
-        try:
-            import torch
-        except ImportError as exc:
-            raise _missing_dependency("torch") from exc
-        if not torch.cuda.is_available():
-            if getattr(torch.version, "cuda", None) is None:
-                raise TranscriptionError(
-                    f"transkun device '{self.device}' resolved to '{resolved}' but the installed "
-                    f"torch ({torch.__version__}) is a CPU-only build. Reinstall the CUDA fork: "
-                    "`uv sync --locked --extra transkun-gpu --extra xla-ptx --extra dev "
-                    "--reinstall-package torch --reinstall-package torchaudio` "
-                    "(a plain sync will not swap the build: both forks pin the same version)."
-                )
-            raise TranscriptionError(
-                f"transkun device '{self.device}' resolved to '{resolved}' but CUDA is not available"
-            )
-        if ":" in resolved:
-            try:
-                idx = int(resolved.split(":", 1)[1])
-            except ValueError as exc:
-                raise TranscriptionError(
-                    f"transkun got unknown device {self.device!r}; "
-                    "use 'cpu', 'cuda', 'cuda:N' or 'GPU:N'."
-                ) from exc
-            try:
-                count = torch.cuda.device_count()
-            except Exception as exc:
-                raise TranscriptionError(
-                    f"transkun device '{self.device}' resolved to '{resolved}' but CUDA device count is unavailable: {exc}"
-                ) from exc
-            if not 0 <= idx < count:
-                raise TranscriptionError(
-                    f"transkun device '{self.device}' resolved to '{resolved}' but only {count} CUDA device(s) are available"
-                )
-        return resolved, True
+        return validate_torch_device(self.device, backend="transkun")
 
     def transcribe(self, audio_path: Path | str) -> TranscriptionResult:
         # Fail fast on a missing accelerator; also the backstop for worker
@@ -241,7 +164,7 @@ class TranskunTranscriber:
         except ImportError as exc:
             raise _missing_dependency("torch") from exc
 
-        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth)
+        _apply_numeric_settings(self.numeric_mode, self.gpu_memory_growth, device=resolved)
 
         # lazy load of transkun package itself
         try:
@@ -393,14 +316,14 @@ class TranskunTranscriber:
 
 @register_transcriber("transkun")
 def _build(cfg: TranskunTranscriberConfig) -> TranskunTranscriber:
+    numeric_mode, gpu_memory_growth = numeric_settings_from_env()
     return TranskunTranscriber(
         device=cfg.device,
         segment_size_sec=cfg.segment_size_sec,
         segment_hop_sec=cfg.segment_hop_sec,
         weights_path=cfg.weights_path,
         conf_path=cfg.conf_path,
-        numeric_mode=os.environ.get("SONITRA_NUMERIC_MODE", "off"),
-        gpu_memory_growth=os.environ.get("SONITRA_GPU_MEMORY_GROWTH", "").strip().lower()
-        in {"1", "true", "yes", "on"},
+        numeric_mode=numeric_mode,
+        gpu_memory_growth=gpu_memory_growth,
         name=cfg.name or "transkun",
     )

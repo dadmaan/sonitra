@@ -20,7 +20,7 @@ flowchart TB
     subgraph process["Process"]
         direction TB
         sep["Stem separation (optional, benchmark only) (Demucs · Passthrough)"]
-        tx["Transcription (Basic Pitch · TransKun · Precomputed · External)"]
+        tx["Transcription (Basic Pitch · TransKun · hFT-Transformer · Precomputed · External)"]
         eval["Evaluation (Note · Frame · Expressive · DTW)"]
         audio --> tx
         audio -.-> sep -.-> tx
@@ -90,7 +90,7 @@ flowchart TB
 
     subgraph families["Where it applies"]
         direction TB
-        t1["Transcribers (Basic Pitch · TransKun · Precomputed · External) (register_transcriber → make_transcriber)"]
+        t1["Transcribers (Basic Pitch · TransKun · hFT-Transformer · Precomputed · External) (register_transcriber → make_transcriber)"]
         s1["Separators (register_separator → make_separator)"]
         m1["Metrics (register_symbolic_metric / register_audio_metric)"]
         x1["Synthesisers: exception (make_synth = if/elif dispatch over SynthBackend, no registry)"]
@@ -255,7 +255,7 @@ flowchart TB
     extras --> demucs & gpu & dev & bp
 ```
 
-GPU: set `device: GPU:0` on a `basic_pitch` transcriber (default `cpu`). Docker GPU passthrough is a Compose profile (`--profile gpu`, service `sonitra-gpu`; the GPU image installs CUDA itself rather than using the extra).
+GPU: set `device: GPU:0` on a `basic_pitch` transcriber (default `cpu`). Docker GPU passthrough is a Compose profile (`--profile gpu`, service `sonitra-gpu`; the GPU image installs CUDA itself rather than using the extra). Torch backends (`transkun`, `hft_transformer`) take the same unified strings and resolve them through `transcribe/torch_support.py`; torch process-global numeric settings live there too, so two torch backends in one worker cannot disagree about them.
 
 ## Concurrency & testing
 

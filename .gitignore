@@ -162,6 +162,7 @@ corpus/
 preset/
 docker/amt_models
 misc/
+models/
 dashboard/
 .zed/
 tmp/

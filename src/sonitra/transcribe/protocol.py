@@ -32,7 +32,7 @@ def register_transcriber(type_name: str) -> Callable[[TranscriberBuilder], Trans
 def make_transcriber(cfg: TranscriberConfig) -> TranscriberProtocol:
     # Import backends lazily so registration happens on first use without
     # forcing optional dependencies at package import time.
-    from sonitra.transcribe import basic_pitch, external_command, precomputed, transkun  # noqa: F401
+    from sonitra.transcribe import basic_pitch, external_command, hft_transformer, precomputed, transkun  # noqa: F401
 
     builder = _TRANSCRIBER_REGISTRY.get(cfg.type)
     if builder is None:

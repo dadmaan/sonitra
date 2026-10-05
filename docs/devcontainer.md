@@ -39,6 +39,14 @@ To see which fork it would pick, without syncing anything:
 bash .devcontainer/post-create.sh --print-extra
 ```
 
+## Transcriber weights
+
+The create step also installs the hFT-Transformer weights, so the backend works without any further setup. It runs `uv run --no-sync python scripts/setup_hft_transformer.py --models-dir /models`; the script downloads the pinned release asset, verifies its size and sha256, converts it once into a `model.pt`, and is idempotent, so a second create is a no-op that reports the existing install. `--no-sync` for the same reason as the venv sync above: this must not touch the environment it just built.
+
+`LOCAL_MODELS_DIR` in `.devcontainer/.env` names the host directory behind that mount. It must be an absolute path on your host, and it defaults to `../models`, the repository's own `models/` folder. Copy `.devcontainer/.env.example` to `.devcontainer/.env` and set it if you want the weights somewhere outside the checkout; `models/` is gitignored either way. The same host directory is bind-mounted at the same `/models` path by the production image under `docker/`, so one download serves both.
+
+If the runtime creates the mount for you, it creates it as root and your user cannot write into it, so the script first hands the directory to the current user. That step is idempotent and never fails the create: a directory you can already write to is left alone, and a failure is a warning, because the weights step reports its own problem next. The weights step is fail-soft in the same way. Torch missing from the venv exits `3` and skips quietly, and any other failure prints one warning naming the command to run by hand. The other backends work either way, and `type: hft_transformer` errors naming the setup command if the weights are absent.
+
 ## Two Python environments
 
 - `/workspace/.venv` is the main environment (an isolated Python folder). Bare `sonitra` and `python` run from `/workspace/.venv/bin` because that folder comes first on `PATH` (the list of folders your shell searches for commands). It holds torch and transkun on the torch build the lock names, plus `ptxas`/`libdevice` via `xla-ptx` on the GPU fork. VS Code uses it too (`/workspace/.venv/bin/python`). It lives on the bind mount (a shared folder between your machine and the container), so it survives a rebuild. This takes effect on Rebuild Container. The venv also wins in login bash: the image appends the same prepend to `/home/node/.profile`, after Debian's stock `$HOME/.local/bin` block.

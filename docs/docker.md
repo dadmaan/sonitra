@@ -86,6 +86,7 @@ The table below shows which folders on your machine link to which folders in the
 | `/app/corpus` | `./corpus` | Dataset-first corpus root: `{dataset}/midi/`, `{dataset}/audio/`, `{dataset}/transcription/`, `{dataset}/eval_results/` |
 | `/app/config` | `./config` | Pipeline YAML configs |
 | `/app/output` | `./output` | Transcriptions, evaluation results, benchmarks |
+| `/models` | `./models` | Converted transcriber weights for `hft_transformer`. See [hFT-Transformer weights](#hft-transformer-weights) below |
 
 Set `SONITRA_CONFIG` in `.env` to use a different config path inside the container. The default is `/app/config/config.yaml`.
 
@@ -113,7 +114,27 @@ The two images carry different torch builds. The CPU image carries CPU torch. Th
 
 TransKun inference now runs on both images. The GPU image copies its Python from `python:3.11-slim-bookworm`, the same 3.11.16 the venv was built with. Ubuntu 22.04's apt Python is the pre-release 3.11.0rc1, which lacks `sys.get_int_max_str_digits`, a function torch's dynamo path calls. TensorFlow and torch still coexist and both see the GPU.
 
-Measured sizes with defaults (`INSTALL_R=1`, `INSTALL_TRANSKUN=1`): `sonitra:latest` is 3.68 GB and `sonitra:gpu` is 15.6 GB. With both `INSTALL_R=0` and `INSTALL_TRANSKUN=0`: 2.56 GB and 10.5 GB. The slim figure drops R and TransKun together, so do not read it as TransKun alone.
+Measured sizes with defaults (`INSTALL_R=1`, `INSTALL_TRANSKUN=1`): `sonitra:latest` is 3.68 GB and `sonitra:gpu` is 15.6 GB. With both `INSTALL_R=0` and `INSTALL_TRANSKUN=0`: 2.56 GB and 10.5 GB. The slim figure drops R and TransKun together, so do not read it as TransKun alone. The hFT-Transformer weights are not in either figure: they live in the `./models` bind mount, not in the image.
+
+## hFT-Transformer weights
+
+Both images set `SONITRA_MODELS_DIR=/models`, and the host's `./models` folder is bind-mounted there. The mount sits outside `/app` on purpose: the devcontainer mounts the very same host directory at the very same path, so one download is shared by development and production instead of being repeated per image. Weights are never baked into an image.
+
+The entrypoint installs them on container start by running `scripts/setup_hft_transformer.py`, which downloads the pinned release asset, verifies its size and sha256 against the registry, and converts it once into a `model.pt`. Torch must be present for that conversion, so an image built with `INSTALL_TRANSKUN=0` already skips it: the script exits `3` and the entrypoint stays quiet rather than reaching for the network.
+
+The step is fail-soft, because the other backends work without these weights. A failure prints one warning naming the command to run by hand, and the API starts anyway. A later request for `type: hft_transformer` then errors naming that same setup command, so the cause stays visible instead of becoming a silent missing result. The script is idempotent, so a second container sharing the same `./models` host folder reports the existing install and moves on.
+
+To skip the start-up download entirely, which is what an air-gapped host needs:
+
+```bash
+echo "SONITRA_SETUP_HFT=0" >> .env
+```
+
+Then install the weights on a machine that can reach the release, writing into that same host folder, before you start the container:
+
+```bash
+python scripts/setup_hft_transformer.py --models-dir ./models
+```
 
 ---
 [← Back to README](../README.md)

@@ -257,6 +257,18 @@ transcription:
         #   segment_hop_sec: null     # null lets bundled conf stay default (8s)
         #   weights_path: null        # null uses bundled checkpoint
         #   conf_path: null           # null uses bundled conf
+        # Sony hFT-Transformer — requires `pip install sonitra[transkun]` plus
+        # `python scripts/setup_hft_transformer.py` to fetch and convert the released checkpoint:
+        # - type: hft_transformer
+        #   device: cpu               # unified: cpu, cuda, cuda:N, GPU:N (plus mps); GPU:0 → cuda:0
+        #   checkpoint: maestro       # which pinned release to convert and load
+        #   weights_path: null        # null uses the converted checkpoint in the models dir; must point at a converted model.pt, never the upstream .pkl pickle
+        #   output: second            # which decoder head set to decode: "second" is the time-axis head the model reports, "first" the frequency-axis head
+        #   n_stride: 0               # window stride in 16 ms frames; 0 = one pass per whole window, higher sharpens onsets (64 = num_frame/2 is the maximum)
+        #   onset_threshold: 0.5      # onset activation threshold in (0, 1]
+        #   offset_threshold: 0.5     # offset activation threshold in (0, 1]
+        #   mpe_threshold: 0.5        # minimum-picked-onset activation threshold in (0, 1]
+        #   batch_size: 1             # windows per forward pass; 1 is bit-reproducible, higher only changes reduction order
 
 evaluation:
     max_workers: 1 # parallel reference/estimate pairs during scoring

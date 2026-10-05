@@ -222,6 +222,12 @@ ENV PATH="/app/.venv/bin:$PATH"
 # writes to /app/.cache/uv, which is owned by the sonitra user.
 ENV UV_CACHE_DIR=/app/.cache/uv
 
+# Where the transcriber weights are installed. /models is a bind mount at runtime,
+# so nothing is baked in here — the entrypoint runs scripts/setup_hft_transformer.py
+# on container start. The same host directory is mounted at this path by the
+# devcontainer, hence the path outside /app.
+ENV SONITRA_MODELS_DIR=/models
+
 # Copy the fully-built project tree from the `builder-cpu` stage, setting ownership
 # in a single pass via --chown (avoids a slow chown -R on a large tree).
 COPY --from=builder-cpu --chown=sonitra:sonitra /app /app
@@ -230,9 +236,10 @@ COPY --from=builder-cpu --chown=sonitra:sonitra /app /app
 # These directories are intended to be bind-mounted at runtime; they exist
 # in the image so the container starts cleanly even without mounts.
 # /app/.cache/uv is created here so uv can write its runtime cache without
-# requiring a home directory.
-RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
-    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv \
+# requiring a home directory. /models sits outside /app because the devcontainer
+# mounts the same host directory at the same path (see SONITRA_MODELS_DIR above).
+RUN mkdir -p /app/corpus /app/output /app/.cache/uv /models \
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv /models \
     && chown sonitra:sonitra /app
 
 # Entrypoint script lives in docker/ in the repo; build context is repo root.
@@ -372,6 +379,9 @@ WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_CACHE_DIR=/app/.cache/uv
 
+# Weights directory — same reasoning as in the CPU runtime stage above.
+ENV SONITRA_MODELS_DIR=/models
+
 # CUDA coexistence pin (TF 2.15 + torch in one process): TensorFlow dlopens the
 # apt-installed libcudnn.so.8 by soname, while torch preloads its own bundled
 # cuDNN 9 (nvidia-cudnn-cu13 wheels) by absolute path — so the two never share a
@@ -389,8 +399,8 @@ COPY --from=builder-gpu --chown=sonitra:sonitra /app /app
 RUN test "$(python3.11 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" \
         = "$(sed -n 's/^version_info = //p' /app/.venv/pyvenv.cfg | tr -d '[:space:]')"
 
-RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
-    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv \
+RUN mkdir -p /app/corpus /app/output /app/.cache/uv /models \
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv /models \
     && chown sonitra:sonitra /app
 
 COPY docker/entrypoint.sh /entrypoint.sh

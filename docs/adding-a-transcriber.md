@@ -35,9 +35,11 @@ transcription:
       conf_path: null            # null uses the bundled conf
 ```
 
-`enabled` and `name` come from the base class. `device` accepts the unified strings `cpu`, `cuda`, `cuda:N` and `GPU:N` (plus `mps` on torch backends). Each backend translates them at its boundary with the shared helpers in `src/sonitra/transcribe/devices.py` (`resolve_torch_device` maps `GPU:N` to `cuda:N`; `resolve_tf_device` maps `cuda` to `GPU:0`), so users write the same word everywhere. Any new backend must accept the same strings and translate via that module; anything else raises `TranscriptionError` naming the valid values. A new backend must also honour the process-level numeric settings (`transcription.numeric_mode`, `gpu_memory_growth`) the same way: read the `SONITRA_NUMERIC_MODE` / `SONITRA_GPU_MEMORY_GROWTH` environment defaults in the builder, apply them inside the lazy-import block, and record the effective `numeric_mode` in `metadata`.
+`enabled` and `name` come from the base class. `device` accepts the unified strings `cpu`, `cuda`, `cuda:N` and `GPU:N` (plus `mps` on torch backends). Each backend translates them at its boundary with the shared helpers in `src/sonitra/transcribe/devices.py` (`resolve_torch_device` maps `GPU:N` to `cuda:N`; `resolve_tf_device` maps `cuda` to `GPU:0`), so users write the same word everywhere. Any new backend must accept the same strings and translate via that module; anything else raises `TranscriptionError` naming the valid values. A torch backend also honours the process-level numeric settings (`transcription.numeric_mode`, `gpu_memory_growth`) through `src/sonitra/transcribe/torch_support.py` rather than by reading the environment itself; see [Share the torch process settings](#share-the-torch-process-settings) below. Either way, record the effective `numeric_mode` in `metadata`.
 
-Add the new class to the `TranscriberConfig` union at the bottom of the file. That union is a discriminated union. The `type` field picks which class to validate. If you add a config class but forget the registry, or the other way round, `tests/test_transcriber_registry.py` fails. That test checks the two lists match.
+A registry entry needs **two** edits, not one: the config class in the `TranscriberConfig` union at the bottom of the file, and the module on the lazy import line in `protocol.py` (see [Register the backend](#register-the-backend)). Miss either and `tests/test_transcriber_registry.py` fails, because it compares the union against the modules that registered themselves. It imports each backend module by name to populate that list, so add your module there too, or the comparison fails with the new type missing from the registry side. Do all of it in one pass.
+
+That union is a discriminated union. The `type` field picks which class to validate.
 
 ## Register the backend
 
@@ -59,6 +61,14 @@ def _build(cfg: TranskunTranscriberConfig) -> TranskunTranscriber:
 The string `"transkun"` is the `type` discriminator. Use it unchanged in config YAML. It must match the literal on the config class.
 
 Then add the module to the lazy import line in `src/sonitra/transcribe/protocol.py` inside `make_transcriber`. That line runs on every `make_transcriber` call, even for `precomputed`. For that reason the backend module must not import heavy libraries at top level.
+
+The line lists modules alphabetically, and `basic_pitch` stays first on it. Keep both properties when you insert a name:
+
+```python
+from sonitra.transcribe import basic_pitch, external_command, hft_transformer, precomputed, transkun  # noqa: F401
+```
+
+A reader scanning that line expects the first entry to be the always-present core backend; reordering it for cosmetic reasons breaks that expectation for no gain. Every module on the line must also be import-safe with its extra missing, because the whole line executes before the registry lookup decides which builder is needed.
 
 Two names matter. `backend_type` is fixed. It holds the discriminator, for example `"transkun"`. It keys the writer registry. `transcriber` is the user visible name. It defaults to the backend type but the user can override it with `name` in YAML. Code that looks up a writer or result must use `backend_type`, not `transcriber`. A renamed instance would miss its own writer otherwise.
 
@@ -99,18 +109,33 @@ Boundary notes are kept. If a note has `hasOnset` false or `hasOffset` false, it
 
 Never import `torch` or `transkun` at the top of the module. Import inside `transcribe`. This keeps the core import light when the extra is not installed.
 
-If the import fails, raise `TranscriptionError` with an install hint:
+If the import fails, raise `TranscriptionError` with an install hint. On a torch backend, build it with the shared `missing_dependency_error` from `src/sonitra/transcribe/torch_support.py` instead of writing your own sentence:
 
 ```python
 try:
     import torch
 except ImportError as exc:
-    raise TranscriptionError(
-        "transkun is not installed; install with `pip install 'sonitra[transkun]'`"
-    ) from exc
+    raise missing_dependency_error("torch", backend="transkun") from exc
 ```
 
-Do the same for the `transkun` package. The factory will only create this backend when the user config asks for `type: transkun`, so the error only appears when it is needed.
+That helper names the missing module and gives the same install command for every backend, so a user who hits it once can act on it without reading each backend's source. Do the same for the `transkun` package, and for anything else your backend imports. The factory will only create this backend when the user config asks for `type: transkun`, so the error only appears when it is needed.
+
+## Share the torch process settings
+
+Torch's numeric flags and its device state are process-global, and two torch backends can be built in the same worker. So the settings live in one place: `src/sonitra/transcribe/torch_support.py`, with four public helpers a torch backend must use.
+
+- `numeric_settings_from_env()` returns the process defaults `(numeric_mode, gpu_memory_growth)` read from `SONITRA_NUMERIC_MODE` and `SONITRA_GPU_MEMORY_GROWTH`. Call it in the builder, not in `transcribe`: the builder runs once per instance, and `transcribe` runs per file.
+- `validate_torch_device(device, backend=...)` resolves a unified device string and confirms it exists. It returns `(resolved_name, available)` and raises `TranscriptionError` when an accelerator was requested and is absent. `cpu` short-circuits with no framework import at all.
+- `apply_torch_numeric_settings(numeric_mode, gpu_memory_growth, backend=..., device=...)` applies the process-global torch state. Pass the **resolved** device, because it decides the cuBLAS workspace below.
+- `missing_dependency_error(module, backend=...)` builds the install-hint error described above.
+
+Two rules make the sharing safe, and a backend that re-implements either of them breaks the other backend instead of helping.
+
+**One cache, not one per backend.** The module keeps a single `_NUMERIC_APPLIED` tuple of the `(numeric_mode, gpu_memory_growth)` pair this process has already set, and `apply_torch_numeric_settings` returns immediately when the pair matches. That is deliberate, and it is the whole reason the helpers are shared. The settings are process-global, so if each backend kept its own cache then two backends asking for different modes would each apply their own and whichever ran last would silently win for the entire process, including for the other backend's remaining files. There is no per-backend answer to that question, so it must not become one. Do not keep a second cache, and do not call `torch.use_deterministic_algorithms` yourself outside this helper.
+
+**The cuBLAS workspace default is narrow on purpose.** Deterministic cuBLAS needs a fixed workspace size, so the helper sets `CUBLAS_WORKSPACE_CONFIG=:4096:8` as an environment default. That fires only when `numeric_mode` is `strict` **and** the resolved device is a CUDA device. It is not applied for `warn`, and not on CPU, where cuBLAS is not in the path at all. `setdefault` is deliberate: an operator who exports their own value keeps it.
+
+The rest of the behaviour is the same on both frameworks. `warn` maps to `torch.use_deterministic_algorithms(True, warn_only=True)` and falls back with a warning where the build lacks it, `strict` raises, and TF32 is off in both modes because it is deterministic but less accurate. `gpu_memory_growth` is TensorFlow-only; torch already grows its cache, so the argument is accepted for a uniform section schema and does nothing.
 
 ## Load audio at 44.1 kHz
 
@@ -141,6 +166,8 @@ conf_file = Path(str(resources.files("transkun").joinpath("pretrained/2.0.conf")
 
 If the user set `weights_path` or `conf_path` in YAML, use those instead. Read the conf with `moduleconf.parseFromFile`, then apply `segment_size_sec` and `segment_hop_sec` overrides if they are not None. Passing `None` keeps the bundled conf value as the source of truth.
 
+A backend whose weights are not bundled needs a different answer, and there are only two workable ones: ship them inside the package, or have the user install them once out of band and resolve the location at run time. `hft_transformer` takes the second route, because its training data (MAESTRO, CC BY-NC-SA 4.0) forbids redistribution. Its `scripts/setup_hft_transformer.py` writes `<models_dir>/hft_transformer/maestro/model.pt` next to a `manifest.json`, and `src/sonitra/transcribe/_hft/checkpoints.py` resolves the models directory: `SONITRA_MODELS_DIR` when set and non-empty, otherwise `~/.cache/sonitra/models`, with no repository-relative default because a checkout may be read-only or shared. When the weights are missing, the backend raises `TranscriptionError` naming the setup command and the directory it looked in; it must never download at transcribe time, because a benchmark run is a loop and a per-file network call is not recoverable.
+
 ## Load weights and run inference safely
 
 We own the `torch.load` call, so we handle the flag:
@@ -156,17 +183,13 @@ The checkpoint holds state dicts plus ints. `weights_only=True` is safer when av
 
 Use a scoped `torch.no_grad()` block for inference. Do not call `torch.set_grad_enabled(False)`. That call latches a process global and stays false after the method returns. It would silently disable autograd for any other torch code in the same worker. `torch.no_grad()` only affects the block. A test in `tests/test_transkun.py` checks that grad mode is still enabled after `transcribe`.
 
-Device handling must be strict. Translate with the shared helper in `src/sonitra/transcribe/devices.py` first (`resolve_torch_device` for torch, `resolve_tf_device` for TensorFlow — `_resolve_device` in `transkun.py` is a thin wrapper over the shared torch helper kept for backwards compatibility), then check:
+Device handling must be strict, and it is shared. Call `validate_torch_device` from `src/sonitra/transcribe/torch_support.py` (`_resolve_device` in `transkun.py` is a thin wrapper over the shared torch helper, kept for backwards compatibility). It resolves the unified string and raises for you, so a backend does not re-derive the two failure messages:
 
 ```python
-resolved = _resolve_device(self.device)
-if resolved.startswith("cuda") and not torch.cuda.is_available():
-    raise TranscriptionError(
-        f"transkun device '{self.device}' resolved to '{resolved}' but CUDA is not available"
-    )
+resolved, available = validate_torch_device(self.device, backend="transkun")
 ```
 
-A cuda request with no CUDA must raise, not fall back to cpu. The benchmark records `transcribe_seconds` per cell. A silent fallback would label cpu timings as gpu results.
+A cuda request with no CUDA must raise, not fall back to cpu, and the helper does exactly that. It also tells apart the two reasons a CUDA request fails, which are not the same problem: a CPU-only torch build (the fork was never swapped, see [devcontainer.md](devcontainer.md)) and a real CUDA build that cannot see a GPU (a passthrough problem). The benchmark records `transcribe_seconds` per cell. A silent fallback would label cpu timings as gpu results.
 
 ## Record provenance in `metadata`
 
@@ -181,6 +204,8 @@ Every `TranscriptionResult` carries a `metadata` dict. The benchmark copies it i
 * `filtered_dropped`: notes the model returned that `make_note` dropped.
 * `note_events_total` and `notes_kept`: before and after the filter.
 * `boundary_incomplete`: notes with `hasOnset` or `hasOffset` false, counted but kept.
+
+Those are the keys the other backends record, so a study can compare them. Add whatever else a reader would need to reproduce your run: `hft_transformer` records its decoder head, window stride, batch size, thresholds, resampler and sample rate, the upstream commit and checkpoint name, the weights' sha256, and two counts a reader needs to see the filter's effect (`filtered_dropped`, and `offset_past_end` for notes whose decoded end ran past the audio). A number that cannot be re-derived from the recorded keys is a number nobody can reproduce.
 
 TransKun sets `raw_outputs` to `None`. It registers no raw writer, so `write_transcription_outputs` writes only MIDI.
 
@@ -205,7 +230,7 @@ The benchmark is not affected in the same way. It rebuilds transcribers per cond
 
 ## Licence and training data
 
-Record the licence and training data for the model card. TransKun is MIT and ships its own checkpoint. The default checkpoint is trained on MAESTRO V3. Note any data overlap with Sonitra corpora in `docs/model-cards.md`. The guide for that file asks for two sentences about MAESTRO overlap and a note that Basic Pitch resamples to 22.05 kHz while TransKun requires 44.1 kHz.
+Record the licence and training data for the model card, and the position on the weights. TransKun is MIT and ships its own checkpoint. hFT-Transformer's code is MIT but its weights are not redistributed, because they derive from MAESTRO under CC BY-NC-SA 4.0; a card has to say both halves, or a reader cannot tell what they may do with the result. The default TransKun checkpoint is trained on MAESTRO V3. Note any data overlap with Sonitra corpora in `docs/model-cards.md`, where the guide for that file asks for a note on MAESTRO overlap and one on input resolution across models (Basic Pitch resamples to 22.05 kHz, TransKun requires 44.1 kHz, hFT-Transformer's features are pinned to 16 kHz). State measured numbers with the corpus, the input mode, the device and the numeric mode that produced them, and say plainly when a comparison has not been run yet.
 
 ## Check your work
 

@@ -50,12 +50,27 @@ A transcriber turns audio back into notes. AMT means automatic music transcripti
 |---|---|---|
 | Spotify Basic Pitch | `basic_pitch` | Installed by default; supports unified `device` values `cpu`, `cuda`, `cuda:N`, `GPU:N` (default: `cpu`; `cuda` is translated to TensorFlow's `GPU:0` internally — requires `[gpu]` extras on Linux x86_64) |
 | TransKun | `transkun` | Piano only; requires `pip install 'sonitra[transkun]'` (bundled 56 MB checkpoint, PyTorch). Supports `device` values `cpu`, `cuda`, `cuda:1`, `mps` and `GPU:0` (translated to `cuda:0` internally). See `config/source.yaml` commented block and `config/benchmark/transkun/transkun_baseline.yaml` |
+| Sony hFT-Transformer | `hft_transformer` | Piano only; needs `pip install 'sonitra[transkun]'` too (no new extra), plus a one-time weights install: `python scripts/setup_hft_transformer.py`. Keys: `device` (unified `cpu`, `cuda`, `cuda:N`, `GPU:N`), `checkpoint: maestro`, `weights_path`, `output` (`second` is the time-axis head and the default), `n_stride` (0–64, 0 = no overlapping windows), `onset_threshold` / `offset_threshold` / `mpe_threshold` (each default 0.5), `batch_size` (default 1). See `config/source.yaml` commented block and [model-cards.md](model-cards.md) |
 | Pre-exported MIDI | `precomputed` | Point at a directory of MIDI from external tools |
 | Any CLI tool | `external_command` | Template: `"tool transcribe {input} -o {output}"` |
 
 Separation `device` accepts the same unified strings (`cpu`, `cuda`, `cuda:N`, `GPU:N`); `GPU:0` is translated to torch `cuda:0` at the separator boundary.
 
 Numeric reproducibility is controlled per run by two `transcription` keys. Both stay in the benchmark fingerprint, so changing them invalidates resume. `numeric_mode` (`off` default, `warn`, `strict` — `strict` recommended for published runs) selects deterministic framework algorithms and disables TF32 precision shortcuts (TF32 is deterministic but less accurate than float32, about 10 versus 23 mantissa bits). `warn` falls back with a warning where a kernel has no deterministic implementation; `strict` raises instead. `gpu_memory_growth` (default `false`) lets TensorFlow allocate graphics memory as needed instead of grabbing it all at start; cuDNN algorithm choice can depend on workspace size, so it is treated as result-affecting. Both settings are process-global and reach benchmark workers through the environment; the effective `numeric_mode` is recorded per row in `transcriber_metadata`.
+
+## Models directory
+
+Backends that do not bundle their weights read them from a models directory. Today that is `hft_transformer`; TransKun and Basic Pitch carry theirs inside their packages. Sonitra resolves the directory in one order: `SONITRA_MODELS_DIR` when it is set and non-empty, otherwise `~/.cache/sonitra/models`. There is deliberately no repository-relative default, because a checkout may be read-only or shared between users. The weights land at `<models_dir>/hft_transformer/maestro/model.pt` with a `manifest.json` recording where they came from.
+
+```bash
+# once, to install the hFT-Transformer weights
+python scripts/setup_hft_transformer.py
+
+# into a directory of your choosing
+SONITRA_MODELS_DIR=/path/to/models python scripts/setup_hft_transformer.py
+```
+
+Inside the containers the host `models/` folder is bind-mounted at `/models` and `SONITRA_MODELS_DIR=/models` is already set, and the image installs the weights on start; see [docker.md](docker.md) and [devcontainer.md](devcontainer.md). `weights_path` in a transcriber's config overrides the resolved location for that one backend; it must point at an already converted `model.pt`, never at the upstream `.pkl` pickle.
 
 ## Built-in audio effects
 

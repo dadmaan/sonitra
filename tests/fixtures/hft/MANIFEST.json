@@ -1,0 +1,80 @@
+{
+  "edge_cases": {
+    "dense_random_onsets": {
+      "frames": 160,
+      "why": "many local maxima on all 88 pitches with zero velocities interleaved",
+      "zero_velocity_rows": 160
+    },
+    "note_to_last_frame": {
+      "frames": 96,
+      "why": "peak on the final frame; the offset falls back to (len(a_mpe) - 1) * hop_sec",
+      "zero_velocity_rows": 0
+    },
+    "onset_at_frame_0": {
+      "frames": 96,
+      "why": "peak at frame 0; onset time takes the i == 0 branch (no interpolation)",
+      "zero_velocity_rows": 0
+    },
+    "plateau_above_threshold": {
+      "frames": 128,
+      "why": "tie across every frame; exercises the i == 0, i == len-1 and equality branches",
+      "zero_velocity_rows": 0
+    },
+    "same_pitch_overlap_trim": {
+      "frames": 128,
+      "why": "three onsets on one pitch; the tail-trim must shorten each earlier note",
+      "zero_velocity_rows": 0
+    },
+    "velocity_zero_ignored": {
+      "frames": 96,
+      "why": "velocity 0 at the onset frame; must produce no note at all",
+      "zero_velocity_rows": 96
+    }
+  },
+  "generator": {
+    "min_value": -18.42068099975586,
+    "n_bins": 256,
+    "note": "random features are regenerated from these constants, not stored",
+    "num_note": 88,
+    "random_centre": -7.136,
+    "random_frames": 256,
+    "random_seed": 20261003,
+    "random_spread": 5.071,
+    "thresholds": {
+      "thred_mpe": 0.5,
+      "thred_offset": 0.5,
+      "thred_onset": 0.5
+    }
+  },
+  "mpe2note_files": [
+    "mpe2note_dense_random_onsets.npz",
+    "mpe2note_note_to_last_frame.npz",
+    "mpe2note_onset_at_frame_0.npz",
+    "mpe2note_plateau_above_threshold.npz",
+    "mpe2note_same_pitch_overlap_trim.npz",
+    "mpe2note_velocity_zero_ignored.npz"
+  ],
+  "random_features_stats": {
+    "max": 12.868837356567383,
+    "mean": -7.128950119018555,
+    "min": -18.42068099975586,
+    "shape": [
+      256,
+      256
+    ],
+    "std": 5.029561519622803
+  },
+  "torch": "2.12.1+cu130",
+  "transcript_files": [
+    "transcript_mpe_A.npy",
+    "transcript_mpe_B.npy",
+    "transcript_offset_A.npy",
+    "transcript_offset_B.npy",
+    "transcript_onset_A.npy",
+    "transcript_onset_B.npy",
+    "transcript_velocity_A.npy",
+    "transcript_velocity_B.npy"
+  ],
+  "transcript_frames": 256,
+  "upstream_commit": "71a2ee06e9ced1ea24673c95ee0acded2fc98d04"
+}

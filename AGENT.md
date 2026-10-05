@@ -20,8 +20,10 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
 ```
 
 - `uv sync` is exact and strips packages the requested set does not name (`transkun`, `torch`, `pytest` among them); re-sync with `--extra ... --extra dev` or run `.devcontainer/post-create.sh` (see `docs/devcontainer.md`). `uv run` is inexact and safe; `--no-sync` mutates nothing.
+- Weights are installed by `python scripts/setup_hft_transformer.py`. Exit code `3` means torch is absent, so skip it quietly; other non-zero codes are real failures. It runs automatically in both containers.
 - Switching between the `transkun` (CPU) and `transkun-gpu` forks in an existing venv needs `--reinstall-package torch --reinstall-package torchaudio`; the GPU fork's specifier has no local segment, so a plain `uv sync` can audit the environment as correct and keep the old build.
 - Without `uv`: `python -m pytest tests/`.
+- In-container work must not commit `uv.lock`: the containers sync `--locked`, so a lock change breaks every other environment until it is reviewed deliberately.
 - Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
 - No linter or type-checker config; pytest is the quality gate.
 - CLI (Typer, also `python -m sonitra`): `sonitra init|render|transcribe|evaluate|benchmark --config FILE [--dataset NAME]`, `sonitra serve --port 8000`.
@@ -49,6 +51,7 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
   - `export_model_baselines.py` owns the generated block in `docs/model-cards.md`; never hand-edit between `<!-- BEGIN/END GENERATED: baselines -->`. `corpus/` is untracked, so `--check` cannot run in CI.
   - Scripts that write files must never overwrite their inputs.
 - **Configs**: `config/examples/` holds presets (used by `run_transcribe_eval.py` and roundtrip tests); `config/benchmark/` holds benchmark studies; test fixtures live in `tests/fixtures/`.
+- **Models dir** (downloaded weights, not bundled): `$SONITRA_MODELS_DIR` when set and non-empty, else `~/.cache/sonitra/models`. Never resolve it repo-relative, even though the containers mount a host `models/` at `/models`; the repo's own `models/` is gitignored.
 - **GPU**: set `device: GPU:0` on a `basic_pitch` transcriber; Docker needs `--profile gpu` or `--profile cpu` (no default profile).
 
 ## Conventions
