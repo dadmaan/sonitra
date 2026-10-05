@@ -226,7 +226,7 @@ separation:
 
 transcription:
     output_dir: transcriptions
-    max_workers: 1 # parallel audio files per transcriber; safe for any rendering mode
+    max_workers: 1 # `sonitra transcribe` only, no effect in `sonitra benchmark`; the built-in models serialise inference on a per-instance lock so the gain is small there, while `external_command` really does run one subprocess per file
     numeric_mode: "off" # framework determinism + precision: off | warn (fallback) | strict (raise); strict recommended for published runs
     gpu_memory_growth: false # TF allocates GPU memory as needed; may change cuDNN algorithm choice, so it stays in the benchmark fingerprint
     transcribers:
@@ -271,7 +271,7 @@ transcription:
         #   batch_size: 1             # windows per forward pass; 1 is bit-reproducible, higher only changes reduction order
 
 evaluation:
-    max_workers: 1 # parallel reference/estimate pairs during scoring
+    max_workers: 1 # `sonitra evaluate` only, no effect in `sonitra benchmark`; parallel reference/estimate pairs during scoring
     note_metrics:
         enabled: true
         onset_tolerance_sec: 0.05 # ±50 ms onset matching window

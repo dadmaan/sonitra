@@ -720,3 +720,52 @@ def test_benchmark_presets_pass_run_level_validation() -> None:
             offenders.append(f"{path.relative_to(config_dir)}: {exc}")
 
     assert not offenders, "presets override run-level keys:\n" + "\n".join(offenders)
+
+
+def test_benchmark_presets_do_not_set_standalone_worker_keys() -> None:
+    """A benchmark preset carries no worker key it cannot act on.
+
+    ``transcription.max_workers`` is read by ``sonitra transcribe`` and
+    ``evaluation.max_workers`` by ``sonitra evaluate``; ``sonitra benchmark``
+    reads neither, so a value here only invites the reader to believe it
+    parallelises the study. The raw YAML is read rather than a loaded config so
+    an absent key cannot be masked by the schema default of 1.
+    """
+    import yaml
+
+    benchmark_dir = Path(__file__).resolve().parent.parent / "config" / "benchmark"
+    presets = sorted(benchmark_dir.rglob("*.yaml"))
+    assert presets, "the benchmark preset walk found nothing"
+
+    offenders: list[str] = []
+    for path in presets:
+        raw = yaml.safe_load(path.read_text()) or {}
+        for section in ("transcription", "evaluation"):
+            if "max_workers" in (raw.get(section) or {}):
+                offenders.append(
+                    f"{path.relative_to(benchmark_dir)}: {section}.max_workers="
+                    f"{raw[section]['max_workers']}"
+                )
+
+    assert not offenders, "inert worker keys in benchmark presets:\n" + "\n".join(offenders)
+
+
+def test_source_yaml_worker_key_comments() -> None:
+    """The reference must say which command each worker key applies to.
+
+    Two identically named keys sit under different sections, and only one of
+    them affects a benchmark, so each comment names its own command.
+    """
+    text = default_config_path().read_text()
+    expected = {
+        "transcription": "sonitra transcribe",
+        "evaluation": "sonitra evaluate",
+    }
+
+    for section, command in expected.items():
+        # Locate the key by scanning the section's body, since line numbers drift.
+        body = re.search(rf"^{section}:\n(?P<lines>(?:[ \t]+.*\n)+)", text, re.M)
+        assert body, f"config/source.yaml has no {section} section"
+        match = re.search(r"^[ \t]+max_workers:.*$", body.group("lines"), re.M)
+        assert match, f"config/source.yaml {section} section documents no max_workers"
+        assert command in match.group(0), match.group(0)

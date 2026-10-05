@@ -1739,3 +1739,66 @@ def test_parallel_run_builds_once_per_worker(
         if not marker.name.startswith(f"build-{parent_pid}-")
     ]
     assert len(worker_builds) <= 2
+
+
+# ── worker keys a benchmark cannot act on ────────────────────────────────
+
+
+def _benchmark_worker_warnings(
+    caplog: pytest.LogCaptureFixture, needle: str
+) -> list[str]:
+    """Messages this module logged that mention *needle*."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "sonitra.benchmark.runner" and needle in record.getMessage()
+    ]
+
+
+def test_benchmark_warns_on_inert_transcription_workers(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # transcription.max_workers only ever parallelises `sonitra transcribe`, so a
+    # value here is inert and must say so rather than pass unnoticed.
+    benchmark_config.transcription.max_workers = 6
+
+    with caplog.at_level("WARNING", logger="sonitra.benchmark.runner"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    messages = _benchmark_worker_warnings(caplog, "transcription.max_workers=6")
+    assert len(messages) == 1
+    message = messages[0]
+    assert "transcription.max_workers=6" in message
+    assert "has no effect in sonitra benchmark" in message
+    assert "sonitra transcribe" in message
+    assert "benchmark.max_workers" in message
+
+
+def test_benchmark_warns_on_inert_evaluation_workers(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    benchmark_config.evaluation.max_workers = 4
+
+    with caplog.at_level("WARNING", logger="sonitra.benchmark.runner"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    messages = _benchmark_worker_warnings(caplog, "evaluation.max_workers=4")
+    assert len(messages) == 1
+    message = messages[0]
+    assert "evaluation.max_workers=4" in message
+    assert "has no effect in sonitra benchmark" in message
+    assert "sonitra evaluate" in message
+    assert "benchmark.max_workers" in message
+
+
+def test_benchmark_silent_on_default_workers(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert benchmark_config.transcription.max_workers == 1
+    assert benchmark_config.evaluation.max_workers == 1
+
+    with caplog.at_level("WARNING", logger="sonitra.benchmark.runner"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert _benchmark_worker_warnings(caplog, "transcription.max_workers") == []
+    assert _benchmark_worker_warnings(caplog, "evaluation.max_workers") == []

@@ -129,7 +129,6 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 1
   numeric_mode: strict # deterministic kernels, TF32 off
   # TensorFlow otherwise reserves most GPU memory, even with basic_pitch on CPU,
   # and starves TransKun in the same process.
@@ -175,7 +174,6 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 4
 
 benchmark:
   results_path: benchmark_results.jsonl

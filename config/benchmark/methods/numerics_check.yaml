@@ -98,7 +98,6 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 1
   numeric_mode: "off" # baseline; rerun with warn/strict at top level (see header)
   gpu_memory_growth: false
   transcribers:
@@ -139,7 +138,6 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 1
 
 benchmark:
   results_path: benchmark_results.jsonl

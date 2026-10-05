@@ -527,6 +527,20 @@ def _run_benchmark(
             "not applicable in audio-input mode (real recordings have no "
             "meaningful synth re-render to compare against). See ARCHITECTURE.md."
         )
+    if config.transcription.max_workers > 1:
+        logger.warning(
+            "transcription.max_workers=%s has no effect in sonitra benchmark "
+            "(it applies to sonitra transcribe); use benchmark.max_workers to run "
+            "conditions in parallel",
+            config.transcription.max_workers,
+        )
+    if config.evaluation.max_workers > 1:
+        logger.warning(
+            "evaluation.max_workers=%s has no effect in sonitra benchmark "
+            "(it applies to sonitra evaluate); use benchmark.max_workers to run "
+            "conditions in parallel",
+            config.evaluation.max_workers,
+        )
     n_workers = config.benchmark.max_workers
 
     results_file = work_dir / config.benchmark.results_path
