@@ -142,7 +142,7 @@ This sets how many files render at once inside each condition. It only works whe
 
 ### transcription.max_workers and evaluation.max_workers
 
-Sonitra reads these only for the single-step commands `sonitra transcribe` and `sonitra evaluate`. Inside `sonitra benchmark`, transcription and evaluation run one file at a time within each condition worker. These two settings change nothing in a benchmark run.
+Sonitra reads these only for the single-step commands `sonitra transcribe` and `sonitra evaluate`. Inside `sonitra benchmark`, transcription and evaluation run one file at a time within each condition worker. These two settings change nothing in a benchmark run. A benchmark config that sets either of them above 1 gets a warning naming the key, because a benchmark parallelises conditions through `benchmark.max_workers` instead.
 
 ### Resume
 
