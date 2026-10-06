@@ -5,7 +5,7 @@
 Sonitra is a research toolkit for testing automatic music transcription (AMT) systems. AMT turns audio into written notes. Sonitra does not train models. It follows a simple loop. It turns score files into audio. It can split sounds and add effects. It transcribes that audio back into notes with one or more AMT tools. Then it scores the result against the true score. MIDI is the digital score format Sonitra starts from.
 
 ```
-MIDI → audio synthesis → transcription → evaluation vs. reference
+MIDI/Audio → conditioning/augmentation → transcription → evaluation vs. reference
 ```
 
 ## Requirements
