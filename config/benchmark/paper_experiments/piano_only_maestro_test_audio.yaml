@@ -116,14 +116,11 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  numeric_mode: strict # deterministic kernels, TF32 off
-  # TensorFlow otherwise reserves most GPU memory, even with basic_pitch on CPU,
-  # and starves TransKun in the same process.
+  numeric_mode: strict
   gpu_memory_growth: true
   transcribers:
     - type: basic_pitch
       enabled: true
-      # CPU batches windows (batch_size); results match GPU under strict numerics.
       device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
@@ -136,12 +133,22 @@ transcription:
       batch_size: 16
     - type: transkun
       enabled: true
-      # Raises rather than silently falling back when CUDA is absent.
       device: cuda
       segment_size_sec: null
       segment_hop_sec: null
       weights_path: null
       conf_path: null
+    - type: hft_transformer
+      device: cuda
+      checkpoint: maestro
+      weights_path: null
+      output: second
+      n_stride: 0
+      onset_threshold: 0.5
+      offset_threshold: 0.5
+      mpe_threshold: 0.5
+      batch_size: 1
+
 
 evaluation:
   note_metrics:
