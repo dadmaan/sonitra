@@ -1,0 +1,60 @@
+# Release on a v* tag. The guard step refuses a tag that disagrees with
+# pyproject.toml, so a mistyped or stale tag fails loudly instead of publishing
+# the wrong version. The tagged commit already passed the pre-push hook and the
+# ci workflow when its branch was pushed, so the tests are deliberately not
+# re-run here (D3).
+#
+# The notes come from that version's CHANGELOG.md section through
+# scripts/changelog_section.py (Q4): a stable tag without a section fails, while
+# a pre-release tag falls back to a pointer, because dev tags do not bump
+# pyproject.toml or add a section of their own.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege: the release job creates a Release, and nothing else here
+# needs to write to the repository.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Pinned rather than ubuntu-latest, so the OS underneath the runners does
+    # not change under us between runs.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      # A stable tag must equal pyproject's version; a pre-release tag must be a
+      # PEP 440 pre-/dev-release of the same base. This is the same guard the
+      # tests exercise through subprocess.
+      - name: Tag matches pyproject
+        run: bash scripts/ci/check_tag_version.sh "$GITHUB_REF_NAME"
+
+      # Q4: a tag containing a hyphen is a pre-release (v0.5.0-dev.4), and its
+      # changelog section may not exist yet, so --allow-missing turns the guard
+      # off. A stable tag always needs its section. An empty notes file would
+      # make gh release create fail, hence the fallback line.
+      - name: Release notes
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [[ "$TAG" == *-* ]]; then FLAGS=(--allow-missing); else FLAGS=(); fi
+          python scripts/changelog_section.py "$TAG" "${FLAGS[@]}" > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md; this pre-release has no section of its own." > notes.md
+
+      # --verify-tag makes the workflow fail if the tag vanished between the
+      # push event and this step; --prerelease marks the GitHub Release as
+      # Pre-release for any tag containing a hyphen.
+      - name: Create release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          PRE=(); [[ "$TAG" == *-* ]] && PRE=(--prerelease)
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md "${PRE[@]}"
