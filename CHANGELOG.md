@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.5.0-dev.6] - 2026-10-06
+
 ### Added
 
 - Local pre-push gate: `scripts/hooks/pre-push` runs the shared checks inside the running devcontainer, through `docker exec -u node -w /workspace <container> bash -lc 'bash scripts/ci/check.sh'`; a push that includes `refs/heads/main` runs them with `--full`. It refuses when the working tree is dirty, when `HEAD` is not the commit being pushed, when one push keeps refs at different commits, or when the devcontainer cannot be reached (no `docker`, a failing `docker ps`, no matching container, or several matching containers). Each refusal names the `git push --no-verify` bypass. Tag-only pushes and branch deletions pass through unchecked. `scripts/ci/check.sh` is the one check definition the hook and CI share: it starts at the repository root, runs `uv lock --check`, then `uv run --no-sync pytest tests/ -q -rs`, with `-m "not slow"` unless `--full` is given. Enable it per clone with `git config core.hooksPath scripts/hooks`; the hook discovers the container through the compose label `com.docker.compose.service=sonitra` unless `git config sonitra.checkContainer <name>` names one. Covered by `tests/test_git_hooks.py`.
@@ -385,7 +387,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
 - Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve the relative subpath from the corpus root in all output paths. Two files in different subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no longer overwrite each other on disk or silently cross-pair during evaluation. (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.4...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.6...HEAD
+[0.5.0-dev.6]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.5...v0.5.0-dev.6
 [0.5.0-dev.4]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.3...v0.5.0-dev.4
 [0.5.0-dev.3]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.2...v0.5.0-dev.3
 [0.5.0-dev.2]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.1...v0.5.0-dev.2
