@@ -97,4 +97,8 @@ fi
 printf 'pre-push: checking %s at %s (%s) in container %s\n' \
   "$branch" "$(git rev-parse --short HEAD)" "$mode" "$container"
 
-docker exec -u node -w /workspace "$container" bash -lc "$check_command" || exit $?
+# Git for Windows runs hooks in its bundled MSYS bash, which rewrites POSIX
+# arguments on their way to the native docker.exe and leaves the daemon with a
+# mangled `-w` path. The prefix is inert in shells that do no such rewriting,
+# so this line also works under WSL git and on Linux and macOS.
+MSYS_NO_PATHCONV=1 docker exec -u node -w /workspace "$container" bash -lc "$check_command" || exit $?

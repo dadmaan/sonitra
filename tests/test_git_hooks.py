@@ -1,8 +1,8 @@
 """Decisions the pre-push hook makes: which pushes it checks, and how it refuses.
 
 Every case builds a throwaway repository and a fake ``docker`` that records its
-argv and answers from files the test writes, so no real container, no real git
-config and no real push is involved.
+argv and environment and answers from files the test writes, so no real
+container, no real git config and no real push is involved.
 """
 
 from __future__ import annotations
@@ -27,13 +27,15 @@ _BYPASS = "bypass in an emergency: git push --no-verify"
 _CALL_MARKER = "-- end of call --"
 
 #: Bash builtins only, so the fake needs nothing from PATH: it records its argv
-#: in ``$FAKE_DOCKER_LOG`` and reads its answers from ``$FAKE_DOCKER_CONFIG``.
+#: in ``$FAKE_DOCKER_LOG``, its MSYS_NO_PATHCONV in ``$FAKE_DOCKER_ENVLOG``, and
+#: reads its answers from ``$FAKE_DOCKER_CONFIG``.
 _FAKE_DOCKER = """#!/usr/bin/env bash
-# Fake docker: record argv, then answer from the files the test writes.
+# Fake docker: record argv and environment, then answer from the files the test writes.
 set -euo pipefail
 config="${FAKE_DOCKER_CONFIG:?}"
 printf '%s\\n' "$@" >>"$FAKE_DOCKER_LOG"
 printf '%s\\n' '@MARKER@' >>"$FAKE_DOCKER_LOG"
+printf '%s=%s\\n' "${1:-}" "${MSYS_NO_PATHCONV-<unset>}" >>"$FAKE_DOCKER_ENVLOG"
 configured_code() {
   local code=0
   if [ -f "$config/$1" ]; then read -r code <"$config/$1" || true; fi
@@ -87,6 +89,7 @@ class Hook:
         self.repo = root / "repo"
         self.bin = root / "bin"
         self.docker_log = root / "docker.log"
+        self.docker_env_log = root / "docker-env.log"
         self.docker_config = root / "docker-config"
         self.hook = self.repo / "scripts" / "hooks" / "pre-push"
         self.home = root / "home"
@@ -165,7 +168,9 @@ class Hook:
         env = {
             key: value
             for key, value in os.environ.items()
-            if not key.startswith(("GIT_", "DOCKER_"))
+            # MSYS_NO_PATHCONV has to start unset, or a hook that never sets it
+            # would look correct to the test that requires it.
+            if not key.startswith(("GIT_", "DOCKER_", "MSYS_"))
         }
         if docker_on_path:
             path = [str(self.bin), os.environ.get("PATH", "")]
@@ -190,6 +195,7 @@ class Hook:
                 "GIT_COMMITTER_NAME": "Hook Test",
                 "GIT_COMMITTER_EMAIL": "hook@example.invalid",
                 "FAKE_DOCKER_LOG": str(self.docker_log),
+                "FAKE_DOCKER_ENVLOG": str(self.docker_env_log),
                 "FAKE_DOCKER_CONFIG": str(self.docker_config),
             }
         )
@@ -262,6 +268,12 @@ class Hook:
         assert len(calls) == 1, f"expected exactly one docker exec, got {calls}"
         return calls[0]
 
+    def env_log(self) -> list[str]:
+        """``<subcommand>=<MSYS_NO_PATHCONV>`` for every recorded call."""
+        if not self.docker_env_log.exists():
+            return []
+        return self.docker_env_log.read_text(encoding="utf-8").splitlines()
+
 
 @pytest.fixture
 def hook(tmp_path: Path) -> Hook:
@@ -326,6 +338,17 @@ def test_dev_at_head_runs_the_fast_checks_in_the_container(hook: Hook) -> None:
     assert args[-3:-1] == ["bash", "-lc"], args
     assert "check.sh" in args[-1]
     assert "--full" not in args[-1]
+
+
+def test_docker_exec_does_not_let_msys_rewrite_its_arguments(hook: Hook) -> None:
+    # What keeps pushes working on Git for Windows: its bundled MSYS bash would
+    # rewrite `-w /workspace` before the native docker.exe sees it, and the
+    # daemon then rejects the path it was handed. The fix is a command
+    # assignment, invisible in argv, so the assertions above cannot catch it.
+    hook.set_container_names("sonitra-devcontainer-1")
+    result = hook.push(hook.branch_line("dev"))
+    assert result.returncode == 0, output(result)
+    assert "exec=1" in hook.env_log(), hook.env_log()
 
 
 def test_failing_checks_fail_the_push(hook: Hook) -> None:
