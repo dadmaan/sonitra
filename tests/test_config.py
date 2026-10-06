@@ -434,15 +434,27 @@ def test_maestro_test_presets_select_test_split() -> None:
         assert cfg.render_pipeline.input_type == expected_input, path
 
 
-def test_maestro_split_presets_run_basic_pitch_on_cpu_and_transkun_on_cuda() -> None:
+def test_maestro_split_presets_run_all_three_transcribers_on_cpu_and_cuda() -> None:
     for path in _MAESTRO_SPLIT_PRESETS:
         cfg = load_config(path)
         transcribers = cfg.transcription.transcribers
-        assert [t.type for t in transcribers] == ["basic_pitch", "transkun"], path
-        basic_pitch, transkun = transcribers
+        assert [t.type for t in transcribers] == [
+            "basic_pitch",
+            "transkun",
+            "hft_transformer",
+        ], path
+        basic_pitch, transkun, hft = transcribers
         assert basic_pitch.device == "cpu", path
         assert basic_pitch.batch_size == 16, path
         assert transkun.device == "cuda", path
+        # hFT-Transformer is the paper's own model, so the split presets score it
+        # from the MAESTRO checkpoint on CUDA, next to the two reference models.
+        # "second" is the time-axis decoder head, the set the model reports in its
+        # paper, and n_stride 0 keeps the plain whole-window pass.
+        assert hft.device == "cuda", path
+        assert hft.checkpoint == "maestro", path
+        assert hft.output == "second", path
+        assert hft.n_stride == 0, path
         assert cfg.transcription.numeric_mode == "strict", path
         # TensorFlow reserves most GPU memory unless growth is on, which would
         # starve TransKun in the same process even with basic_pitch on CPU.
