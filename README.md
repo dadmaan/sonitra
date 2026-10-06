@@ -22,7 +22,7 @@ You need these before you start:
 
 [uv](https://docs.astral.sh/uv/) is the best way to install Sonitra. It reads the checked-in `uv.lock`, so you get the same versions each time. A pip fallback is at the end of this section.
 
-Install from `main` for stable code. The `dev` branch has the latest features but may break; see [CONTRIBUTING.md](CONTRIBUTING.md#branches).
+Install from `main` for stable code. The `dev` branch has the latest features but may break; see [CONTRIBUTING.md](CONTRIBUTING.md#branches). [![ci](https://github.com/dadmaan/sonitra/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/dadmaan/sonitra/actions/workflows/ci.yml)
 
 ### Linux
 

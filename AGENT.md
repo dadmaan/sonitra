@@ -27,6 +27,8 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
 - Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
 - No linter or type-checker config; pytest is the quality gate.
 - CLI (Typer, also `python -m sonitra`): `sonitra init|render|transcribe|evaluate|benchmark --config FILE [--dataset NAME]`, `sonitra serve --port 8000`.
+- `scripts/ci/check.sh` is the pre-push and CI gate (lock check plus fast tests; `--full` adds the slow tests).
+- CI runs on `dev` / `main` pushes and pull requests, and the `release` workflow runs on `v*` tags. Neither runs GPU, `corpus/` or slow tests.
 
 ## Architecture
 
