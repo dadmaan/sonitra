@@ -15,7 +15,7 @@ from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
 
 _SOUNDFONT = Path("/usr/share/sounds/sf2/default-GM.sf2")
 _FIXTURES = Path(__file__).parent / "fixtures"
-_CONFIGS = Path(__file__).parent.parent / "config"
+_CONFIGS = Path(__file__).parent.parent / "config" / "examples"
 _VITAL_VST = Path("/workspace/plugin/vital/lib/vst3/Vital.vst3")
 
 
