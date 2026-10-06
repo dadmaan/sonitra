@@ -12,8 +12,11 @@ if ! uv lock --check; then
   exit 1
 fi
 
+# -r s lists a reason for every skipped test. Without it a run reports a bare
+# "N skipped", which says nothing about what CI does not cover -- and knowing
+# what is not being covered is the point of running this on a clean machine.
 if [ "${1:-}" = "--full" ]; then
-  uv run --no-sync pytest tests/ -q
+  uv run --no-sync pytest tests/ -q -rs
 else
-  uv run --no-sync pytest tests/ -q -m "not slow"
+  uv run --no-sync pytest tests/ -q -rs -m "not slow"
 fi
