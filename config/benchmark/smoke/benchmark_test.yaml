@@ -88,13 +88,12 @@ separation:
 
 transcription:
   output_dir: transcriptions
+  numeric_mode: strict
+  gpu_memory_growth: true
   transcribers:
     - type: basic_pitch
       enabled: true
-      # TensorFlow device string for inference. Requires the GPU image
-      # (docker compose --profile gpu) or a bare-metal `[gpu]` install;
-      # set to "cpu" to force CPU inference.
-      device: GPU:0
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -103,6 +102,24 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+      batch_size: 16
+    - type: transkun
+      enabled: true
+      device: cuda
+      segment_size_sec: null
+      segment_hop_sec: null
+      weights_path: null
+      conf_path: null
+    - type: hft_transformer
+      device: cuda
+      checkpoint: maestro
+      weights_path: null
+      output: second
+      n_stride: 0
+      onset_threshold: 0.5
+      offset_threshold: 0.5
+      mpe_threshold: 0.5
+      batch_size: 1
 
 evaluation:
   note_metrics:

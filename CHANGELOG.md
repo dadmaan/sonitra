@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Two SMD keys in `scripts/download_datasets.py`: `smd-piano-v2` (50 real Disklavier performances: 44.1 kHz stereo audio, captured MIDI, per-note CSVs) and `smd-synth-v1` (the same performances re-synthesised with cleaned MIDI), both pinned to version-fixed Zenodo records by size and md5 and leaving the archives' duplicate 22.05 kHz and FluidSynth members unextracted. Covered by the SMD cases in `tests/test_download_datasets.py`.
+- `scripts/smd_metadata.py`: writes one `corpus/<dataset>/metadata/<dataset>.csv` plus a `.provenance.json` sidecar per SMD set, linking each real performance to its synthesised counterpart through a shared `performance_id` for cross-set comparison and adding filename fields, `n_notes` and `duration_sec` from `parse_midi`; `Rachmaninov` is normalised to `Rachmaninoff`, and unmatched ids or parse errors are warned and recorded without failing the run. Covered by `tests/test_smd_metadata.py` and `tests/test_script_examples.py`.
+
 ## [0.5.0-dev.6] - 2026-10-06
 
 ### Added

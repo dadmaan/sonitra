@@ -90,6 +90,12 @@ _MUSICNET_NEXT_STEPS = (
     "--dataset musicnet --limit 2"
 )
 
+_SMD_NEXT_STEPS = (
+    "Optional next step for SMD (metadata CSVs linking the real and synthesised versions):\n"
+    "  python scripts/smd_metadata.py --dry-run\n"
+    "  python scripts/smd_metadata.py"
+)
+
 DATASETS: Dict[str, Dict] = {
     "maestro-v3-midi": {
         "name": "MAESTRO V3.0.0 (MIDI only)",
@@ -554,6 +560,66 @@ DATASETS: Dict[str, Dict] = {
                 "target_subdir": "metadata",
                 "filename": "gaps_metadata_with_splits.csv",
                 "size_mb": 1,
+            },
+        ],
+    },
+    "smd-piano-v2": {
+        "name": "Saarland Music Data (SMD) MIDI-Audio Piano Music v2",
+        "description": (
+            "50 Disklavier piano performances (4.7 h): real 44.1 kHz stereo "
+            "recordings with MIDI captured by the piano, plus per-note CSVs; the "
+            "archive's 22.05 kHz mono copies and FluidSynth renders are not "
+            "extracted. CC BY 3.0 on Zenodo; the project site states CC BY-NC-SA "
+            "3.0, so treat as noncommercial. Müller et al., ISMIR 2011."
+        ),
+        "note": (
+            "Solo piano. 50 classical pieces (about 4.7 h) played by music "
+            "students on a Disklavier, which recorded the MIDI as they played. "
+            "Made for transcription, alignment and performance analysis."
+        ),
+        "corpus_subdir": "smd-piano-v2",
+        "next_steps": _SMD_NEXT_STEPS,
+        "sources": [
+            {
+                # SMD-piano_v2.zip: 3,221,582,754 B, md5 984cfc48f1fa2785594769eb1e674697 verified 2026-10-06
+                "url": "https://zenodo.org/records/13753319/files/SMD-piano_v2.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("midi/", frozenset({".mid", ".midi"}), "midi"),
+                    ("wav_44100_stereo/", frozenset({".wav"}), "recordings"),
+                    ("csv/", frozenset({".csv"}), "annotations/csv"),
+                ],
+                "size_mb": 3_072,
+            },
+        ],
+    },
+    "smd-synth-v1": {
+        "name": "SMD-synth v1 (synthesised SMD piano)",
+        "description": (
+            "The same 50 SMD performances re-synthesised so every note stops at "
+            "its MIDI note-off: 44.1 kHz stereo audio + cleaned MIDI (sustain "
+            "pedal removed, MIDI errors fixed, starts and ends trimmed), so its "
+            "MIDI differs from smd-piano-v2's. CC BY 4.0 on Zenodo; derived from "
+            "SMD, whose project site states CC BY-NC-SA 3.0, so treat as "
+            "noncommercial. Taenzer et al., 2021."
+        ),
+        "note": (
+            "Synthesised solo piano. The 50 SMD performances rendered so each "
+            "note stops exactly at its MIDI note-off, with the pedal removed. "
+            "Made as a clean counterpart to the real SMD recordings."
+        ),
+        "corpus_subdir": "smd-synth-v1",
+        "next_steps": _SMD_NEXT_STEPS,
+        "sources": [
+            {
+                # SMD-synth_v1.zip: 1,262,442,726 B, md5 6fcc26d09a0995368f967642ba10e1bc verified 2026-10-06
+                "url": "https://zenodo.org/records/4637908/files/SMD-synth_v1.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".mid", ".midi"}), "midi"),
+                    ("", frozenset({".wav"}), "recordings"),
+                ],
+                "size_mb": 1_204,
             },
         ],
     },

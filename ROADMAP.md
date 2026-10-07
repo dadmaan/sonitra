@@ -7,13 +7,14 @@ This file lists work Sonitra has not built yet. What is built is recorded in
 
 **Status:** Not started.
 
-`scripts/download_datasets.py` registers 13 keys today: MAESTRO V3, BSED,
-MusicNet, E-GMD, GuitarSet and GAPS. Slakh2100 and other multi-instrument sets
-are not among them. Why it matters: every set except E-GMD is pitched, so the
-one drum set the script can fetch is download-only, because the transcription
-and evaluation backends score pitched instruments. What blocks it: a new key
-needs its own source list, its target folders and, where the ground truth is not
-MIDI, its own converter, the way each current set has one.
+`scripts/download_datasets.py` registers 15 keys today: MAESTRO V3, BSED,
+MusicNet, E-GMD, GuitarSet, GAPS and SMD (real and synthesised piano). Slakh2100
+and other multi-instrument sets are not among them. Why it matters: every set
+except E-GMD is pitched, so the one drum set the script can fetch is
+download-only, because the transcription and evaluation backends score pitched
+instruments. What blocks it: a new key needs its own source list, its target
+folders and, where the ground truth is not MIDI, its own converter, the way each
+current set has one.
 
 ## GuitarSet hex-pickup stems
 
