@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from rich.console import Console
+from rich.padding import Padding
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -136,6 +138,26 @@ def _print_selection(result: SelectionResult) -> None:
     console.print(result.summary_line())
 
 
+# Metric columns of the benchmark summary and degradation tables, in
+# reporting order: note onset, onset+offset, onset+offset+velocity, frame.
+_HEADLINE_METRIC_KEYS: tuple[str, ...] = (
+    "note.onset_f1",
+    "note.onset_offset_f1",
+    "note.onset_offset_velocity_f1",
+    "frame.f1",
+)
+
+# Short column labels for the headline keys. They are used only when the
+# raw-key table would be cut by the console width; the dim legend printed
+# under that table still names the exact keys, so the columns stay
+# traceable to the summary.json keys.
+_HEADLINE_METRIC_LABELS: dict[str, str] = {
+    "note.onset_f1": "onset",
+    "note.onset_offset_f1": "+offset",
+    "note.onset_offset_velocity_f1": "+velocity",
+    "frame.f1": "frame",
+}
+
 _MAX_FAILURE_ROWS = 5
 
 
@@ -160,6 +182,203 @@ def _print_benchmark_failures(console: Console, failed: list[Any]) -> None:
     if len(ranked) > _MAX_FAILURE_ROWS:
         table.add_row("", "", f"{len(ranked) - _MAX_FAILURE_ROWS} more distinct errors")
     console.print(table)
+
+
+def _headline_metric_columns(
+    rows: Sequence[dict[str, Any]], *, prefix: str = ""
+) -> list[str]:
+    """Pick the metric columns for a benchmark summary or degradation table.
+
+    Headline keys present in any row come first, in reporting order; with
+    none present, numeric keys ending in ``f1`` are used, sorted.
+    """
+    numeric = {
+        key
+        for row in rows
+        for key, value in row.items()
+        if isinstance(value, (int, float))
+    }
+    headline = [
+        prefix + key for key in _HEADLINE_METRIC_KEYS if prefix + key in numeric
+    ]
+    if headline:
+        return headline
+    return sorted(key for key in numeric if key.endswith("f1"))
+
+
+def _table_fits(console: Console, table: Table) -> bool:
+    """Return whether *table* renders at its natural width.
+
+    ``Console.measure`` clamps its answer to the console width when the table
+    is too wide, so a strictly smaller natural width is the only result that
+    proves no column is cut. An exact fit falling back one shape early is
+    acceptable; a cut table is not.
+    """
+    return console.measure(table).maximum < console.width
+
+
+def _headline_labels(
+    metric_keys: Sequence[str], *, prefix: str = ""
+) -> list[str] | None:
+    """Map *metric_keys* to their short labels, or ``None`` when any is not headline.
+
+    The degradation table selects the same keys under a ``delta_`` prefix.
+    """
+    labels: list[str] = []
+    for key in metric_keys:
+        base = key[len(prefix):] if prefix and key.startswith(prefix) else key
+        label = _HEADLINE_METRIC_LABELS.get(base)
+        if label is None:
+            return None
+        labels.append(label)
+    return labels
+
+
+def _metric_legend(metric_keys: Sequence[str], *, prefix: str = "") -> str:
+    """Dim line naming the exact keys behind the short column labels."""
+    heading = "delta keys" if prefix else "keys"
+    return f"[dim]{heading}: " + " · ".join(metric_keys) + "[/dim]"
+
+
+def _metric_cell(value: Any, *, delta: bool = False) -> str:
+    """Format one metric cell as markup; negative deltas stay yellow."""
+    if isinstance(value, (int, float)) and math.isnan(value):
+        return "[dim]NaN[/dim]"
+    if isinstance(value, (int, float)):
+        text = f"{value:.4f}"
+        return f"[yellow]{text}[/]" if delta and value < 0 else text
+    return str(value)
+
+
+def _benchmark_metric_table(
+    title: str,
+    rows: Sequence[dict[str, Any]],
+    metric_keys: Sequence[str],
+    *,
+    include_counts: bool = False,
+    labels: Sequence[str] | None = None,
+    delta: bool = False,
+) -> Table:
+    """Build a benchmark summary or degradation table.
+
+    ``labels`` replaces the raw metric headers with the short labels; when it
+    is ``None`` the headers are the raw keys.
+    """
+    table = Table(title=title)
+    table.add_column("condition")
+    table.add_column("transcriber")
+    if include_counts:
+        table.add_column("files", justify="right")
+        table.add_column("ok", justify="right")
+        table.add_column("failed", justify="right")
+    for name in (labels if labels is not None else metric_keys):
+        table.add_column(name, justify="right")
+    for row in rows:
+        cells = [
+            str(row.get("condition", "")),
+            str(row.get("transcriber", "")),
+        ]
+        if include_counts:
+            n_files = int(row.get("n_files", 0))
+            n_ok = int(row.get("n_succeeded", 0))
+            n_failed = n_files - n_ok
+            cells.extend(
+                [
+                    str(n_files),
+                    f"[green]{n_ok}[/]",
+                    f"[red]{n_failed}[/]" if n_failed else "0",
+                ]
+            )
+        for key in metric_keys:
+            cells.append(_metric_cell(row.get(key, float("nan")), delta=delta))
+        table.add_row(*cells)
+    return table
+
+
+def _print_metric_blocks(
+    console: Console,
+    title: str,
+    rows: Sequence[dict[str, Any]],
+    metric_keys: Sequence[str],
+    *,
+    include_counts: bool = False,
+    delta: bool = False,
+) -> None:
+    """Print one key/value block per condition, with the full metric keys.
+
+    Used when no table shape fits the console: printed lines wrap instead of
+    ellipsizing, so every key and value stays readable.
+    """
+    console.print(title, style="bold")
+    for index, row in enumerate(rows):
+        line = f"{row.get('condition', '')} · {row.get('transcriber', '')}"
+        if include_counts:
+            n_files = int(row.get("n_files", 0))
+            n_ok = int(row.get("n_succeeded", 0))
+            line += f" · files {n_files} · ok {n_ok} · failed {n_files - n_ok}"
+        console.print(line)
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column()
+        grid.add_column(justify="right")
+        for key in metric_keys:
+            grid.add_row(
+                f"[dim]{key}[/dim]",
+                _metric_cell(row.get(key, float("nan")), delta=delta),
+            )
+        console.print(Padding(grid, (0, 0, 0, 2), expand=False))
+        if index != len(rows) - 1:
+            console.print()
+
+
+def _print_benchmark_metric_table(
+    console: Console,
+    title: str,
+    rows: Sequence[dict[str, Any]],
+    metric_keys: Sequence[str],
+    *,
+    include_counts: bool = False,
+    delta: bool = False,
+) -> None:
+    """Print a metric table at the widest shape the console can hold.
+
+    The raw-key table is tried first. When it does not fit, headline keys are
+    retried with their short labels and a legend; otherwise, and when even
+    the labelled table does not fit, each condition prints as a key/value
+    block so no header is ever truncated.
+    """
+    raw_table = _benchmark_metric_table(
+        title,
+        rows,
+        metric_keys,
+        include_counts=include_counts,
+        delta=delta,
+    )
+    if _table_fits(console, raw_table):
+        console.print(raw_table)
+        return
+    prefix = "delta_" if delta else ""
+    labels = _headline_labels(metric_keys, prefix=prefix)
+    if labels is not None:
+        labelled_table = _benchmark_metric_table(
+            title,
+            rows,
+            metric_keys,
+            include_counts=include_counts,
+            labels=labels,
+            delta=delta,
+        )
+        if _table_fits(console, labelled_table):
+            console.print(labelled_table)
+            console.print(_metric_legend(metric_keys, prefix=prefix))
+            return
+    _print_metric_blocks(
+        console,
+        title,
+        rows,
+        metric_keys,
+        include_counts=include_counts,
+        delta=delta,
+    )
 
 
 def _apply_dataset(cfg: PipelineConfig, dataset: str | None) -> None:
@@ -959,44 +1178,13 @@ def benchmark(
         _print_benchmark_failures(console, failed_records)
 
     if result.summary:
-        table = Table(title="Benchmark summary")
-        table.add_column("condition")
-        table.add_column("transcriber")
-        table.add_column("files", justify="right")
-        table.add_column("ok", justify="right")
-        table.add_column("failed", justify="right")
-        metric_keys = sorted(
-            {
-                key
-                for row in result.summary
-                for key in row
-                if key not in {"condition", "transcriber", "n_files", "n_succeeded"}
-            }
+        _print_benchmark_metric_table(
+            console,
+            "Benchmark summary",
+            result.summary,
+            _headline_metric_columns(result.summary),
+            include_counts=True,
         )
-        f1_keys = [key for key in metric_keys if key == "f1" or key.endswith(".f1")]
-        for name in f1_keys:
-            table.add_column(name, justify="right")
-        for row in result.summary:
-            n_files = int(row.get("n_files", 0))
-            n_ok = int(row.get("n_succeeded", 0))
-            n_failed = n_files - n_ok
-            cells = [
-                str(row.get("condition", "")),
-                str(row.get("transcriber", "")),
-                str(n_files),
-                f"[green]{n_ok}[/]",
-                f"[red]{n_failed}[/]" if n_failed else "0",
-            ]
-            for name in f1_keys:
-                value = row.get(name, float("nan"))
-                if isinstance(value, (int, float)) and math.isnan(value):
-                    cells.append("[dim]NaN[/dim]")
-                elif isinstance(value, (int, float)):
-                    cells.append(f"{value:.4f}")
-                else:
-                    cells.append(str(value))
-            table.add_row(*cells)
-        console.print(table)
 
     timing_conditions = (
         result.timing.get("conditions") if result.timing is not None else None
@@ -1083,36 +1271,23 @@ def benchmark(
             )
 
     if result.degradation:
-        deg_table = Table(title="Benchmark degradation (delta vs baseline)")
-        deg_table.add_column("condition")
-        deg_table.add_column("transcriber")
-        all_delta_keys = sorted(
+        delta_keys = _headline_metric_columns(
+            result.degradation, prefix="delta_"
+        ) or sorted(
             {
                 key
                 for row in result.degradation
-                for key in row
-                if key not in {"condition", "transcriber"}
+                for key, value in row.items()
+                if isinstance(value, (int, float))
             }
         )
-        delta_keys = [key for key in all_delta_keys if key.endswith(".f1")]
-        if not delta_keys:
-            delta_keys = all_delta_keys
-        for key in delta_keys:
-            deg_table.add_column(key, justify="right")
-        for row in result.degradation:
-            cells = [str(row.get("condition", "")), str(row.get("transcriber", ""))]
-            for key in delta_keys:
-                value = row.get(key, float("nan"))
-                if isinstance(value, (int, float)) and math.isnan(value):
-                    cells.append("[dim]NaN[/dim]")
-                elif isinstance(value, (int, float)):
-                    cells.append(
-                        f"[yellow]{value:.4f}[/]" if value < 0 else f"{value:.4f}"
-                    )
-                else:
-                    cells.append(str(value))
-            deg_table.add_row(*cells)
-        console.print(deg_table)
+        _print_benchmark_metric_table(
+            console,
+            "Benchmark degradation (delta vs baseline)",
+            result.degradation,
+            delta_keys,
+            delta=True,
+        )
 
     if succeeded < total:
         raise typer.Exit(code=1)

@@ -363,7 +363,7 @@ def test_benchmark_timing_table_shows_condition_timing(
                     "transcriber": "basic_pitch",
                     "n_files": 2,
                     "n_succeeded": 2,
-                    "note.f1": 0.9,
+                    "note.onset_f1": 0.9,
                 }
             ],
             degradation=[],
@@ -482,7 +482,7 @@ def test_benchmark_timing_table_shows_separate_seconds_when_present(
                     "transcriber": "basic_pitch",
                     "n_files": 2,
                     "n_succeeded": 2,
-                    "note.f1": 0.9,
+                    "note.onset_f1": 0.9,
                 }
             ],
             degradation=[],
@@ -582,7 +582,7 @@ def test_benchmark_timing_by_transcriber_absent_without_per_transcriber(
                     "transcriber": "basic_pitch",
                     "n_files": 2,
                     "n_succeeded": 2,
-                    "note.f1": 0.9,
+                    "note.onset_f1": 0.9,
                 }
             ],
             degradation=[],
@@ -666,7 +666,7 @@ def test_benchmark_timing_table_absent_without_timing(
                     "transcriber": "basic_pitch",
                     "n_files": 2,
                     "n_succeeded": 2,
-                    "note.f1": 0.9,
+                    "note.onset_f1": 0.9,
                 }
             ],
             degradation=[],
@@ -695,7 +695,453 @@ def test_benchmark_timing_table_absent_without_timing(
     assert "Benchmark timing (seconds)" not in result.output
     assert "Benchmark timing by transcriber (seconds)" not in result.output
     assert "Benchmark summary" in result.output
-    assert "note.f1" in result.output
+    assert "note.onset_f1" in result.output
+
+
+def _invoke_benchmark_with(
+    audio_corpus_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    summary: list[dict],
+    degradation: list[dict],
+    width: int = 200,
+) -> str:
+    """Invoke `benchmark` with a fake run_benchmark returning the given tables.
+
+    The console is pinned to *width* so tests can pick the table shape;
+    CliRunner's own capture would otherwise be 80 columns. The captured
+    output is returned.
+    """
+    import sys
+
+    from rich.console import Console
+
+    precomputed_dir = tmp_path / "precomputed"
+    precomputed_dir.mkdir()
+
+    corpus_root = audio_corpus_dir.parent
+    dataset = audio_corpus_dir.name
+
+    config_path = audio_corpus_dir / "config.yaml"
+    config_path.write_text(
+        _AUDIO_BENCHMARK_CONFIG.format(
+            corpus_root=str(corpus_root), precomputed_dir=str(precomputed_dir)
+        )
+    )
+
+    monkeypatch.setattr(
+        "sonitra.cli.get_console",
+        lambda *args, **kwargs: Console(file=sys.stdout, width=width),
+    )
+
+    def _fake_run_benchmark(
+        midi_paths,
+        work_dir,
+        config,
+        corpus_root=None,
+        *,
+        audio_paths=None,
+        progress=None,
+        selection=None,
+    ):
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=[],
+            summary=summary,
+            degradation=degradation,
+            results_path=work_dir / "results.jsonl",
+            summary_path=work_dir / "summary.json",
+            elapsed_seconds=0.0,
+            timing=None,
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--config", str(config_path),
+            "--dataset", dataset,
+        ],
+    )
+    assert result.exit_code == 0, f"benchmark failed:\n{result.output}"
+    return result.output
+
+
+def test_benchmark_summary_shows_headline_f1_columns_in_order(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 2,
+                "n_succeeded": 2,
+                "note.onset_f1": 0.9,
+                "note.onset_offset_f1": 0.8,
+                "note.onset_offset_velocity_f1": 0.7,
+                "frame.f1": 0.6,
+                "note.onset_precision": 0.95,
+                "frame.recall": 0.85,
+                "overrides": {"sentinel.key": 1},
+            }
+        ],
+        degradation=[],
+    )
+
+    headers = [
+        "note.onset_f1",
+        "note.onset_offset_f1",
+        "note.onset_offset_velocity_f1",
+        "frame.f1",
+    ]
+    positions = [output.index(header) for header in headers]
+    assert all(left < right for left, right in zip(positions, positions[1:])), positions
+    assert "note.onset_precision" not in output
+    assert "sentinel" not in output
+
+
+def test_benchmark_summary_omits_headline_columns_absent_from_every_row(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "note.onset_f1": 0.9,
+                "frame.f1": 0.8,
+            },
+            {
+                "condition": "noisy",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "frame.f1": 0.5,
+            },
+        ],
+        degradation=[],
+    )
+
+    assert "note.onset_f1" in output
+    assert "frame.f1" in output
+    assert "note.onset_offset_f1" not in output
+    assert "note.onset_offset_velocity_f1" not in output
+    assert "NaN" in output
+
+
+def test_benchmark_summary_falls_back_to_f1_suffixed_keys(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "custom.f1": 0.7,
+                "custom.macro_f1": 0.6,
+                "custom.score": 0.5,
+            }
+        ],
+        degradation=[],
+    )
+
+    assert "custom.f1" in output
+    assert "custom.macro_f1" in output
+    assert "custom.score" not in output
+
+
+def test_benchmark_degradation_shows_headline_delta_columns_in_order(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "note.onset_f1": 0.9,
+                "frame.f1": 0.8,
+            },
+            {
+                "condition": "noisy",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "note.onset_f1": 0.85,
+                "frame.f1": 0.75,
+            },
+        ],
+        degradation=[
+            {
+                "condition": "noisy",
+                "transcriber": "basic_pitch",
+                "delta_note.onset_f1": -0.05,
+                "delta_note.onset_offset_f1": 0.01,
+                "delta_note.onset_offset_velocity_f1": 0.02,
+                "delta_frame.f1": 0.03,
+                "delta_note.onset_precision": -0.01,
+                "overrides": {"sentinel.key": 1},
+            }
+        ],
+    )
+
+    # Slice past the summary table above, which carries the undelta'd keys.
+    degradation_output = output[output.index("Benchmark degradation"):]
+    headers = [
+        "delta_note.onset_f1",
+        "delta_note.onset_offset_f1",
+        "delta_note.onset_offset_velocity_f1",
+        "delta_frame.f1",
+    ]
+    positions = [degradation_output.index(header) for header in headers]
+    assert all(left < right for left, right in zip(positions, positions[1:])), positions
+    assert "delta_note.onset_precision" not in degradation_output
+    assert "sentinel" not in degradation_output
+
+
+def test_benchmark_degradation_fallback_excludes_overrides(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        summary=[],
+        degradation=[
+            {
+                "condition": "noisy",
+                "transcriber": "basic_pitch",
+                "delta_custom.score": -0.1,
+                "overrides": {"sentinel.key": 1},
+            }
+        ],
+    )
+
+    # tmp_path embeds the test name, so match the header only after the
+    # results/summary paths printed before the tables.
+    degradation_output = output[output.index("Benchmark degradation"):]
+    assert "delta_custom.score" in degradation_output
+    assert "overrides" not in degradation_output
+    assert "sentinel" not in degradation_output
+
+
+def _assert_key_value_inline(output: str, key: str, value: str) -> None:
+    """Assert an inline key/value pair (block layout), robust to Rich padding."""
+    lines = [line for line in output.splitlines() if key in line]
+    assert lines, f"{key} not found in output"
+    assert any(value in line for line in lines), (key, value, lines)
+
+
+def test_benchmark_summary_labels_and_legend_at_120(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        width=120,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 2,
+                "n_succeeded": 2,
+                "note.onset_f1": 0.9,
+                "note.onset_offset_f1": 0.8,
+                "note.onset_offset_velocity_f1": 0.7,
+                "frame.f1": 0.6,
+            }
+        ],
+        degradation=[],
+    )
+
+    # Short headers replace the raw keys; the legend still names them.
+    assert "+offset" in output
+    assert "+velocity" in output
+    assert (
+        "keys: note.onset_f1 · note.onset_offset_f1 · "
+        "note.onset_offset_velocity_f1 · frame.f1"
+    ) in output
+    assert "…" not in output
+
+
+def test_benchmark_degradation_delta_legend_at_120(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        width=120,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "note.onset_f1": 0.9,
+                "frame.f1": 0.8,
+            }
+        ],
+        degradation=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "delta_note.onset_f1": -0.05,
+                "delta_note.onset_offset_f1": 0.01,
+                "delta_note.onset_offset_velocity_f1": 0.02,
+                "delta_frame.f1": 0.03,
+            }
+        ],
+    )
+
+    degradation_output = output[output.index("Benchmark degradation"):]
+    assert "+velocity" in degradation_output
+    assert (
+        "delta keys: delta_note.onset_f1 · delta_note.onset_offset_f1 · "
+        "delta_note.onset_offset_velocity_f1 · delta_frame.f1"
+    ) in degradation_output
+    assert "…" not in output
+
+
+def test_benchmark_blocks_at_80_with_degradation_matrix(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        width=80,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 2,
+                "n_succeeded": 2,
+                "note.onset_f1": 0.9,
+                "note.onset_offset_f1": 0.8,
+                "note.onset_offset_velocity_f1": 0.7,
+                "frame.f1": 0.6,
+            }
+        ],
+        degradation=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "delta_note.onset_f1": -0.05,
+                "delta_note.onset_offset_f1": 0.01,
+                "delta_note.onset_offset_velocity_f1": 0.02,
+                "delta_frame.f1": 0.03,
+            }
+        ],
+    )
+
+    summary_output, _, degradation_output = output.partition("Benchmark degradation")
+
+    # The summary cannot hold even the labelled table at 80 columns, so each
+    # condition prints as a block with the full keys inline.
+    assert "baseline · basic_pitch · files 2 · ok 2 · failed 0" in summary_output
+    _assert_key_value_inline(summary_output, "note.onset_f1", "0.9000")
+    _assert_key_value_inline(summary_output, "note.onset_offset_f1", "0.8000")
+    _assert_key_value_inline(
+        summary_output, "note.onset_offset_velocity_f1", "0.7000"
+    )
+    _assert_key_value_inline(summary_output, "frame.f1", "0.6000")
+    assert "keys:" not in summary_output
+
+    # The degradation table fits with labels at 80 and keeps its legend.
+    assert "+velocity" in degradation_output
+    assert "delta keys: delta_note.onset_f1" in degradation_output
+    assert "…" not in output
+
+
+def test_benchmark_custom_metrics_use_blocks_at_80(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        width=80,
+        summary=[
+            {
+                "condition": "baseline_extended",
+                "transcriber": "basic_pitch",
+                "n_files": 1,
+                "n_succeeded": 1,
+                "custom.f1": 0.7,
+                "custom.macro_f1": 0.6,
+                "custom.score": 0.5,
+            }
+        ],
+        degradation=[],
+    )
+
+    # Non-headline keys have no short labels, so the block layout uses the
+    # raw keys and prints no legend.
+    assert "baseline_extended · basic_pitch · files 1 · ok 1 · failed 0" in output
+    _assert_key_value_inline(output, "custom.f1", "0.7000")
+    _assert_key_value_inline(output, "custom.macro_f1", "0.6000")
+    assert "custom.score" not in output
+    assert "keys:" not in output
+    assert "…" not in output
+
+
+def test_benchmark_raw_matrix_kept_at_200(
+    audio_corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _invoke_benchmark_with(
+        audio_corpus_dir,
+        tmp_path,
+        monkeypatch,
+        summary=[
+            {
+                "condition": "baseline",
+                "transcriber": "basic_pitch",
+                "n_files": 2,
+                "n_succeeded": 2,
+                "note.onset_f1": 0.9,
+                "note.onset_offset_f1": 0.8,
+                "note.onset_offset_velocity_f1": 0.7,
+                "frame.f1": 0.6,
+            }
+        ],
+        degradation=[],
+    )
+
+    # Width 200 holds the raw-key table, so nothing changes: no short
+    # labels, no legend, no truncation.
+    assert "note.onset_offset_velocity_f1" in output
+    assert "+velocity" not in output
+    assert "keys:" not in output
+    assert "…" not in output
 
 
 # ---------------------------------------------------------------------------
