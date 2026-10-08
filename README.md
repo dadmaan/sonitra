@@ -5,7 +5,7 @@
 Sonitra is a research toolkit for testing automatic music transcription (AMT) systems. AMT turns audio into written notes. Sonitra does not train models. It follows a simple loop. It turns score files into audio. It can split sounds and add effects. It transcribes that audio back into notes with one or more AMT tools. Then it scores the result against the true score. MIDI is the digital score format Sonitra starts from.
 
 ```
-MIDI → audio synthesis → transcription → evaluation vs. reference
+MIDI/Audio → conditioning/augmentation → transcription → evaluation vs. reference
 ```
 
 ## Requirements
@@ -21,6 +21,8 @@ You need these before you start:
 ## Installation
 
 [uv](https://docs.astral.sh/uv/) is the best way to install Sonitra. It reads the checked-in `uv.lock`, so you get the same versions each time. A pip fallback is at the end of this section.
+
+Install from `main` for stable code. The `dev` branch has the latest features but may break; see [CONTRIBUTING.md](CONTRIBUTING.md#branches). [![ci](https://github.com/dadmaan/sonitra/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/dadmaan/sonitra/actions/workflows/ci.yml)
 
 ### Linux
 
@@ -88,6 +90,10 @@ docker compose -f docker/docker-compose.yml --profile cpu up --build
 
 The REST API is then at `http://localhost:8000`. A REST API lets your programs talk to Sonitra over the web. You must always pass a profile, `cpu` or `gpu`. See [docs/docker.md](docs/docker.md) for GPU use, CLI commands through Compose, and the volume and setting reference.
 
+### Devcontainer
+
+A devcontainer gives you a ready Linux environment in VS Code without installing anything on your machine. See [docs/devcontainer.md](docs/devcontainer.md) for the rebuild path, the create-time backend sync, and the `uv sync` rules.
+
 ### Running commands
 
 `uv run` runs any command inside the managed env with no need to turn it on first:
@@ -115,7 +121,7 @@ uv sync --extra gpu
 
 This installs the 11 `nvidia-*` CUDA support wheels, pinned to the versions TensorFlow 2.15 asks for in its `and-cuda` extras. TensorFlow itself comes as a core need through Basic Pitch, so the `[gpu]` extra adds only the CUDA files. Sonitra does not use `tensorflow[and-cuda]` on its own, because that group needs `tensorrt-libs`, which lives only on NVIDIA's private package index.
 
-To use the graphics card, set `device: GPU:0` in the `transcription.transcribers` part of your config. The default is `cpu`. For GPU use inside Docker, see [docs/docker.md](docs/docker.md).
+To use the graphics card, set `device: GPU:0` in the `transcription.transcribers` part of your config. The default is `cpu`. The device changes low-level numeric results, so do not compare a CPU run with a GPU run in one study; see [docs/reproducibility.md](docs/reproducibility.md). For GPU use inside Docker, see [docs/docker.md](docs/docker.md).
 
 ## Datasets
 
@@ -187,11 +193,23 @@ See [docs/cli.md](docs/cli.md) for the full flag list, such as explicit path fla
 
 `config/source.yaml` is the full sample config. It explains every setting. Make a small starter with `sonitra init --config config.yaml`. Sonitra checks the config with Pydantic, a Python validation tool. It uses `extra="forbid"`, which means unknown keys stop the run with an error.
 
-See [docs/configuration.md](docs/configuration.md) for the full section guide, synth and effects tables, and transcription options.
+See [docs/configuration.md](docs/configuration.md) for the full section guide, synth and effects tables, and transcription options. For model details see [docs/model-cards.md](docs/model-cards.md). To add a new backend see [docs/adding-a-transcriber.md](docs/adding-a-transcriber.md).
+
+## Transcription backends
+
+Three trained backends ship: Spotify Basic Pitch, TransKun and Sony hFT-Transformer, plus the generic `precomputed` and `external_command` adapters. Basic Pitch is installed by default. The two piano models need torch, which the `transkun` extra provides: `pip install 'sonitra[transkun]'`.
+
+hFT-Transformer also needs its weights, which are not redistributed because they derive from MAESTRO under a non-commercial licence. Run this once:
+
+```bash
+python scripts/setup_hft_transformer.py
+```
+
+The devcontainer and the Docker images run it for you on start. See [docs/model-cards.md](docs/model-cards.md) for each model's licence, provenance and measured results.
 
 ## Evaluation metrics
 
-Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table.
+Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table. Scores also depend on the device and the numeric mode; see [docs/reproducibility.md](docs/reproducibility.md).
 
 ## Statistical analysis
 

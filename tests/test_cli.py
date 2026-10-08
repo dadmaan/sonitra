@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
+import re
 from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
 
-from sonitra.cli import init
+from sonitra.cli import evaluate, init
 from sonitra.config import SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
-from sonitra.transcribe.base import TranscriptionResult
+from sonitra.transcribe.base import NumericSettingsError, TranscriptionResult
 
 
 def test_init_writes_working_basic_pitch_config(tmp_path: Path) -> None:
@@ -157,7 +160,10 @@ class _StubTranscriber:
 
     def transcribe(self, audio_path):
         return TranscriptionResult(
-            notes=[], transcriber=self.name, raw_outputs=self._raw
+            notes=[],
+            transcriber=self.name,
+            raw_outputs=self._raw,
+            backend_type="basic_pitch",
         )
 
 
@@ -372,7 +378,7 @@ def test_transcribe_filter_by_name_selects_correct_backend(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — init command output verification tests
+# init command output verification tests
 # ---------------------------------------------------------------------------
 
 from typer.testing import CliRunner
@@ -538,3 +544,853 @@ def test_dataset_option_help_names_the_dataset_first_layout(command: str) -> Non
     (option,) = [param for param in click_command.params if "--dataset" in param.opts]
     assert "corpus/{dataset}/" in option.help
     assert "corpus/midi/{dataset}" not in option.help
+
+
+def _write_simple_midi(path: Path, pitch: int = 60) -> None:
+    """Write a one-note MIDI file that parse_midi can read back."""
+    from sonitra.midi_writer import write_midi
+
+    write_midi(
+        [{"pitch": pitch, "velocity": 64, "start_sec": 0.0, "duration_sec": 1.0}],
+        path,
+    )
+
+
+def test_evaluate_is_fail_soft_on_unreadable_reference(tmp_path: Path) -> None:
+    """One corrupt reference must not abort the whole evaluate run.
+
+    parse_midi raises OSError on a file with no MTrk header. Batch loops are
+    fail-soft per AGENT.md: the bad pair is recorded and the run continues.
+    """
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    reference = tmp_path / "reference"
+    estimate = tmp_path / "estimate"
+    reference.mkdir()
+    estimate.mkdir()
+
+    for stem in ("good_a", "good_b", "corrupt"):
+        _write_simple_midi(estimate / f"{stem}.mid")
+    _write_simple_midi(reference / "good_a.mid")
+    _write_simple_midi(reference / "good_b.mid")
+    (reference / "corrupt.mid").write_bytes(
+        b"MThd\x00\x00\x00\x06\x00\x01\x00\x01\x01\xe0GARBAGE"
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+
+    output = tmp_path / "results.jsonl"
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate",
+            "--config", str(config_path),
+            "--reference", str(reference),
+            "--estimate", str(estimate),
+            "--output", str(output),
+        ],
+    )
+    assert result.exit_code == 0, f"evaluate aborted: {result.output}"
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    by_file = {row["file"]: row for row in rows}
+
+    # Both readable pairs were scored despite the corrupt sibling.
+    assert "good_a.mid" in by_file
+    assert "good_b.mid" in by_file
+    assert "error" not in by_file["good_a.mid"]
+
+    # The failure is recorded rather than swallowed or fatal.
+    assert "corrupt.mid" in by_file
+    assert "error" in by_file["corrupt.mid"]
+
+
+# ---------------------------------------------------------------------------
+# Run directory and YAML io.dataset handling
+# ---------------------------------------------------------------------------
+
+_BENCH_STEM = "study"
+
+
+@pytest.fixture
+def _fresh_console():
+    """Drop the cached Console so each CliRunner invocation gets a live stream."""
+    import sonitra.terminal as terminal_module
+
+    terminal_module._console = None
+    yield
+    terminal_module._console = None
+
+
+def _squash(text: str) -> str:
+    """Collapse whitespace: Rich wraps stderr at 80 columns under CliRunner."""
+    return re.sub(r"\s+", " ", text)
+
+
+def _write_cli_config(
+    tmp_path: Path,
+    *,
+    dataset: str | None = None,
+    benchmark_dir: str | None = None,
+) -> Path:
+    import yaml
+
+    payload = yaml.safe_load(
+        _MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path / "oracle"))
+    )
+    payload["io"]["corpus_root"] = str(tmp_path / "corpus")
+    if dataset is not None:
+        payload["io"]["dataset"] = dataset
+    if benchmark_dir is not None:
+        payload["benchmark"]["benchmark_dir"] = benchmark_dir
+    path = tmp_path / f"{_BENCH_STEM}.yaml"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    return path
+
+
+def _seed_midi(directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "a.mid").write_bytes(
+        (Path(__file__).parent / "fixtures" / "test_c4.mid").read_bytes()
+    )
+
+
+def _capture_run_benchmark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict:
+    from sonitra.benchmark import runner as runner_module
+
+    captured: dict = {}
+
+    def _fake_run_benchmark(
+        midi_paths, work_dir, config, corpus_root=None, *,
+        audio_paths=None, progress=None, selection=None,
+    ):
+        captured["work_dir"] = Path(work_dir)
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=[],
+            summary=[],
+            degradation=[],
+            results_path=Path(work_dir) / "results.jsonl",
+            summary_path=Path(work_dir) / "summary.json",
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+    return captured
+
+
+def _run_benchmark_cli(config_path: Path, *extra: str):
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    return CliRunner().invoke(app, ["benchmark", "--config", str(config_path), *extra])
+
+
+def test_benchmark_yaml_dataset_without_flag_uses_corpus_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    result = _run_benchmark_cli(config_path)
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == (
+        Path(str(tmp_path / "corpus")) / "mini" / "benchmark" / _BENCH_STEM
+    )
+
+
+def test_benchmark_dataset_flag_uses_corpus_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path)
+
+    result = _run_benchmark_cli(config_path, "--dataset", "mini")
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == (
+        Path(str(tmp_path / "corpus")) / "mini" / "benchmark" / _BENCH_STEM
+    )
+
+
+def test_benchmark_no_dataset_uses_cwd_benchmark_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "midi")
+    config_path = _write_cli_config(tmp_path)
+
+    result = _run_benchmark_cli(config_path)
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == Path("benchmark") / _BENCH_STEM
+
+
+def test_benchmark_dir_key_used_as_full_run_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    fixed = tmp_path / "runs" / "fixed"
+    config_path = _write_cli_config(tmp_path, dataset="mini", benchmark_dir=str(fixed))
+
+    result = _run_benchmark_cli(config_path)
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == fixed
+
+
+def test_workdir_flag_overrides_benchmark_dir_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(
+        tmp_path, dataset="mini", benchmark_dir=str(tmp_path / "runs" / "fixed")
+    )
+    explicit = tmp_path / "explicit"
+
+    result = _run_benchmark_cli(config_path, "--workdir", str(explicit))
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == explicit
+
+
+@pytest.mark.parametrize("yaml_dataset", [None, "mini"])
+def test_benchmark_dir_with_changed_dataset_exits_1(
+    yaml_dataset: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fresh_console,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "gaps" / "midi")
+    fixed = tmp_path / "runs" / "fixed"
+    config_path = _write_cli_config(
+        tmp_path, dataset=yaml_dataset, benchmark_dir=str(fixed)
+    )
+
+    result = _run_benchmark_cli(config_path, "--dataset", "gaps")
+
+    assert result.exit_code == 1
+    # Rich may fold the long path mid-word, so compare without any whitespace.
+    expected = (
+        f"error: benchmark.benchmark_dir is fixed ({fixed}) but --dataset 'gaps' "
+        f"differs from io.dataset '{yaml_dataset}'; pass --workdir or edit "
+        "benchmark_dir"
+    )
+    assert re.sub(r"\s+", "", result.stderr) == re.sub(r"\s+", "", expected)
+    assert captured == {}
+    assert not fixed.exists()
+    assert not (tmp_path / "benchmark").exists()
+
+
+def test_benchmark_dir_with_equal_dataset_flag_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    fixed = tmp_path / "runs" / "fixed"
+    config_path = _write_cli_config(tmp_path, dataset="mini", benchmark_dir=str(fixed))
+
+    result = _run_benchmark_cli(config_path, "--dataset", "mini")
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == fixed
+
+
+def test_benchmark_dir_with_changed_dataset_and_workdir_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "gaps" / "midi")
+    config_path = _write_cli_config(
+        tmp_path, dataset="mini", benchmark_dir=str(tmp_path / "runs" / "fixed")
+    )
+    explicit = tmp_path / "explicit"
+
+    result = _run_benchmark_cli(
+        config_path, "--dataset", "gaps", "--workdir", str(explicit)
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["work_dir"] == explicit
+
+
+def test_transcribe_yaml_dataset_defaults_audio_and_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "corpus"
+    audio_dir = root / "mini" / "audio" / _BENCH_STEM
+    audio_dir.mkdir(parents=True)
+    (audio_dir / "a.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    _seed_midi(tmp_path / "oracle")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    result = CliRunner().invoke(app, ["transcribe", "--config", str(config_path)])
+
+    assert result.exit_code == 0, result.output
+    expected = root / "mini" / "transcription" / _BENCH_STEM / "precomputed" / "a.mid"
+    assert expected.exists()
+    assert not (tmp_path / "transcriptions").exists()
+
+
+def test_evaluate_yaml_dataset_defaults_reference_and_estimate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "corpus"
+    corpus_ds = root / "mini"
+    (corpus_ds / "midi").mkdir(parents=True)
+    (corpus_ds / "transcription" / _BENCH_STEM / "precomputed").mkdir(
+        parents=True
+    )
+    _write_simple_midi(corpus_ds / "midi" / "a.mid")
+    _write_simple_midi(
+        corpus_ds / "transcription" / _BENCH_STEM / "precomputed" / "a.mid"
+    )
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    output = tmp_path / "results.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["evaluate", "--config", str(config_path), "--output", str(output)]
+    )
+
+    assert result.exit_code == 0, result.output
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["file"] for row in rows] == ["a.mid"]
+
+
+def test_transcribe_explicit_paths_win_over_yaml_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    audio_dir = tmp_path / "given_audio"
+    audio_dir.mkdir()
+    (audio_dir / "a.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    _seed_midi(tmp_path / "oracle")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    out_dir = tmp_path / "given_out"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe", "--config", str(config_path),
+            "--audio", str(audio_dir), "--output", str(out_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (out_dir / "precomputed" / "a.mid").exists()
+    assert not (tmp_path / "corpus" / "mini" / "transcription").exists()
+
+
+def test_evaluate_explicit_paths_win_over_yaml_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    reference = tmp_path / "given_ref"
+    estimate = tmp_path / "given_est"
+    reference.mkdir()
+    estimate.mkdir()
+    _write_simple_midi(reference / "b.mid")
+    _write_simple_midi(estimate / "b.mid")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    output = tmp_path / "results.jsonl"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate", "--config", str(config_path),
+            "--reference", str(reference), "--estimate", str(estimate),
+            "--output", str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["file"] for row in rows] == ["b.mid"]
+
+
+def test_transcribe_no_dataset_anywhere_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    config_path = _write_cli_config(tmp_path)
+
+    result = CliRunner().invoke(app, ["transcribe", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert (
+        "--audio is required when no dataset is set (--dataset or io.dataset)"
+        in _squash(result.output)
+    )
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (
+            [],
+            "--reference is required when no dataset is set "
+            "(--dataset or io.dataset)",
+        ),
+        (
+            ["--reference", "REF"],
+            "--estimate is required when no dataset is set "
+            "(--dataset or io.dataset)",
+        ),
+    ],
+)
+def test_evaluate_no_dataset_anywhere_errors(
+    extra: list[str],
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fresh_console,
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    config_path = _write_cli_config(tmp_path)
+    args = [str(tmp_path) if a == "REF" else a for a in extra]
+
+    result = CliRunner().invoke(app, ["evaluate", "--config", str(config_path), *args])
+
+    assert result.exit_code == 1
+    assert message in _squash(result.output)
+
+
+@pytest.mark.parametrize("command", ["render", "transcribe", "evaluate", "benchmark"])
+def test_invalid_config_prints_error_without_traceback(
+    command: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fresh_console,
+) -> None:
+    import yaml
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    payload = yaml.safe_load(config_path.read_text())
+    payload["io"]["sample"] = 2
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    result = CliRunner().invoke(app, [command, "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    # Rich may fold a long tmp path mid-word, so compare with whitespace removed.
+    stderr = re.sub(r"\s+", "", result.stderr)
+    assert f"error:invalidconfig{config_path}:" in stderr
+    assert "io.samplemustbeamappinglike{n:2,seed:0},ornull(got2)" in stderr
+    assert "Traceback" not in result.output
+    assert not (tmp_path / "corpus").exists()
+
+
+@pytest.mark.parametrize("command", ["render", "transcribe", "evaluate", "benchmark"])
+def test_missing_config_prints_error_without_traceback(
+    command: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fresh_console,
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "nope.yaml"
+
+    result = CliRunner().invoke(app, [command, "--config", str(missing)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"error:Confignotfound:{missing}" in re.sub(r"\s+", "", result.stderr)
+    assert "Traceback" not in result.output
+
+
+def test_benchmark_prints_failure_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from sonitra.benchmark import runner as runner_module
+    from sonitra.benchmark.results import BenchmarkRecord
+
+    monkeypatch.chdir(tmp_path)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    def _record(condition: str, name: str, error: str | None) -> BenchmarkRecord:
+        return BenchmarkRecord(
+            condition=condition,
+            transcriber="oracle",
+            midi_path=f"{name}.mid",
+            audio_path=f"{name}.wav",
+            status="failed" if error else "succeeded",
+            error=error,
+        )
+
+    records = [
+        _record("baseline", "a", "CUDA_ERROR_NOT_INITIALIZED"),
+        _record("baseline", "b", "CUDA_ERROR_NOT_INITIALIZED"),
+        _record("noisy", "c", "CUDA_ERROR_NOT_INITIALIZED"),
+        _record("noisy", "d", "model file missing"),
+        _record("noisy", "e", None),
+    ]
+
+    def _fake_run_benchmark(midi_paths, work_dir, config, *args, **kwargs):
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=records,
+            summary=[],
+            degradation=[],
+            results_path=Path(work_dir) / "results.jsonl",
+            summary_path=Path(work_dir) / "summary.json",
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    result = _run_benchmark_cli(config_path)
+
+    text = _squash(result.output)
+    assert result.exit_code == 1, result.output
+    assert "Benchmark failures" in text
+    assert "CUDA_ERROR_NOT_INITIALIZED" in text
+    assert "model file missing" in text
+    # the most frequent error comes first, with its count
+    assert text.index("CUDA_ERROR_NOT_INITIALIZED") < text.index("model file missing")
+    assert re.search(r"CUDA_ERROR_NOT_INITIALIZED\s*│?\s*3\b", text)
+
+
+def test_benchmark_failure_summary_caps_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from sonitra.benchmark import runner as runner_module
+    from sonitra.benchmark.results import BenchmarkRecord
+
+    monkeypatch.chdir(tmp_path)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    records = [
+        BenchmarkRecord(
+            condition="baseline",
+            transcriber="oracle",
+            midi_path=f"{i}.mid",
+            audio_path=f"{i}.wav",
+            status="failed",
+            error=f"error-{i}",
+        )
+        for i in range(7)
+    ]
+
+    def _fake_run_benchmark(midi_paths, work_dir, config, *args, **kwargs):
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        return runner_module.BenchmarkResult(
+            records=records,
+            summary=[],
+            degradation=[],
+            results_path=Path(work_dir) / "results.jsonl",
+            summary_path=Path(work_dir) / "summary.json",
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _fake_run_benchmark)
+
+    result = _run_benchmark_cli(config_path)
+
+    text = _squash(result.output)
+    assert result.exit_code == 1
+    assert "2 more distinct errors" in text
+    assert "error-5" not in text
+
+
+# ---------------------------------------------------------------------------
+# Preflight / backend-unavailable errors exit cleanly (no traceback)
+# ---------------------------------------------------------------------------
+
+_PREFLIGHT_MESSAGE = (
+    "transkun: transkun backend unavailable: no module named 'torch'. "
+    "Install with `uv sync --extra transkun` [gpu]"
+)
+
+
+def test_benchmark_preflight_error_exits_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.benchmark import runner as runner_module
+    from sonitra.cli import app
+    from sonitra.transcribe.base import TranscriptionError
+
+    monkeypatch.chdir(tmp_path)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    def _raise(*_args, **_kwargs):
+        raise TranscriptionError(_PREFLIGHT_MESSAGE)
+
+    monkeypatch.setattr(runner_module, "run_benchmark", _raise)
+
+    result = CliRunner().invoke(app, ["benchmark", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "error:" in result.stderr
+    assert "no module named 'torch'" in _squash(result.stderr)
+    assert "`uv sync --extra transkun` [gpu]" in _squash(result.stderr)
+    assert "Traceback" not in result.output
+    assert "Traceback" not in result.stderr
+
+
+def test_benchmark_preflight_real_path_exits_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    """The real ``_preflight_devices`` error is caught, not only a stubbed one."""
+    from typer.testing import CliRunner
+
+    from sonitra.benchmark import runner as runner_module
+    from sonitra.cli import app
+    from sonitra.transcribe.base import TranscriptionError
+    from sonitra.transcribe.protocol import make_transcriber
+
+    monkeypatch.chdir(tmp_path)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    real_factory = make_transcriber
+
+    def _factory(cfg):
+        backend = real_factory(cfg)
+
+        def _validate() -> None:
+            raise TranscriptionError("device 'cuda' unavailable")
+
+        backend.validate_device = _validate
+        return backend
+
+    monkeypatch.setattr(runner_module, "make_transcriber", _factory)
+
+    result = CliRunner().invoke(app, ["benchmark", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "error:" in result.stderr
+    assert "device 'cuda' unavailable" in _squash(result.stderr)
+    assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Numeric settings come from the config, never from a process-wide export
+# ---------------------------------------------------------------------------
+
+
+def test_benchmark_cli_does_not_export_numeric_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _capture_run_benchmark(monkeypatch)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+
+    result = _run_benchmark_cli(config_path)
+
+    assert result.exit_code == 0, result.output
+    assert "SONITRA_NUMERIC_MODE" not in os.environ
+    assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+
+
+def test_transcribe_cli_uses_config_numeric_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+    from sonitra.transcribe.numerics import read_numeric_env
+
+    payload = yaml.safe_load(
+        _MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path / "oracle"))
+    )
+    payload["transcription"]["numeric_mode"] = "strict"
+    payload["transcription"]["gpu_memory_growth"] = True
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    (tmp_path / "test_c4.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "off")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "0")
+    recorded: list[tuple[str, bool]] = []
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return _StubTranscriber(None)
+
+    monkeypatch.setattr(protocol, "make_transcriber", factory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert recorded == [("strict", True)]
+
+
+# ---------------------------------------------------------------------------
+# A strict numeric failure aborts the transcribe run instead of failing files
+# ---------------------------------------------------------------------------
+
+
+class _StrictNumericStub:
+    """Transcriber stub that rejects the run's numeric settings outright."""
+
+    name = "stub"
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.error = error
+        self.calls = 0
+
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        raise NumericSettingsError("boom")
+
+    def transcribe(self, audio_path):
+        self.calls += 1
+        if self.error is not None and self.calls >= 2:
+            raise self.error
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def test_transcribe_strict_failure_exits_1_before_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+
+    (tmp_path / "test_c4.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+    monkeypatch.setattr(protocol, "make_transcriber", lambda cfg: _StrictNumericStub())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "boom" in _squash(result.stderr)
+    assert not list((tmp_path / "out").rglob("*.mid"))
+
+
+def test_transcribe_strict_failure_mid_run_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.cli import app
+    from sonitra.transcribe import protocol
+
+    (tmp_path / "piece_0.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    (tmp_path / "piece_1.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_MINIMAL_CONFIG_TEMPLATE.format(midi_dir=str(tmp_path)))
+    monkeypatch.setattr(
+        protocol,
+        "make_transcriber",
+        lambda cfg: _StrictNumericStub(NumericSettingsError("boom")),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "--audio", str(tmp_path),
+            "--output", str(tmp_path / "out"),
+            "--config", str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "boom" in _squash(result.stderr)
+    # A fatal numeric failure is not a per-file failure: the run must not report
+    # an "N ok, M failed" tally for it.
+    assert "failed" not in _squash(result.output)
+
+
+def test_benchmark_strict_failure_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _fresh_console
+) -> None:
+    from typer.testing import CliRunner
+
+    from sonitra.benchmark import runner as runner_module
+    from sonitra.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    _seed_midi(tmp_path / "corpus" / "mini" / "midi")
+    config_path = _write_cli_config(tmp_path, dataset="mini")
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _StrictNumericStub()
+    )
+
+    result = CliRunner().invoke(app, ["benchmark", "--config", str(config_path)])
+
+    assert result.exit_code == 1, result.output
+    assert "boom" in _squash(result.stderr)
+    assert "Traceback" not in result.output

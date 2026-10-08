@@ -1,12 +1,21 @@
-# Distortion sweep: measure signal distortion / clipping-like degradation.
-# Conditions: baseline, mild_overdrive, heavy_distortion, drive={0.0..30.0} (6)
-# Total: 9 conditions
+# Synthesis backends: test whether AMT rankings are stable across synthesis engines.
+# Base pipeline: dawdreamer_faust with effects_chain: none (normalisation only).
+# Effects chain is disabled to isolate the backend variable.
+#
+# Conditions (3 named, no sweeps, no baseline):
+#   fluidsynth      — standard GM SoundFont rendering
+#   dawdreamer_faust — Faust oscillator via DawDreamer
+#   dawdreamer_vital — Vital VST3 via DawDreamer (fails gracefully if plugin absent)
+#
+# WARNING: dawdreamer_vital requires Vital to be installed at the configured path.
+# The benchmark runner logs per-file failures and continues, so the other backends
+# still produce results when Vital is unavailable.
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/distortion_sweep.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/methods/synthesis_backends.yaml --dataset <name>
 render_pipeline:
-  synth_backend: fluidsynth
-  effects_chain: pedalboard
+  synth_backend: dawdreamer_faust
+  effects_chain: none
   input_type: midi
   bpm: 120
   sample_rate: 44100
@@ -15,10 +24,6 @@ render_pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
-  # Render parallelism. Only honoured when synth_backend is
-  # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
-  # regardless (see pipeline.py), and dawdreamer is forced to 1 by
-  # validate_worker_constraint() because JUCE is not concurrency-safe.
   max_workers: 1
   log_level: INFO
 
@@ -45,16 +50,7 @@ pedalboard:
     preset_path: null
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
-  effects:
-    - type: Compressor
-      threshold_db: -18.0
-      ratio: 4.0
-      attack_ms: 5.0
-      release_ms: 100.0
-      enabled: true
-    - type: Distortion
-      drive_db: 0.0
-      enabled: true
+  effects: []
 
 normalisation:
   enabled: true
@@ -84,7 +80,6 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
   transcribers:
     - type: basic_pitch
       enabled: true
@@ -116,23 +111,25 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 4
 
 benchmark:
   results_path: benchmark_results.jsonl
-  include_baseline: true
-  baseline_name: baseline
+  include_baseline: false
+  baseline_name: fluidsynth
   save_audio: false
   resume: false
   conditions:
-    - name: mild_overdrive
+    - name: fluidsynth
       overrides:
-        pedalboard.effects.1.drive_db: 6.0
-    - name: heavy_distortion
+        pipeline.synth_backend: fluidsynth
+    - name: dawdreamer_faust
       overrides:
-        pedalboard.effects.1.drive_db: 24.0
-  sweeps:
-    - name: drive
-      parameter: pedalboard.effects.1.drive_db
-      values: [0.0, 6.0, 12.0, 18.0, 24.0, 30.0]
+        pipeline.synth_backend: dawdreamer_faust
+        'dawdreamer.faust_code': 'import("stdfaust.lib"); process = os.sawtooth(hslider("freq[midi:freq]",440,50,2000,1)) * hslider("gain[midi:gain]",0.5,0,1,0.01) * button("gate[midi:gate]");'
+    - name: dawdreamer_vital
+      overrides:
+        pipeline.synth_backend: dawdreamer_vst
+        dawdreamer.plugin_path: plugin/vital/lib/vst3/Vital.vst3
+        dawdreamer.preset_path: null
+  sweeps: []
   max_workers: 1

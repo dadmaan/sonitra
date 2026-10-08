@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sonitra.separation.protocol import register_separator, SeparationError
+from sonitra.transcribe.devices import resolve_torch_device
 
 if TYPE_CHECKING:
     from sonitra.config import SeparationSection
@@ -28,11 +29,12 @@ class DemucsSeparator:
             import demucs.api
         except ImportError as exc:
             raise SeparationError(
-                "demucs is not installed; install with `pip install sonitra[demucs]`"
+                "demucs is not installed; install with `pip install 'sonitra[demucs]'`"
             ) from exc
 
         if self._separator is None:
-            self._separator = demucs.api.Separator(model=self.model, device=self.device)
+            device = resolve_torch_device(self.device)
+            self._separator = demucs.api.Separator(model=self.model, device=device)
 
         audio_path = Path(audio_path)
         output_dir = Path(output_dir)

@@ -61,9 +61,24 @@ python scripts/export_regression_table.py \
 
 Without `--metadata-csv` the table has no `meta.*` columns and the script stops with an explanation. See [datasets.md](datasets.md#joining-dataset-metadata-into-a-benchmark-export) for how the join works.
 
+### Restricting to one dataset split
+
+Public piano transcription models are commonly trained on MAESTRO's official train split, so a headline number should come from the held-out test split, not the full corpus. Add `--split` to keep only the rows for named split values (repeatable; `--split-column` picks a different metadata column, default `split`, as in MAESTRO and GAPS):
+
+```bash
+python scripts/export_regression_table.py \
+  --work-dir corpus/maestro-v3/benchmark/vintage_scenarios_MIDI \
+  --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --split test
+```
+
+This writes `regression_table_split-test.csv` in `--work-dir`, leaving the unfiltered `regression_table.csv` untouched.
+
 ### Composition year (optional enrichment)
 
 `meta.year` is MAESTRO's contest year, from 2004 to 2018. It marks the recording batch, not when the music was written. `misc/MAESTRO_comp_year.txt` holds an AI-compiled year when each work was finished. Use it when your question is about the age of the music, not the recording date. It spans 1612-2006 across 60 composers. 27 of 60 composers have works in more than one composition year. For the other 33 it never changes within a composer, so the main result mostly compares composers. Your true sample is closer to 60 than 8932.
+
+The main MAESTRO numbers should come from the official test split, not the full corpus (see [Restricting to one dataset split](#restricting-to-one-dataset-split)). The composition-year study stays on the full corpus as a secondary analysis, with `split` included as a covariate (an extra model term), because the full corpus is the only sample with enough composers for that comparison to detect a real difference: 60, against 16 in the test split.
 
 Enrich the metadata first, then export against the enriched file. The export flags stay the same:
 
@@ -83,6 +98,27 @@ python scripts/export_regression_table.py \
 ```
 
 The regression table gains `meta.composition_year`. The script writes `<output>.provenance.json` next to the enriched CSV. That file logs input checksums, the exact command, and coverage. The annotation file uses `|` as a separator. Quoting is off by default because the comp-year file has unbalanced quotes. `--require-full-coverage` stops with an error if any row finds no match.
+
+### Own tuning offset (optional enrichment)
+
+`meta.own_tuning_cents` records how far a recording sits from A440, the standard reference pitch. It is a property of the performance, not of the piece, because a recording and its score can disagree about pitch. `scripts/estimate_tuning.py` measures it from the audio and reports a per-reference median, and `scripts/enrich_metadata.py` attaches that to the metadata CSV exactly as it attaches the composition year. Measure first, then enrich, and export against the enriched file with the same export flags:
+
+```bash
+python scripts/estimate_tuning.py \
+  --recordings corpus/maestro-v3/recordings \
+  --references corpus/maestro-v3/midi \
+  --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --join-column midi_filename \
+  --output corpus/maestro-v3/metadata/maestro-v3.0.0-own-tuning.csv
+
+python scripts/enrich_metadata.py \
+  --metadata corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+  --annotations corpus/maestro-v3/metadata/maestro-v3.0.0-own-tuning.csv \
+  --on midi_filename=midi_filename --add own_tuning_cents=own_tuning_cents \
+  --output corpus/maestro-v3/metadata/maestro-v3.0.0-with-tuning.csv
+```
+
+The regression table gains `meta.own_tuning_cents`, which the generic `--covariate` flag accepts as it stands. One figure is not computed: the analysis scripts do not derive an effective-cents value, which would combine the offset a benchmark condition applied with the recording's own measured tuning, so that value cannot be used as a covariate yet.
 
 ## Running it
 

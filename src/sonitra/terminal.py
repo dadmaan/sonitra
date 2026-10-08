@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import ExitStack
 from pathlib import PurePath
 from types import TracebackType
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -25,8 +26,13 @@ from rich.progress import (
 )
 from rich.text import Text
 
-from sonitra.benchmark.results import BenchmarkRecord, WorkerEvent
 from sonitra.config import PipelineConfig
+
+if TYPE_CHECKING:
+    # Annotation-only: importing sonitra.benchmark at runtime would pull in
+    # benchmark.runner -> pipeline -> pedalboard/dawdreamer, making every
+    # console helper (and `sonitra --help`) depend on the heavy render stack.
+    from sonitra.benchmark.results import WorkerEvent
 
 _console: Console | None = None
 logger = logging.getLogger(__name__)
@@ -45,9 +51,12 @@ def get_console(*, quiet: bool = False, no_color: bool = False) -> Console:
     to rich's default dynamic lookup, so the console keeps writing to the real
     terminal even if ``sys.stdout`` is later reassigned (e.g. by a serial-mode
     output guard redirecting a noisy backend's prints away from the display).
+    A cached console whose pinned stream has been closed (e.g. a previous
+    in-process ``CliRunner`` invocation) is replaced so later calls do not
+    write to a dead stream.
     """
     global _console
-    if _console is None:
+    if _console is None or getattr(_console.file, "closed", False):
         _console = Console(quiet=quiet, no_color=no_color, file=sys.stdout)
     return _console
 
@@ -85,6 +94,40 @@ def setup_logging(level: str = "INFO", *, console: Console | None = None) -> Non
 def set_log_level(level: str) -> None:
     """Update only the ROOT logger level (e.g. after a config reloads)."""
     logging.getLogger().setLevel(level.upper())
+
+
+_TF_CPP_USER_SET = "TF_CPP_MIN_LOG_LEVEL" in os.environ
+
+
+def configure_framework_logging(level: str) -> None:
+    """Set TF's C++ log level from the effective log level, unless the user set it.
+
+    Maps ``DEBUG`` → ``0`` (all), ``INFO`` → ``1``, ``WARNING`` → ``2``,
+    ``ERROR``/``CRITICAL`` → ``3``. No-op when ``TF_CPP_MIN_LOG_LEVEL`` was
+    already in the environment at import time. Must run before any lazy TF
+    import; pool workers inherit the env. In parallel mode worker fds are
+    redirected, so C++ output lands in ``worker-<pid>.log``, not the terminal.
+    """
+    if _TF_CPP_USER_SET:
+        return
+    mapping = {
+        "DEBUG": "0",
+        "INFO": "1",
+        "WARNING": "2",
+        "ERROR": "3",
+        "CRITICAL": "3",
+    }
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = mapping.get(level.upper(), "1")
+
+
+def configure_onednn_opts(*, default: str = "0") -> None:
+    """Set TF_ENABLE_ONEDNN_OPTS unless the user already set it.
+
+    Single default source for the oneDNN flag (TF reads it at import, so
+    call before any lazy TF import and again after config load). Workers
+    inherit the env; setdefault keeps a user export winning.
+    """
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", default)
 
 
 def _format_file_field(midi_path: str, *, max_len: int = 40) -> str:

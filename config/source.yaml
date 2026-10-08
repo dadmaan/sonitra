@@ -41,6 +41,39 @@ io:
     mp3_bitrate_kbps: 192 # only applies when output_format: mp3
     file_naming: "{stem}" # output filename template; {stem} = MIDI filename without extension
     dataset: null # optional: scope paths to {corpus_root}/{dataset}/midi|audio|transcription|eval_results/
+    # File selection: restrict a run to a subset of the dataset's reference files.
+    # Leave `where` empty and `sample` null to use every file. `sonitra serve` loads
+    # this file and ignores selection, so these values stay at their defaults here.
+    #
+    #   metadata_csv bare filename resolved under {corpus_root}/{dataset}/metadata/.
+    #                Pass a filename, not a repo-relative path (unlike the exporter
+    #                scripts, which take repo-relative paths): a relative path here
+    #                resolves below the metadata directory and is reported as missing.
+    #                Required with `where`, rejected without it.
+    #   join_column  metadata column matched against the reference file stem
+    #                (default midi_filename; GAPS uses midi_path). Ignored without `where`.
+    #   where        exact-match filter, which requires `dataset` and `metadata_csv`:
+    #                a file is kept when every column matches (AND) and its value
+    #                matches any entry of that column's list (OR). Values compare as
+    #                strings; ints are accepted and stringified. Lists are sorted and
+    #                de-duplicated, so their order never matters.
+    #   sample       draw n files deterministically from the filtered set with seed
+    #                (default 0); n must be at least 1, and n >= set size keeps all
+    #                files. The CLI --limit and --seed flags write into these fields.
+    #
+    # Example: MAESTRO-v3 official test split.
+    #   dataset: maestro-v3
+    #   metadata_csv: maestro-v3.0.0.csv
+    #   join_column: midi_filename
+    #   where:
+    #       split: [test]
+    #   sample:
+    #       n: 177
+    #       seed: 0
+    metadata_csv: null
+    join_column: midi_filename
+    where: {}
+    sample: null
 
 dawdreamer:
     block_size: 512
@@ -143,6 +176,20 @@ pedalboard:
         #   gain_db: 3.0  # boost/cut centred on cutoff_frequency_hz
         #   q: 1.0
         #   enabled: false
+        # - type: TuningOffset
+        #   cents: 0.0  # required; whole-signal shift in hundredths of a semitone, negative = down
+        #   high_quality: true  # slower, more accurate stretcher
+        #   transient_mode: crisp  # crisp | mixed | smooth
+        #   transient_detector: compound  # compound | percussive | soft
+        #   retain_phase_continuity: true  # keep phase continuous across FFT frames
+        #   use_long_fft_window: null  # null = let the stretcher pick the window length
+        #   use_time_domain_smoothing: false  # smoother onsets, more smearing
+        #   preserve_formants: true  # keep vocal formants while shifting
+        #   enabled: false  # bypassed by default
+        # The shift runs through Rubber Band's offline pitch/time stretcher behind
+        # pedalboard.time_stretch, because the PitchShift plugin drops sub-semitone
+        # shifts. cents: 0.0 never reaches the stretcher, so an enabled zero-cent slot
+        # stays a passthrough; a +c / -c pair round-trips through it to show its artifacts.
 
 # Post-effects peak normalisation ensures the rendered audio stays below the clip
 # threshold. In peak mode the signal is scaled so its peak == 10^(target_db/20).
@@ -166,20 +213,23 @@ observability:
     log_level: null # optional root log level override; DEBUG | INFO | WARNING | ERROR | CRITICAL; overrides pipeline.log_level when set
     progress: true # master switch for live progress bars in the CLI
 
-# Stem separation — planned feature, not yet implemented.
-# See ROADMAP.md for the intended design.
-# Leave enabled: false; the passthrough backend is a no-op.
+# Stem separation. Two backends: "passthrough" (a no-op that returns the mix
+# unchanged) and "demucs" (source separation; needs `pip install sonitra[demucs]`).
+# Leave enabled: false unless the stem is used, since separation re-runs the model
+# over every rendered file.
 separation:
     enabled: false
-    backend: passthrough # only "passthrough" is implemented; "demucs" is planned
+    backend: passthrough # "passthrough" (no-op) or "demucs" (needs the [demucs] extra)
     model: htdemucs
-    device: cpu
+    device: cpu # unified: "cpu", "cuda", "cuda:N" or "GPU:N"; "GPU:0" → torch "cuda:0" (see transcribe/devices.py)
     stem: null
     output_dir: stems
 
 transcription:
     output_dir: transcriptions
-    max_workers: 1 # parallel audio files per transcriber; safe for any rendering mode
+    max_workers: 1 # `sonitra transcribe` only, no effect in `sonitra benchmark`; the built-in models serialise inference on a per-instance lock so the gain is small there, while `external_command` really does run one subprocess per file
+    numeric_mode: "off" # framework determinism + precision: off | warn (fallback) | strict (raise); strict recommended for published runs
+    gpu_memory_growth: false # TF allocates GPU memory as needed; may change cuDNN algorithm choice, so it stays in the benchmark fingerprint
     transcribers:
         - type: basic_pitch # Spotify Basic Pitch — installed by default
           enabled: true
@@ -188,10 +238,11 @@ transcription:
           minimum_note_length_ms: 127.7
           minimum_frequency_hz: null # null = no lower frequency cutoff
           maximum_frequency_hz: null # null = no upper frequency cutoff
-          device: cpu # TF device for inference: "cpu", "GPU:0", "GPU:1", …
+          device: cpu # unified: "cpu", "cuda", "cuda:N" or "GPU:N"; "cuda" → TF "GPU:0" (see transcribe/devices.py)
           melodia_trick: true # HMM/melodia post-processing smoothing (code default)
           multiple_pitch_bends: false # allow overlapping same-pitch notes w/ glissando (code default)
           save_raw_outputs: false # persist raw model outputs as CSV sidecar next to each MIDI (code default)
+          batch_size: null # windows per inference call; null = 1 on GPU, 16 on CPU; any value applies on every device (on CUDA, values above 8 changed notes slightly in measurement)
         # Pre-exported MIDI from any external tool:
         # - type: precomputed
         #   name: klangio             # used as the output subdirectory name
@@ -200,9 +251,28 @@ transcription:
         # - type: external_command
         #   name: my-amt-tool
         #   command: "amt-tool transcribe {input} -o {output}"
+        # TransKun — requires `pip install sonitra[transkun]`:
+        # - type: transkun
+        #   device: cpu               # unified: cpu, cuda, cuda:N, GPU:N (plus mps); GPU:0 → cuda:0
+        #   segment_size_sec: null    # null lets bundled conf stay default (16s)
+        #   segment_hop_sec: null     # null lets bundled conf stay default (8s)
+        #   weights_path: null        # null uses bundled checkpoint
+        #   conf_path: null           # null uses bundled conf
+        # Sony hFT-Transformer — requires `pip install sonitra[transkun]` plus
+        # `python scripts/setup_hft_transformer.py` to fetch and convert the released checkpoint:
+        # - type: hft_transformer
+        #   device: cpu               # unified: cpu, cuda, cuda:N, GPU:N (plus mps); GPU:0 → cuda:0
+        #   checkpoint: maestro       # which pinned release to convert and load
+        #   weights_path: null        # null uses the converted checkpoint in the models dir; must point at a converted model.pt, never the upstream .pkl pickle
+        #   output: second            # which decoder head set to decode: "second" is the time-axis head the model reports, "first" the frequency-axis head
+        #   n_stride: 0               # window stride in 16 ms frames; 0 = one pass per whole window, higher sharpens onsets (64 = num_frame/2 is the maximum)
+        #   onset_threshold: 0.5      # onset activation threshold in (0, 1]
+        #   offset_threshold: 0.5     # offset activation threshold in (0, 1]
+        #   mpe_threshold: 0.5        # minimum-picked-onset activation threshold in (0, 1]
+        #   batch_size: 1             # windows per forward pass; 1 is bit-reproducible, higher only changes reduction order
 
 evaluation:
-    max_workers: 1 # parallel reference/estimate pairs during scoring
+    max_workers: 1 # `sonitra evaluate` only, no effect in `sonitra benchmark`; parallel reference/estimate pairs during scoring
     note_metrics:
         enabled: true
         onset_tolerance_sec: 0.05 # ±50 ms onset matching window
@@ -231,6 +301,14 @@ benchmark:
     max_workers: 1 # parallel conditions; uses ProcessPoolExecutor for JUCE isolation
     save_audio: true # keep rendered audio/stems on disk after a condition finishes; set false to delete them once transcribed+evaluated, bounding disk usage for large sweeps
     resume: false # continue a stopped run: skip (condition, file, transcriber) triples already present in results_path instead of recomputing them
+    # Full run directory (renamed or moved by hand: used exactly as given, no config stem is appended).
+    # Precedence: --workdir, then this key, then <io.corpus_root>/<io.dataset>/benchmark/<config stem>
+    # when io.dataset is set, otherwise ./benchmark/<config stem>.
+    # With resume: false, starting a run deletes existing results in this folder, so two configs (or one
+    # config run with different --dataset values) sharing a fixed folder overwrite each other. The CLI
+    # refuses --dataset when it differs from io.dataset while this key is set, unless --workdir is given.
+    # Not part of the resume fingerprint, so the folder can be moved and resumed from its new path.
+    benchmark_dir: null
     conditions: [] # named config variants; each provides a list of overrides
     sweeps:
         - name: reverb_wet # sweep name used in results output

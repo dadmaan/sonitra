@@ -13,7 +13,7 @@ These are the main sections and what each one does:
 | Section | Controls |
 |---|---|
 | `render_pipeline` | Synth backend (`synth_backend`), effects chain (`effects_chain`), host BPM (tempo-synced plugins / FluidSynth tick grid; notes follow each MIDI file's own tempo map), sample rate, bit depth, channels, parallelism (`max_workers`), input source (`input_type`: `midi` by default, or `audio` to use your own recordings instead of rendering, see [Using your own dataset](custom-datasets.md)) |
-| `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template |
+| `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template, file selection (`metadata_csv`, `join_column`, `where`, `sample`; see [File selection](#file-selection)) |
 | `dawdreamer` | Faust script path, VST3 plugin path, preset path — required when `synth_backend: dawdreamer_vst`; `plugin_path` must NOT be set for `synth_backend: dawdreamer_faust` |
 | `fluidsynth` | `soundfont_path` — path to the `.sf2` SoundFont file; required when `synth_backend: fluidsynth` — plus optional `program` (0–127 GM program; `null` inherits the source MIDI's program when unambiguous) |
 | `pedalboard` | Pedalboard effects chain (`pedalboard.effects`); `pedalboard.instrument` sub-section configures the VST3 instrument plugin for the `pedalboard_instrument` backend |
@@ -44,19 +44,68 @@ This section picks how Sonitra turns MIDI scores into sound, and whether it adds
 
 ## Transcription backends
 
-A transcriber turns audio back into notes. AMT means automatic music transcription, turning sound into a score. Basic Pitch is Spotify's free transcription tool and the default. Set `device` to `GPU:0` to run it on your graphics card. You need the `[gpu]` install on Linux x86_64 for that.
+A transcriber turns audio back into notes. AMT means automatic music transcription, turning sound into a score. Basic Pitch is Spotify's free transcription tool and the default. Set `device` to `cuda` (or `GPU:0` — both spellings work) to run it on your graphics card. Sonitra translates `cuda` to the TensorFlow name `GPU:0` internally. You need the `[gpu]` install on Linux x86_64 for that.
 
 | Backend | `type` value | Notes |
 |---|---|---|
-| Spotify Basic Pitch | `basic_pitch` | Installed by default; supports `device` field (default: `cpu`; set to `GPU:0` for GPU inference — requires `[gpu]` extras on Linux x86_64) |
+| Spotify Basic Pitch | `basic_pitch` | Installed by default; supports unified `device` values `cpu`, `cuda`, `cuda:N`, `GPU:N` (default: `cpu`; `cuda` is translated to TensorFlow's `GPU:0` internally — requires `[gpu]` extras on Linux x86_64) |
+| TransKun | `transkun` | Piano only; requires `pip install 'sonitra[transkun]'` (bundled 56 MB checkpoint, PyTorch). Supports `device` values `cpu`, `cuda`, `cuda:1`, `mps` and `GPU:0` (translated to `cuda:0` internally). See `config/source.yaml` commented block and `config/benchmark/transkun/transkun_baseline.yaml` |
+| Sony hFT-Transformer | `hft_transformer` | Piano only; needs `pip install 'sonitra[transkun]'` too (no new extra), plus a one-time weights install: `python scripts/setup_hft_transformer.py`. Keys: `device` (unified `cpu`, `cuda`, `cuda:N`, `GPU:N`), `checkpoint: maestro`, `weights_path`, `output` (`second` is the time-axis head and the default), `n_stride` (0–64, 0 = no overlapping windows), `onset_threshold` / `offset_threshold` / `mpe_threshold` (each default 0.5), `batch_size` (default 1). See `config/source.yaml` commented block and [model-cards.md](model-cards.md) |
 | Pre-exported MIDI | `precomputed` | Point at a directory of MIDI from external tools |
 | Any CLI tool | `external_command` | Template: `"tool transcribe {input} -o {output}"` |
+
+Separation `device` accepts the same unified strings (`cpu`, `cuda`, `cuda:N`, `GPU:N`); `GPU:0` is translated to torch `cuda:0` at the separator boundary.
+
+Numeric reproducibility is controlled per run by two `transcription` keys. Both stay in the benchmark fingerprint, so changing them invalidates resume. `numeric_mode` (`off` default, `warn`, `strict` — `strict` recommended for published runs) selects deterministic framework algorithms and disables TF32 precision shortcuts (TF32 is deterministic but less accurate than float32, about 10 versus 23 mantissa bits). `warn` falls back with a warning where a kernel has no deterministic implementation; `strict` raises instead. `gpu_memory_growth` (default `false`) lets TensorFlow allocate graphics memory as needed instead of grabbing it all at start; cuDNN algorithm choice can depend on workspace size, so it is treated as result-affecting. Both settings are process-global. The config value applies, whether the run starts from `sonitra benchmark`, from `sonitra transcribe` or from a direct `run_benchmark()` call in Python. Each of those writes `SONITRA_NUMERIC_MODE` and `SONITRA_GPU_MEMORY_GROWTH` from the config before it builds the first backend, which is how a spawned benchmark worker inherits them, and each restores the previous environment when the run ends. If the shell already exported a value that differs from the config, the run ignores it and logs a warning naming both values. Under `strict`, a setting that cannot be applied stops the run instead of recording a failed file and carrying on. The check runs before the run writes its first result, in a plain `run_benchmark()` call and in `sonitra transcribe` alike, and a parallel benchmark cancels the conditions it has not started. Under `warn` the run continues, and each fallback it accepted is listed in that row's `numeric_fallbacks`, which is empty when nothing fell back. The effective `numeric_mode` is recorded per row in `transcriber_metadata`, and the requested `gpu_memory_growth` per `basic_pitch` row.
+
+## Models directory
+
+Backends that do not bundle their weights read them from a models directory. Today that is `hft_transformer`; TransKun and Basic Pitch carry theirs inside their packages. Sonitra resolves the directory in one order: `SONITRA_MODELS_DIR` when it is set and non-empty, otherwise `~/.cache/sonitra/models`. There is deliberately no repository-relative default, because a checkout may be read-only or shared between users. The weights land at `<models_dir>/hft_transformer/maestro/model.pt` with a `manifest.json` recording where they came from.
+
+```bash
+# once, to install the hFT-Transformer weights
+python scripts/setup_hft_transformer.py
+
+# into a directory of your choosing
+SONITRA_MODELS_DIR=/path/to/models python scripts/setup_hft_transformer.py
+```
+
+Inside the containers the host `models/` folder is bind-mounted at `/models` and `SONITRA_MODELS_DIR=/models` is already set, and the image installs the weights on start; see [docker.md](docker.md) and [devcontainer.md](devcontainer.md). `weights_path` in a transcriber's config overrides the resolved location for that one backend; it must point at an already converted `model.pt`, never at the upstream `.pkl` pickle.
 
 ## Built-in audio effects
 
 You can add these effects under `pedalboard.effects`. Each effect has an `enabled` flag to turn it on or off. Pedalboard is the audio-effects library Sonitra uses.
 
-Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter. VST3 plugins start with their factory default sound. You cannot set their controls from YAML.
+Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter, TuningOffset. VST3 plugins start with their factory default sound. You cannot set their controls from YAML.
+
+`TuningOffset` shifts the whole signal by a fixed number of cents, where a cent is a hundredth of a semitone. It takes a required `cents` value; `config/source.yaml` lists every other setting it accepts, with its default and the reason for it. A slot with `cents: 0` never reaches the stretcher, so it leaves the audio untouched. Enabling one slot at `+c` and a second at `-c` sends the signal through the stretcher twice and back to its original pitch, so the processing artifact of that offset shows on its own. The shift runs through `pedalboard.time_stretch`, Rubber Band's offline stretcher, because the `PitchShift` plugin does not apply shifts measured in cents reliably: a small shift comes out as no shift at all.
+
+## File selection
+
+By default a run uses every file in its dataset. You can restrict it with four flat keys under `io`; `io.dataset` names the dataset they apply to.
+
+- `io.metadata_csv`: the filename of a metadata CSV, with no folder part. Sonitra looks for it under `<io.corpus_root>/<dataset>/metadata/`, so `metadata_csv: maestro-v3.0.0.csv` finds `corpus/maestro-v3/metadata/maestro-v3.0.0.csv`. The exporter scripts use the opposite rule: their `--metadata-csv` accepts a path from the repository root, and the same path here points below the metadata folder, so Sonitra reports it as missing. Required with `where`, rejected without it.
+- `io.join_column`: the metadata column matched against the reference MIDI file name (folders and the file ending are ignored). The default is `midi_filename`; GAPS uses `midi_path`.
+- `io.where`: the exact-match filter. A file is kept when every listed column matches (AND), and a column matches when its row value is any entry in that column's list (OR). Sonitra compares values as text and turns whole numbers written in YAML into text. It sorts lists and removes repeats, so their order never matters. An unknown column or value is an error. `where` requires `metadata_csv` and `dataset`.
+- `io.sample`: a random subset taken after filtering, in the form `{n: N, seed: S}`. `n` must be at least 1, and `n` greater than or equal to the filtered size keeps all files. The seed defaults to 0, so the same command picks the same files every time.
+
+Sonitra excludes files on disk that have no metadata row and prints a warning naming a few examples. It pairs audio files to the full reference list and keeps them only when their reference is selected. `render` and `transcribe` pair only when `where` is set, so an unfiltered `--audio <dir>` still works; `benchmark` in audio mode always pairs recordings to references, filtered or not.
+
+The CLI flags `--limit` and `--seed` write into `io.sample` (`--seed` alone needs an existing sample). A benchmark run records the values in its `config.yaml`, and they are part of the resume fingerprint (the config record that decides whether a stopped benchmark run can continue). Every selection error (a missing metadata CSV, an unknown column or value, or a filter that matches nothing) prints an error and exits with code 1 before any work starts. `--dataset` cannot re-point a filter: if the config filters one dataset and `--dataset` names a different one, Sonitra exits with an error.
+
+Benchmark conditions and sweeps cannot override `io.dataset`, `io.metadata_csv`, `io.join_column`, `io.where`, `io.sample`, `benchmark.benchmark_dir`, or any key under `transcription`: the run resolves the first group before it starts, and builds its transcribers, with their numeric settings, before any condition executes. A run that tries stops with an error before any work starts.
+
+For the MAESTRO test split:
+
+```yaml
+io:
+  dataset: maestro-v3
+  metadata_csv: maestro-v3.0.0.csv
+  join_column: midi_filename
+  where:
+    split: [test]
+  sample: null
+```
 
 ## Conditions and sweeps
 
@@ -67,6 +116,10 @@ Use sweeps when you want to test one control while all else stays the same. For 
 ### Benchmark output
 
 `sonitra benchmark` saves three items in `work_dir`. It saves the per-file results in JSONL format. Each row covers one mix of condition, transcriber, and file, and it carries that condition's `overrides` list. It saves `summary.json` with the `summary` and `degradation` tables. Each row there also carries its `overrides`. It saves `config.yaml`, a copy of the exact `PipelineConfig` it used. Sonitra rewrites this copy on every run, even when you resume. `scripts/export_regression_table.py` flattens the results file into a per-file CSV for further analysis. It turns metrics and overrides into columns. It labels pedalboard effect slots by type when `config.yaml` is present. It can also join a dataset metadata CSV by filename (see `docs/datasets.md`).
+
+`benchmark.benchmark_dir` sets the full run folder. Sonitra uses it exactly as given, adds no config name to it, and keeps it out of the resume fingerprint, so you can move the folder and resume it from the new path. The run folder is the first match in this order: `--workdir`, `benchmark.benchmark_dir`, `<io.corpus_root>/<dataset>/benchmark/<config stem>` when a dataset is set (from the YAML or `--dataset`), and `./benchmark/<config stem>` otherwise. A `benchmark_dir` set in the config plus a different `--dataset` and no `--workdir` is an error. With `resume: false`, starting a run deletes the existing results in the folder, so two configs sharing one fixed folder delete each other's results. `scripts/export_model_baselines.py` does not pick up runs outside `corpus/*/benchmark/`.
+
+`summary.json` always has a top-level `selection` block. It says whether a selection is configured (`configured`) and, for a configured selection, records the dataset, the metadata CSV path and its sha256 (a hash of the file's contents), the join column, the filter values, the sample, the type of files counted (reference MIDI files or recordings), the counts, per-value counts for each filter column, and a sha256 of the selected file paths. A run with no selection records `configured: false`, the file type, the number of files found and the number selected, and that path hash. On resume, Sonitra refuses to continue when the metadata CSV's sha256 differs from the one recorded when the run folder was started.
 
 ## Parallelism (max_workers)
 
@@ -81,7 +134,7 @@ Four sections have a `max_workers` setting. It sets how many tasks run at once. 
 
 ### benchmark.max_workers
 
-This sets how many benchmark conditions run at once. When it is more than 1, each condition runs in its own subprocess through a `ProcessPoolExecutor`. A subprocess is a separate worker process. The full render, transcribe, and evaluate chain for each condition runs in its own process. This also keeps JUCE, the audio code behind DawDreamer, separate per process. Each worker writes to `work_dir/logs/worker-<pid>.log`. When it is 1, which is the default, conditions run one after another in the main process. Each subprocess loads its own copy of the transcription model. So higher values use more memory. For example, you get one TensorFlow copy per worker with Basic Pitch.
+This sets how many benchmark conditions run at once. When it is more than 1, each condition runs in its own subprocess through a `ProcessPoolExecutor`. A subprocess is a separate worker process. The full render, transcribe, and evaluate chain for each condition runs in its own process. This also keeps JUCE, the audio code behind DawDreamer, separate per process. Each worker writes to `work_dir/logs/worker-<pid>.log`. When it is 1, which is the default, conditions run one after another in the main process. Each subprocess loads its own copy of the transcription model. So higher values use more memory. For example, you get one TensorFlow copy per worker with Basic Pitch. Each worker builds its transcribers once and reuses them for every condition it runs, so a model loads once per worker rather than once per condition. That load falls in the first row each worker transcribes and in no later row, so `transcribe_seconds` compares across conditions only after that first row. With more than one worker, each model is resident once per worker, and on a GPU `transcription.gpu_memory_growth: true` is what leaves room for the second copy.
 
 ### render_pipeline.max_workers
 
@@ -89,7 +142,7 @@ This sets how many files render at once inside each condition. It only works whe
 
 ### transcription.max_workers and evaluation.max_workers
 
-Sonitra reads these only for the single-step commands `sonitra transcribe` and `sonitra evaluate`. Inside `sonitra benchmark`, transcription and evaluation run one file at a time within each condition worker. These two settings change nothing in a benchmark run.
+Sonitra reads these only for the single-step commands `sonitra transcribe` and `sonitra evaluate`. Inside `sonitra benchmark`, transcription and evaluation run one file at a time within each condition worker. These two settings change nothing in a benchmark run. A benchmark config that sets either of them above 1 gets a warning naming the key, because a benchmark parallelises conditions through `benchmark.max_workers` instead.
 
 ### Resume
 

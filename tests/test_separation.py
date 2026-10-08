@@ -40,5 +40,32 @@ def test_demucs_separator_hints_at_extra(tmp_path: Path) -> None:
 
     separator = DemucsSeparator()
     with patch.dict(sys.modules, {"demucs": None, "demucs.api": None}):
-        with pytest.raises(SeparationError, match=r"pip install sonitra\[demucs\]"):
+        with pytest.raises(SeparationError, match=r"pip install 'sonitra\[demucs\]'"):
             separator.separate(tmp_path / "song.wav", tmp_path / "stems")
+
+
+def test_demucs_device_translated(tmp_path: Path) -> None:
+    import types
+
+    from sonitra.separation.demucs_separator import DemucsSeparator
+
+    captured: dict[str, object] = {}
+
+    class _FakeSeparator:
+        def __init__(self, model: str, device: str) -> None:
+            captured["device"] = device
+            self.samplerate = 44100
+
+        def separate_audio_file(self, path: str) -> tuple[None, dict]:
+            return None, {}
+
+    fake_api = types.ModuleType("demucs.api")
+    fake_api.Separator = _FakeSeparator  # type: ignore[attr-defined]
+    fake_api.save_audio = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+    fake_demucs = types.ModuleType("demucs")
+    fake_demucs.api = fake_api  # type: ignore[attr-defined]
+    with patch.dict(sys.modules, {"demucs": fake_demucs, "demucs.api": fake_api}):
+        separator = DemucsSeparator(model="htdemucs", device="GPU:0")
+        result = separator.separate(tmp_path / "song.wav", tmp_path / "stems")
+    assert captured["device"] == "cuda:0"
+    assert result == {}

@@ -1,8 +1,22 @@
-"""Fit the condition-effect beta mixed model on a benchmark regression table.
+r"""Fit the condition-effect beta mixed model on a benchmark regression table.
 
 Model: ``note.onset_f1 ~ condition + duration + performance_year + (1 | song) +
 (1 | composer)`` with a logit-link beta family, fitted in R (glmmTMB). Results
 are written to ``regression_analysis/`` next to the input CSV.
+
+Examples:
+    # check the table and report the design without fitting
+    python scripts/run_mixed_effects_analysis.py \
+        --work-dir corpus/maestro-v3/benchmark/<run> --dry-run
+
+    # fit (reads <run>/regression_table_with_metadata.csv)
+    python scripts/run_mixed_effects_analysis.py \
+        --work-dir corpus/maestro-v3/benchmark/<run>
+
+    # add composition year as a term, plus its interaction with condition
+    python scripts/run_mixed_effects_analysis.py \
+        --input corpus/maestro-v3/benchmark/<run>/regression_table_with_metadata_comp_year.csv \
+        --covariate meta.composition_year --interact-with-condition
 """
 
 from __future__ import annotations

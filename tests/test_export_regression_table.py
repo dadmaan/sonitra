@@ -500,7 +500,7 @@ def test_build_rows_metadata_join_keys_on_song_for_both_recordings(ert: ModuleTy
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: token-prefix metadata join (MusicNet)
+# token-prefix metadata join (MusicNet)
 # ---------------------------------------------------------------------------
 
 
@@ -776,3 +776,260 @@ def test_main_token_prefix_is_byte_identical_without_flag(
         content_exact = f.read()
 
     assert content_default == content_exact
+
+
+# --- --split filter -----------------------------------------------------------
+
+
+def _write_split_fixture(work_dir: Path) -> Path:
+    """Three songs (train/test/validation) plus one song missing from the metadata."""
+    results_path = work_dir / "benchmark_results.jsonl"
+    songs = ["song_train", "song_test", "song_val", "song_unlisted"]
+    with results_path.open("w") as handle:
+        for condition in ("baseline", "reverb"):
+            for song in songs:
+                handle.write(
+                    json.dumps(
+                        {
+                            "condition": condition,
+                            "transcriber": "basic_pitch",
+                            "midi_path": f"corpus/maestro/midi/2018/{song}.midi",
+                            "audio_path": f"{condition}/{song}.wav",
+                            "status": "succeeded",
+                            "metrics": {"note.onset_f1": 0.8},
+                            "overrides": {},
+                        }
+                    )
+                    + "\n"
+                )
+    metadata_path = work_dir / "metadata.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [
+            {"midi_filename": "2018/song_train.midi", "split": "train"},
+            {"midi_filename": "2018/song_test.midi", "split": "test"},
+            {"midi_filename": "2018/song_val.midi", "split": "validation"},
+        ],
+        fieldnames=["midi_filename", "split"],
+    )
+    return metadata_path
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def test_filter_rows_by_split_keeps_only_requested_values(ert: ModuleType) -> None:
+    rows = [
+        {"song": "a", "meta.split": "train"},
+        {"song": "b", "meta.split": "test"},
+        {"song": "c"},  # no metadata match -> split unknown
+    ]
+
+    kept = ert.filter_rows_by_split(rows, "split", {"test"})
+
+    assert [row["song"] for row in kept] == ["b"]
+
+
+def test_main_split_writes_only_test_rows_to_split_named_default_output(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    metadata_path = _write_split_fixture(work_dir)
+
+    exit_code = ert.main(
+        ["--work-dir", str(work_dir), "--metadata-csv", str(metadata_path), "--split", "test"]
+    )
+
+    assert exit_code == 0
+    # The unfiltered default table is never written, so a split export can't clobber it.
+    assert not (work_dir / "regression_table.csv").exists()
+    rows = _read_csv_rows(work_dir / "regression_table_split-test.csv")
+    assert {row["song"] for row in rows} == {"song_test"}
+    assert {row["condition"] for row in rows} == {"baseline", "reverb"}
+    assert all(row["meta.split"] == "test" for row in rows)
+    out = capsys.readouterr().out
+    assert "wrote 2 rows across 2 conditions" in out
+
+
+def test_main_split_accepts_multiple_values(ert: ModuleType, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    metadata_path = _write_split_fixture(work_dir)
+
+    exit_code = ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(metadata_path),
+            "--split", "validation",
+            "--split", "test",
+        ]
+    )
+
+    assert exit_code == 0
+    rows = _read_csv_rows(work_dir / "regression_table_split-test+validation.csv")
+    assert {row["song"] for row in rows} == {"song_test", "song_val"}
+
+
+def test_main_split_honours_explicit_output(ert: ModuleType, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    metadata_path = _write_split_fixture(work_dir)
+    out_path = tmp_path / "custom.csv"
+
+    exit_code = ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(metadata_path),
+            "--split", "test",
+            "--output", str(out_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert {row["song"] for row in _read_csv_rows(out_path)} == {"song_test"}
+
+
+def test_main_split_reports_rows_dropped_for_missing_metadata(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    metadata_path = _write_split_fixture(work_dir)
+
+    ert.main(["--work-dir", str(work_dir), "--metadata-csv", str(metadata_path), "--split", "test"])
+
+    err = capsys.readouterr().err
+    assert "kept 2/8 rows" in err
+    assert "2 rows (1 songs) have no metadata match" in err
+
+
+def test_main_split_uses_custom_split_column(ert: ModuleType, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _write_split_fixture(work_dir)
+    metadata_path = work_dir / "metadata_fold.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [
+            {"midi_filename": "song_train.midi", "fold": "dev"},
+            {"midi_filename": "song_test.midi", "fold": "eval"},
+        ],
+        fieldnames=["midi_filename", "fold"],
+    )
+
+    exit_code = ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(metadata_path),
+            "--split-column", "fold",
+            "--split", "eval",
+        ]
+    )
+
+    assert exit_code == 0
+    rows = _read_csv_rows(work_dir / "regression_table_split-eval.csv")
+    assert {row["song"] for row in rows} == {"song_test"}
+
+
+def test_main_split_without_metadata_csv_is_a_usage_error(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _write_split_fixture(work_dir)
+
+    with pytest.raises(SystemExit) as excinfo:
+        ert.main(["--work-dir", str(work_dir), "--split", "test"])
+
+    assert excinfo.value.code == 2
+    assert "--split requires --metadata-csv" in capsys.readouterr().err
+
+
+def test_main_split_missing_metadata_file_fails_without_writing(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _write_split_fixture(work_dir)
+
+    exit_code = ert.main(
+        [
+            "--work-dir", str(work_dir),
+            "--metadata-csv", str(work_dir / "nope.csv"),
+            "--split", "test",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "nope.csv" in capsys.readouterr().err
+    assert not list(work_dir.glob("regression_table*.csv"))
+
+
+def test_main_split_column_absent_fails_without_writing(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _write_split_fixture(work_dir)
+    metadata_path = work_dir / "no_split.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [{"midi_filename": "song_test.midi", "composer": "Bach"}],
+        fieldnames=["midi_filename", "composer"],
+    )
+
+    exit_code = ert.main(
+        ["--work-dir", str(work_dir), "--metadata-csv", str(metadata_path), "--split", "test"]
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "'split'" in err and "composer" in err
+    assert not list(work_dir.glob("regression_table*.csv"))
+
+
+def test_main_split_unknown_value_fails_and_lists_available(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    metadata_path = _write_split_fixture(work_dir)
+
+    exit_code = ert.main(
+        ["--work-dir", str(work_dir), "--metadata-csv", str(metadata_path), "--split", "Test"]
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "'Test'" in err
+    assert "test, train, validation" in err
+    assert not list(work_dir.glob("regression_table*.csv"))
+
+
+def test_main_split_with_no_matching_rows_fails_without_writing(
+    ert: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A valid split value that no run file belongs to (e.g. a train-only smoke run)."""
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _write_split_fixture(work_dir)
+    metadata_path = work_dir / "metadata_extra.csv"
+    _write_metadata_csv(
+        metadata_path,
+        [
+            {"midi_filename": "song_train.midi", "split": "train"},
+            {"midi_filename": "other.midi", "split": "test"},
+        ],
+        fieldnames=["midi_filename", "split"],
+    )
+
+    exit_code = ert.main(
+        ["--work-dir", str(work_dir), "--metadata-csv", str(metadata_path), "--split", "test"]
+    )
+
+    assert exit_code == 1
+    assert "no rows" in capsys.readouterr().err
+    assert not list(work_dir.glob("regression_table*.csv"))

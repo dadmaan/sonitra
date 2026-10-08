@@ -260,7 +260,7 @@ def test_main_dry_run_reports_without_invoking_r(
 
 
 # --------------------------------------------------------------------------
-# covariate support (PLAN §6 items 1-8: no R required)
+# covariate support (no R required)
 # --------------------------------------------------------------------------
 
 

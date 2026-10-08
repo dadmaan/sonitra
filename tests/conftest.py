@@ -1,10 +1,42 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+#: Modules holding a process-global "numeric settings already applied" cache:
+#: basic_pitch has its own, torch_support holds the one shared by every torch
+#: backend. Resetting by name keeps the reset off the import path.
+_NUMERIC_STATE_MODULES = (
+    "sonitra.transcribe.basic_pitch",
+    "sonitra.transcribe.torch_support",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Numeric settings travel from the config to the backend builders through
+    # process environment variables, so a test that sets one must never leak it
+    # into the next test.
+    monkeypatch.delenv("SONITRA_NUMERIC_MODE", raising=False)
+    monkeypatch.delenv("SONITRA_GPU_MEMORY_GROWTH", raising=False)
+    # The frameworks refuse repeated setup within one process, so each backend
+    # caches what it already applied. A test that applies settings must not let
+    # the next test inherit that cache; only already-imported modules are reset,
+    # so the reset never pulls a backend onto the import path.
+    for name in _NUMERIC_STATE_MODULES:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        monkeypatch.setattr(module, "_NUMERIC_STATE", None, raising=False)
+    # A pool worker outlives any single test, so a cached transcriber must not
+    # survive into the next one; only an already-imported runner is touched.
+    if "sonitra.benchmark.runner" in sys.modules:
+        runner_module = sys.modules["sonitra.benchmark.runner"]
+        monkeypatch.setattr(runner_module, "_WORKER_TRANSCRIBERS", {})
 
 
 @pytest.fixture
@@ -78,8 +110,8 @@ def dummy_silent_audio() -> np.ndarray:
 def audio_corpus_dir(tmp_path: Path) -> Path:
     """Tmp corpus tree with ``midi/`` reference files and ``recordings/`` audio.
 
-    Recordings are named ``piece_<n>_<performer>.wav`` so they pair (§2.3's
-    token-prefix rule) to their reference ``piece_<n>.mid``.
+    Recordings are named ``piece_<n>_<performer>.wav`` so they pair to their
+    reference ``piece_<n>.mid`` by the token-prefix rule.
     """
     import shutil
 
@@ -122,9 +154,8 @@ def silent_wav(tmp_path: Path) -> Path:
 @pytest.fixture
 def off_rate_wav(tmp_path: Path) -> Path:
     """A WAV written at 48000Hz while the test config's ``pipeline.sample_rate``
-    stays at the 44100Hz default — the regression fixture for the sample-rate
-    structural fix in Phase 3 (audio-mode output must follow the source
-    file's own rate, not the config rate)."""
+    stays at the 44100Hz default — the regression fixture for audio-mode
+    output following the source file's own rate, not the config rate."""
     from sonitra.storage import write_wav
 
     sample_rate = 48000

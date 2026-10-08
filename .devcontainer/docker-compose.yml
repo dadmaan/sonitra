@@ -25,13 +25,47 @@ services:
       # Mount local notes directory. Set LOCAL_NOTES_DIR env var, or default to
       # the project-root .local/notes folder relative to this compose file.
       - ${LOCAL_NOTES_DIR:-../.local/notes}:/workspace/.local/notes
+      # Mount local corpus directory (datasets: midi, recordings, audio,
+      # transcription, eval_results). Set LOCAL_CORPUS_DIR env var, or default
+      # to the project-root corpus folder relative to this compose file.
+      #
+      # This is a large mount (tens of GB, ~100k+ files) landing inside the
+      # watched workspace. On Docker Desktop it is 9p/virtiofs, where the
+      # `:cached`/`:delegated` consistency flags are a no-op, so the useful
+      # mitigation is to keep editors from indexing it -- see .zed/settings.json.
+      # It stays read-write: the pipeline writes transcription/ and
+      # eval_results/ back into each dataset directory.
+      - ${LOCAL_CORPUS_DIR:-../corpus}:/workspace/corpus
+      # Mount local models directory (the transcriber weights installed by
+      # scripts/setup_hft_transformer.py, ~20 MB). Set LOCAL_MODELS_DIR env var, or
+      # default to the project-root models folder relative to this compose file.
+      #
+      # This mount lands at /models rather than inside /workspace because the very
+      # same host directory is bind-mounted by the production image (docker/), so a
+      # single download is shared by the devcontainer and every production container.
+      # It stays read-write: the setup script writes the converted weights there.
+      - ${LOCAL_MODELS_DIR:-../models}:/models
     environment:
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE:-4096}
       JUPYTER_ENABLED: ${JUPYTER_ENABLED:-true}
       CLAUDE_CONFIG_DIR: /home/node/workspace/.claude
+      # Where the transcriber weights live; the container side of the mount above.
+      SONITRA_MODELS_DIR: /models
       # NVIDIA GPU environment (harmless without GPU, required when active)
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     user: node
+    # Run the container under Docker's init (tini) as PID 1.
+    #
+    # Without it PID 1 is `sleep infinity`, and the kernel discards
+    # default-disposition signals sent to PID 1 -- so every `docker stop`
+    # (including the automatic recreate that compose performs whenever these
+    # compose files change) blocks for the full 10s grace period and then
+    # SIGKILLs the container. That is what produces the "Remote server exited
+    # with status 137" / "container is not running" pair in the editor log:
+    # the kill is the stop path, not the OOM killer. tini forwards SIGTERM,
+    # so the container stops promptly and exits 0. It also reaps the
+    # orphaned children the editor server and Jupyter leave behind.
+    init: true
     # Keep the container alive; Jupyter is started by devcontainer.json postStartCommand.
     command: sleep infinity

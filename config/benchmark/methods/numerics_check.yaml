@@ -1,21 +1,25 @@
-# Synthesis backends: test whether AMT rankings are stable across synthesis engines.
-# Base pipeline: dawdreamer_faust with effects_chain: none (normalisation only).
-# Effects chain is disabled to isolate the backend variable.
+# Numerics check: does `transcription.numeric_mode` change results, and by how much?
 #
-# Conditions (3 named, no sweeps, no baseline):
-#   fluidsynth      — standard GM SoundFont rendering
-#   dawdreamer_faust — Faust oscillator via DawDreamer
-#   dawdreamer_vital — Vital VST3 via DawDreamer (fails gracefully if plugin absent)
+# This measures the APPARATUS, not the models. It establishes Sonitra's
+# measurement error bars (determinism + TF32 precision), so its output is a
+# methods artifact and must not land in the same table as model scores.
 #
-# WARNING: dawdreamer_vital requires Vital to be installed at the configured path.
-# The benchmark runner logs per-file failures and continues, so the other backends
-# still produce results when Vital is unavailable.
+# A transcription-only sweep re-renders identical audio per condition, which
+# is pure waste; for routine use prefer the equivalence harness and keep this
+# preset for the occasional published methods run.
+#
+# NOTE: `transcription.numeric_mode` and `gpu_memory_growth` are process-global,
+# and the transcribers are built once from the base config, so the run refuses a
+# condition or sweep that overrides `transcription.numeric_mode`. Run once per mode
+# with top-level `transcription.numeric_mode: "off"/warn/strict` (3 separate runs).
+# Keep "off" quoted (YAML 1.1 bool trap).
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/synthesis_backends.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/methods/numerics_check.yaml --dataset test --limit 2 --seed 123
+#   # then repeat with numeric_mode: warn / strict edited at top level
 render_pipeline:
-  synth_backend: dawdreamer_faust
-  effects_chain: none
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
   input_type: midi
   bpm: 120
   sample_rate: 44100
@@ -50,7 +54,21 @@ pedalboard:
     preset_path: null
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
-  effects: []
+  effects:
+    - type: Compressor
+      threshold_db: -18.0
+      ratio: 4.0
+      attack_ms: 5.0
+      release_ms: 100.0
+      enabled: true
+    - type: Reverb
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.15
+      dry_level: 0.85
+      width: 1.0
+      freeze_mode: false
+      enabled: true
 
 normalisation:
   enabled: true
@@ -80,11 +98,12 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
+  numeric_mode: "off" # baseline; rerun with warn/strict at top level (see header)
+  gpu_memory_growth: false
   transcribers:
     - type: basic_pitch
       enabled: true
-      device: GPU:0
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -93,6 +112,13 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+    - type: transkun
+      enabled: true
+      device: cpu
+      segment_size_sec: null
+      segment_hop_sec: null
+      weights_path: null
+      conf_path: null
 
 evaluation:
   note_metrics:
@@ -112,26 +138,13 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 4
 
 benchmark:
   results_path: benchmark_results.jsonl
-  include_baseline: false
-  baseline_name: fluidsynth
+  include_baseline: true
+  baseline_name: baseline
   save_audio: false
   resume: false
-  conditions:
-    - name: fluidsynth
-      overrides:
-        pipeline.synth_backend: fluidsynth
-    - name: dawdreamer_faust
-      overrides:
-        pipeline.synth_backend: dawdreamer_faust
-        'dawdreamer.faust_code': 'import("stdfaust.lib"); process = os.sawtooth(hslider("freq[midi:freq]",440,50,2000,1)) * hslider("gain[midi:gain]",0.5,0,1,0.01) * button("gate[midi:gate]");'
-    - name: dawdreamer_vital
-      overrides:
-        pipeline.synth_backend: dawdreamer_vst
-        dawdreamer.plugin_path: plugin/vital/lib/vst3/Vital.vst3
-        dawdreamer.preset_path: null
+  conditions: []
   sweeps: []
   max_workers: 1

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
 
 from sonitra.midi_reader import parse_midi
 from sonitra.midi_writer import write_midi
+from tests.helpers import assert_notes_satisfy_contract
 
 
 def test_round_trip_preserves_notes(midi_fixture, tmp_path: Path) -> None:
     original = parse_midi(midi_fixture("test_polyphonic.mid"))
     assert original
+    assert_notes_satisfy_contract(original)
 
     output = write_midi(original, tmp_path / "out.mid")
     rebuilt = parse_midi(output)
+    assert_notes_satisfy_contract(rebuilt)
 
     assert len(rebuilt) == len(original)
     original_sorted = sorted(original, key=lambda n: (n["start_sec"], n["pitch"]))
@@ -39,6 +43,31 @@ def test_zero_duration_notes_are_dropped(tmp_path: Path) -> None:
     output = write_midi(notes, tmp_path / "out.mid")
     rebuilt = parse_midi(output)
     assert [note["pitch"] for note in rebuilt] == [64]
+
+
+# ── non-finite note fields: _collect_note_events bypasses make_note and
+# reimplements the same clamps inline, so it needs the same finite guard. ──
+
+
+@pytest.mark.parametrize("bad_duration", [math.nan, math.inf, -math.inf])
+def test_write_midi_rejects_non_finite_duration(tmp_path: Path, bad_duration: float) -> None:
+    notes = [{"pitch": 60, "velocity": 100, "start_sec": 0.0, "duration_sec": bad_duration}]
+    with pytest.raises(ValueError, match="duration_sec"):
+        write_midi(notes, tmp_path / "out.mid")
+
+
+@pytest.mark.parametrize("bad_start", [math.nan, math.inf, -math.inf])
+def test_write_midi_rejects_non_finite_start(tmp_path: Path, bad_start: float) -> None:
+    notes = [{"pitch": 60, "velocity": 100, "start_sec": bad_start, "duration_sec": 1.0}]
+    with pytest.raises(ValueError, match="start_sec"):
+        write_midi(notes, tmp_path / "out.mid")
+
+
+@pytest.mark.parametrize("bad_velocity", [math.nan, math.inf, -math.inf])
+def test_write_midi_rejects_non_finite_velocity(tmp_path: Path, bad_velocity: float) -> None:
+    notes = [{"pitch": 60, "velocity": bad_velocity, "start_sec": 0.0, "duration_sec": 1.0}]
+    with pytest.raises(ValueError, match="velocity"):
+        write_midi(notes, tmp_path / "out.mid")
 
 
 def test_same_pitch_retrigger_survives_round_trip(tmp_path: Path) -> None:
@@ -133,7 +162,9 @@ def test_write_transcription_outputs_writes_midi_and_sidecar(tmp_path: Path) -> 
         "contour": np.zeros((2, 264)),
         "note": np.zeros((2, 88)),
     }
-    result = TranscriptionResult(notes=notes, transcriber="t", raw_outputs=raw)
+    result = TranscriptionResult(
+        notes=notes, transcriber="t", raw_outputs=raw, backend_type="basic_pitch"
+    )
 
     write_transcription_outputs(result, tmp_path / "out.mid")
 
@@ -176,7 +207,9 @@ def test_write_transcription_outputs_sidecar_failure_does_not_raise(
         "contour": np.zeros((2, 264)),
         "note": np.zeros((2, 88)),
     }
-    result = TranscriptionResult(notes=notes, transcriber="t", raw_outputs=raw)
+    result = TranscriptionResult(
+        notes=notes, transcriber="t", raw_outputs=raw, backend_type="basic_pitch"
+    )
 
     # The sidecar CSV write is isolated; a failure must not propagate.
     write_transcription_outputs(result, tmp_path / "out.mid")
@@ -282,8 +315,10 @@ def test_write_multi_program_midi_round_trip(tmp_path: Path) -> None:
         {"pitch": 64, "velocity": 90, "start_sec": 0.5, "duration_sec": 0.5, "program": 40},
         {"pitch": 67, "velocity": 80, "start_sec": 0.75, "duration_sec": 0.25, "program": 0},
     ]
+    assert_notes_satisfy_contract(notes)
     out = write_multi_program_midi(notes, tmp_path / "round.mid", ticks_per_beat=480, tempo_bpm=120.0)
     rebuilt = parse_midi(out)
+    assert_notes_satisfy_contract(rebuilt)
     # parse_midi merges channels, should recover all notes
     assert len(rebuilt) == len(notes)
     rebuilt_sorted = sorted(rebuilt, key=lambda n: (n["start_sec"], n["pitch"]))

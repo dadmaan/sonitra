@@ -41,6 +41,10 @@ class BenchmarkRecord:
     """Per-cell transcription wall-clock."""
     evaluate_seconds: float = float("nan")
     """Per-cell evaluation wall-clock."""
+    transcriber_metadata: dict[str, Any] = field(default_factory=dict)
+    """Provenance metadata from the transcriber (package version, checkpoint,
+    device, filtered counts). Defaulted so old JSONL without this key still
+    loads via ``BenchmarkRecord(**json.loads(line))``."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -56,6 +60,11 @@ class WorkerEvent:
     fires once per file); ``status == "start"`` marks a worker beginning one
     (file, transcriber) cell; ``status == "done"`` marks a record produced for
     that cell, with ``ok`` reporting whether the evaluation succeeded.
+
+    ``start`` and ``done`` are not guaranteed to pair: when a render fails the
+    runner emits ``done`` with ``ok=False`` for every pending transcriber and
+    skips the file before any ``start`` is sent. Consumers tracking in-flight
+    cells must tolerate a ``done`` they never saw a ``start`` for.
     """
 
     worker_id: int  # os.getpid() of the worker process (or parent pid in serial mode)
@@ -83,6 +92,7 @@ _FINGERPRINT_EXCLUDE = {
     ("benchmark", "resume"),
     ("benchmark", "max_workers"),
     ("benchmark", "save_audio"),
+    ("benchmark", "benchmark_dir"),
     ("render_pipeline", "max_workers"),
     ("transcription", "max_workers"),
     ("evaluation", "max_workers"),
@@ -97,6 +107,22 @@ def compute_fingerprint(config: PipelineConfig) -> str:
     computed under two different meanings of "condition"/"record".
     """
     data = config.model_dump(mode="json")
+    for transcriber in data.get("transcription", {}).get("transcribers", ()):
+        # Configs saved before basic_pitch's default became unset dumped
+        # batch_size as 16, so normalising keeps every existing work dir
+        # resumable. An explicit 16 and an unset value therefore hash the same,
+        # which is harmless on the CPU because both run at 16; on a GPU the
+        # row-level resume check is what catches the difference.
+        if transcriber.get("type") == "basic_pitch" and transcriber.get("batch_size") is None:
+            transcriber["batch_size"] = 16
+    io_data = data.get("io", {})
+    if not io_data.get("where"):
+        # Filter keys are inert without a filter; dropping them keeps the hash
+        # of every unfiltered config unchanged.
+        for key in ("where", "metadata_csv", "join_column"):
+            io_data.pop(key, None)
+    if io_data.get("sample") is None:
+        io_data.pop("sample", None)
     for section, key in _FINGERPRINT_EXCLUDE:
         data.get(section, {}).pop(key, None)
     return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()

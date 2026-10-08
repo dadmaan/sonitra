@@ -6,6 +6,22 @@ section that drives the `sonitra benchmark` command.
 
 ---
 
+## Layout
+
+Configs live in subfolders by purpose. Put a new study in the matching folder.
+
+- `smoke/`: quick end-to-end checks, one per corpus.
+- `sweeps/`: one or a few `pedalboard` parameters stepped across a grid of values.
+- `transkun/`: Basic Pitch vs TransKun baselines on CPU and CUDA, including the batched
+  strict variants.
+- `methods/`: checks of the benchmark setup itself (numeric settings, synthesis engine),
+  not of the models.
+- `paper_experiments/`: the paper's degradation studies and the MAESTRO test-split and train-probe presets.
+- `old_recording/`, `telephone_channel/`, `rotary_speaker/`, `venue_acoustics/`: grounded
+  scenario studies, each with its own `README.md`.
+
+---
+
 ## What are benchmark configs?
 
 A benchmark config is a full `PipelineConfig` file — it specifies synthesis backend,
@@ -23,7 +39,7 @@ condition).
 
 ## How they differ from top-level `config/examples/*.yaml` presets
 
-| Preset (`config/examples/*.yaml`) | Benchmark config (`config/benchmark/*.yaml`) |
+| Preset (`config/examples/*.yaml`) | Benchmark config (`config/benchmark/**/*.yaml`) |
 |---|---|
 | One fixed pipeline run | Many experimental conditions from one file |
 | Run via `sonitra render` / `sonitra transcribe` / `sonitra evaluate` | Run via `sonitra benchmark` |
@@ -35,8 +51,8 @@ condition).
 
 This directory now holds two different kinds of study:
 
-- **Abstract single-axis sweeps** — `reverb_sweep.yaml`, `compression_sweep.yaml`,
-  `distortion_sweep.yaml`, `effects_combinations.yaml`. Each varies one (or a small
+- **Abstract single-axis sweeps** — `sweeps/reverb_sweep.yaml`, `sweeps/compression_sweep.yaml`,
+  `sweeps/distortion_sweep.yaml`, `sweeps/effects_combinations.yaml`. Each varies one (or a small
   combination of) `pedalboard` parameter(s) across an arbitrary, evenly-spaced grid of
   values. They answer "how does degrading this parameter change transcription quality,"
   not "what does a real-world condition sound like."
@@ -64,7 +80,7 @@ pre-XOR-post switch, not an additive one) that apply to every result it produces
 
 ```bash
 sonitra benchmark \
-  --config config/benchmark/benchmark_test.yaml \
+  --config config/benchmark/smoke/benchmark_test.yaml \
   --dataset test \
   --limit 2
 ```
@@ -73,17 +89,17 @@ sonitra benchmark \
 
 ```bash
 sonitra benchmark \
-  --config config/benchmark/reverb_sweep.yaml \
+  --config config/benchmark/sweeps/reverb_sweep.yaml \
   --dataset <your-dataset-name>
 ```
 
-**All files in sequence** (results go to `corpus/<dataset>/benchmark/`):
+**All files in sequence** (results go to `corpus/<dataset>/benchmark/<config stem>/`):
 
 ```bash
-for cfg in config/benchmark/reverb_sweep.yaml \
-            config/benchmark/compression_sweep.yaml \
-            config/benchmark/distortion_sweep.yaml \
-            config/benchmark/effects_combinations.yaml \
+for cfg in config/benchmark/sweeps/reverb_sweep.yaml \
+            config/benchmark/sweeps/compression_sweep.yaml \
+            config/benchmark/sweeps/distortion_sweep.yaml \
+            config/benchmark/sweeps/effects_combinations.yaml \
             config/benchmark/old_recording/vintage_scenarios.yaml \
             config/benchmark/telephone_channel/telephone_scenarios.yaml \
             config/benchmark/venue_acoustics/venue_scenarios.yaml \
@@ -124,6 +140,8 @@ Paths address nested sections and indexed list elements:
 - `pedalboard.effects.1.wet_level` — second element of the `effects` list, `wet_level` key
 - `pedalboard.effects.0.enabled` — boolean toggle on the first effect
 
+A condition or sweep may not name a key under `transcription`, as the bare section or as a `transcription.*` path: the run stops with an error, because its transcribers are built once before any condition executes.
+
 Paths must resolve to existing keys. Unknown keys raise a `KeyError` at validation time.
 
 ### Sweep condition naming
@@ -138,13 +156,16 @@ when set, otherwise the last dotted segment of `sweep.parameter`. Examples:
 
 ## Worker notes
 
-- `render_pipeline.max_workers` controls parallelism within a single condition's render
-  render_pipeline. **Must stay at `1` for DawDreamer modes** (DawDreamer/JUCE global state
-  is not thread-safe). FluidSynth and Pedalboard modes can use higher values, but all
-  configs in this directory default to `1` for safety.
-- `benchmark.max_workers` controls how many conditions run in parallel subprocesses.
-  Each subprocess gets its own JUCE instance. Can be increased to speed up large
-  sweeps on multi-core machines. Defaults to `1` in all configs here.
+- `render_pipeline.max_workers` controls parallelism within a single condition's
+  render. It only takes effect with `synth_backend: pedalboard_instrument`. **Must
+  stay at `1` for DawDreamer modes** (DawDreamer/JUCE global state is not
+  thread-safe). Values differ per preset; many set `8`.
+- `benchmark.max_workers` controls how many conditions run in parallel
+  subprocesses. Each subprocess gets its own JUCE instance, and each loads its own
+  copy of every transcription model. Values differ per preset: some set `2`, others
+  leave it at `1`.
+- [docs/configuration.md](../../docs/configuration.md#parallelism-max_workers)
+  explains both keys in full.
 
 ---
 
@@ -153,13 +174,23 @@ when set, otherwise the last dotted segment of `sweep.parameter`. Examples:
 After `sonitra benchmark --config <file> --dataset <name>`:
 
 ```
-corpus/<name>/benchmark/
+corpus/<name>/benchmark/<config stem>/
+  config.yaml               # the resolved config this run used
+  logs/                     # captured worker and console output (runs with a progress display)
   benchmark_results.jsonl   # one JSON record per (condition × transcriber × file)
   summary.json              # aggregate means + degradation-vs-baseline table
   audio/<condition>/        # rendered WAV per condition
   stems/<condition>/        # separated stems per condition (only if separation.enabled)
   transcriptions/<condition>/<transcriber>/   # MIDI transcriptions per condition
 ```
+
+Sonitra picks the run folder from the first rule that applies:
+
+1. `--workdir`, if you pass it.
+2. `benchmark.benchmark_dir`, used exactly as written (the config stem is not added).
+3. `<io.corpus_root>/<io.dataset>/benchmark/<config stem>`, if a dataset is set in the
+   YAML or with `--dataset` (the flag wins over the YAML).
+4. Otherwise `./benchmark/<config stem>`.
 
 `benchmark_results.jsonl`, `summary.json`, and `transcriptions/<condition>/` are always
 kept. `audio/<condition>/` and `stems/<condition>/` are only kept when
@@ -179,9 +210,19 @@ corpora or configs with many conditions.
   ],
   "degradation": [
     {"condition": "wet_level=0.3", "note.f1": -0.03, ...}
-  ]
+  ],
+  "selection": {
+    "configured": false,
+    "unit": "reference_midi",
+    "counts": {"discovered": 40, "selected": 40},
+    "files_sha256": "..."
+  }
 }
 ```
+
+`selection` records which files the run used. A run with `io.where` set also records the
+filter, the metadata CSV and its hash, and per-value counts. See
+[File selection](../../docs/configuration.md#file-selection) for the keys.
 
 `NaN` values appear when a metric is undefined (e.g. correlation over too few matched
 notes). They are preserved as `null` in JSON and skipped during aggregation.
@@ -209,8 +250,16 @@ so a config edit that would change what a condition or record means (transcriber
 conditions/sweeps, synth/effects settings, evaluation parameters) raises an error
 instead of silently mixing results computed under two different configs. Leave
 `resume: false` (the default) to always start clean; with `resume: true`, note that
-`benchmark.max_workers`, `benchmark.save_audio`, and the various `max_workers` knobs
-are excluded from the fingerprint since they don't affect result semantics.
+`benchmark.resume`, `benchmark.max_workers`, `benchmark.save_audio`,
+`benchmark.benchmark_dir`, and the various `max_workers` knobs are left out of the
+fingerprint because they don't change the results. Since `benchmark_dir` is left out,
+you can move a run folder and resume it from the new place with `benchmark.benchmark_dir`
+or `--workdir`.
+
+The fingerprint does cover which files the run uses: `io.where`, `io.metadata_csv` and
+`io.join_column` when a filter is set, and `io.sample` when it is set (`--limit` and
+`--seed` write their values there). Resume also stops with an error if the metadata
+CSV was edited after the run started.
 
 ---
 
@@ -218,26 +267,36 @@ are excluded from the fingerprint since they don't affect result semantics.
 
 | Config file | Acoustic factor | Conditions |
 |---|---|---|
-| `benchmark_test.yaml` | Smoke test (reverb) | 4 |
-| `guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
-| `gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |
-| `musicnet_test.yaml` | Smoke test (classical, MIDI-input; score or aligned MIDI, 44.1 kHz) | 4 |
-| `reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
-| `compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
-| `distortion_sweep.yaml` | Signal distortion (drive) | 9 |
-| `effects_combinations.yaml` | Combinations of effects | 7 |
-| `synthesis_backends.yaml` | Synthesis engine (FluidSynth, Faust, Vital) | 3 |
+| `smoke/benchmark_test.yaml` | Smoke test (reverb) | 4 |
+| `smoke/guitarset_test.yaml` | Smoke test (guitar, real audio) | 4 |
+| `smoke/gaps_test.yaml` | Smoke test (classical guitar, real audio, long-form) | 4 |
+| `smoke/musicnet_test.yaml` | Smoke test (classical, MIDI-input; score or aligned MIDI, 44.1 kHz) | 4 |
+| `smoke/tuning_piano_test.yaml` | Smoke test (piano tuning offset; MAESTRO, MIDI-input, test split, two sampled files) | 4 |
+| `smoke/tuning_guitar_test.yaml` | Smoke test (guitar tuning offset; GuitarSet, MIDI-input) | 4 |
+| `sweeps/reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
+| `sweeps/compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
+| `sweeps/distortion_sweep.yaml` | Signal distortion (drive) | 9 |
+| `sweeps/effects_combinations.yaml` | Combinations of effects | 7 |
+| `transkun/transkun_baseline.yaml` | TransKun vs Basic Pitch baseline (CPU) | 1 |
+| `transkun/transkun_baseline_gpu.yaml` | TransKun vs Basic Pitch baseline (CUDA; requires GPU host) | 1 |
+| `transkun/transkun_baseline_batch16_strict.yaml` | TransKun vs Basic Pitch baseline (CPU; strict numerics, Basic Pitch batch size 16) | 1 |
+| `transkun/transkun_baseline_gpu_batch8_strict.yaml` | TransKun vs Basic Pitch baseline (CUDA; strict numerics, Basic Pitch batch size 8; requires GPU host) | 1 |
+| `methods/synthesis_backends.yaml` | Synthesis engine (FluidSynth, Faust, Vital) | 3 |
+| `methods/numerics_check.yaml` | Numeric settings (`transcription.numeric_mode`): measurement error bars, not model scores | 1 |
 | `old_recording/vintage_scenarios.yaml` | Vintage recording chains (bandwidth + dynamics) | 7 |
 | `telephone_channel/telephone_scenarios.yaml` | Voice-channel bandwidth + AGC (VoIP wideband, PSTN narrowband, intercom) | 4 |
 | `venue_acoustics/venue_scenarios.yaml` | Room acoustics (RT60-calibrated: studio, recital hall, symphony hall, cathedral) | 5 |
 | `rotary_speaker/rotary_scenarios.yaml` | Leslie rotary speaker character (chorale/tremolo) | 3 |
 
-`old_recording/vintage_scenarios.yaml` is a **phase-1 bandwidth-and-dynamics
-ablation** for three vintage recording chains (78rpm shellac, early tape, AM
-radio), not a full vintage-audio simulation — surface noise, hiss, hum, and
-wow/flutter are deferred to a later phase. See
-`old_recording/README.md` for the full grounding, measured calibration
-tables, and interpretation constraints before drawing conclusions from it.
+`old_recording/vintage_scenarios.yaml` is a bandwidth-and-dynamics ablation for three
+vintage recording chains (78rpm shellac, early tape, AM radio), not a measurement
+of how hard vintage recordings are for AMT. Each condition enables part of the
+eight-slot effect chain: cascaded highpass/lowpass pairs for bandwidth, one
+PeakFilter for presence or head-bump resonance, Distortion for saturation, and
+Compressor for era level control. Not modelled: surface noise, crackle, hiss,
+mains hum, wow/flutter. See `old_recording/README.md` for the full grounding,
+measured calibration tables, and interpretation constraints before drawing
+conclusions from it.
 
 `telephone_channel/telephone_scenarios.yaml`, `venue_acoustics/venue_scenarios.yaml`,
 and `rotary_speaker/rotary_scenarios.yaml` follow the same grounded-scenario
@@ -249,21 +308,81 @@ confound disclosure. `rotary_speaker` in particular carries a larger
 Section 1 before treating a result from it as evidence about real Leslie
 processing.
 
+### MAESTRO test-split presets
+
+`paper_experiments/` holds four MAESTRO presets. Each one copies the piano-only study and
+runs both transcribers in one run: Basic Pitch on the CPU (`device: cpu`,
+`batch_size: 16`) and TransKun on CUDA (`device: cuda`). One run gives one row per
+transcriber in the model-cards table.
+
+- `piano_only_maestro_test_audio.yaml` and `piano_only_maestro_test_midi.yaml` add a
+  filter that keeps only MAESTRO's official test split (`where: {split: [test]}`, read
+  from `maestro-v3`'s metadata), so a run scores each model on performances outside its
+  training data.
+- `piano_only_maestro_train_probe_audio.yaml` and
+  `piano_only_maestro_train_probe_midi.yaml` match their test twins except that the filter
+  keeps the official train split and a sample of 177 files with seed 0. The sample has the
+  same number of files as the test split, so the two runs compare directly.
+
+The `_audio` presets read the real recordings, and the `_midi` presets render the
+reference MIDI. All four set `transcription.numeric_mode: strict` (deterministic kernels,
+TF32 off) and `transcription.gpu_memory_growth: true`. Without memory growth, TensorFlow
+reserves most of the GPU even with Basic Pitch on the CPU, which can leave TransKun in the
+same process without memory. Under strict numerics, Basic Pitch gave the same scores on
+the CPU as on the GPU in the measured comparison, and on the CPU the batch size moves note
+probabilities by under 1e-6, far below the 0.5 note threshold (see
+[Reproducibility](../../docs/reproducibility.md)). `benchmark.max_workers` is 2 for audio
+and 1 for MIDI, because each worker loads its own TransKun model onto the GPU.
+
+Comparing a probe run against its test twin measures each model's train-versus-test gap
+(the difference between its train-split and test-split scores) in that input mode. In
+audio mode Sonitra plays the real MAESTRO recordings, which overlap the models' training
+audio; in MIDI mode Sonitra renders its own audio, so only the note sequences overlap.
+The export that builds the model-cards table skips both probes, because a sampled run is
+not a baseline.
+
+### Tuning-offset conditions
+
+Each of the six configs in `paper_experiments/` opens its `pedalboard.effects` list with two
+`TuningOffset` slots. The offset comes first in the chain because what is out of tune is the
+instrument itself, so the shift belongs ahead of the amp, the cabinet and the room; slot 1 provides
+the return shift and exists for the round-trip control alone. Both slots ship disabled with
+`cents: 0.0` and pass the signal through unchanged, so every condition that does not address
+them renders the unprocessed signal. Those two leading slots moved every pre-existing effect slot
+up by two, so the reverb, chorus, distortion and cabinet conditions now address different indices
+than they used to. Because the resume fingerprint covers the whole config, every existing work
+directory for those six configs can no longer resume and the runs have to be redone together.
+
+Each config also gained nine tuning conditions: `tune=-32c`, `tune=-20c`, `tune=-8c`,
+`tune=8c`, `tune=12c`, `tune=20c`, `tune=-40c`, `tune=40c` and `tune=rt40c`, each name prefixed
+with `inst=piano_` in the five piano configs. Every one of them switches off all the other slots,
+so a tuning condition measures the offset and nothing else. `rt40c` is the one exception: it
+enables both slots, at +40 cents and then -40 cents, which brings the intended pitch back to where
+it started and leaves the processing artifact of two stretcher passes at that offset. Read it as an
+approximation of the artifact at the largest offset these conditions use, not as an upper limit for
+the smaller levels. The smoke configs `smoke/tuning_piano_test.yaml` and
+`smoke/tuning_guitar_test.yaml` reuse the same chain layout and run three of those conditions
+(`tune=-32c`, `tune=40c`, `tune=rt40c`) plus the baseline, as a short check before a paper run.
+Both take MIDI input, so they synthesise the dataset's reference MIDI with FluidSynth and need
+no recordings in the corpus; `save_audio` writes the renders so the offset can be heard.
+
 ---
 
 ## Adding a new benchmark config
 
-1. Copy one of the existing files as a starting point.
+1. Copy one of the existing files as a starting point, and save the copy in the
+   folder that matches its purpose (`smoke/`, `sweeps/`, `transkun/`, `methods/`, or a
+   scenario folder).
 2. Edit the `pedalboard.effects` chain to match the effect you want to vary.
 3. Add conditions and/or sweeps to the `benchmark:` block.
 4. Validate it loads cleanly:
    ```python
    from sonitra.config import load_config
    from sonitra.benchmark.conditions import expand_conditions
-   cfg = load_config("config/benchmark/my_new_benchmark.yaml")
+   cfg = load_config("config/benchmark/sweeps/my_new_benchmark.yaml")
    print(expand_conditions(cfg.benchmark))
    ```
 5. Run the smoke test to confirm end-to-end execution:
    ```bash
-   sonitra benchmark --config config/benchmark/my_new_benchmark.yaml --dataset test --limit 2
+   sonitra benchmark --config config/benchmark/sweeps/my_new_benchmark.yaml --dataset test --limit 2
    ```

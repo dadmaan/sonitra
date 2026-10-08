@@ -36,7 +36,33 @@ pedalboard:
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
   effects:
-    - type: Reverb            # index 0
+    # The tuning offset leads the chain: what is out of tune is the instrument
+    # itself, so the shift belongs ahead of the amp, cabinet and room. Slot 1
+    # exists only for the round-trip control, which shifts +c then -c to expose
+    # the processing artifacts at the largest offset. Both slots ship disabled,
+    # and a zero-cent slot is a passthrough, so a chain that declares either one
+    # without switching it on leaves the signal unprocessed.
+    - type: TuningOffset      # index 0 — the instrument's own tuning offset
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    - type: TuningOffset      # index 1 — return leg, used by the round trip only
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    - type: Reverb            # index 2
       room_size: 0.4
       damping: 0.5
       wet_level: 0.0
@@ -44,14 +70,14 @@ pedalboard:
       width: 1.0
       freeze_mode: false
       enabled: false
-    - type: Chorus            # index 1
+    - type: Chorus            # index 3
       rate_hz: 1.0
       depth: 0.25
       centre_delay_ms: 7.0
       feedback: 0.0
       mix: 0.5
       enabled: false
-    - type: Distortion        # index 2
+    - type: Distortion        # index 4
       drive_db: 25.0
       enabled: false
 
@@ -83,7 +109,6 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 1
   transcribers:
     - type: basic_pitch
       enabled: true
@@ -115,7 +140,6 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 4
 
 benchmark:
   results_path: benchmark_results.jsonl
@@ -126,124 +150,197 @@ benchmark:
   conditions:
     - name: inst=piano_reverb=off_chorus=off_dist=15
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 15
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 15
     - name: inst=piano_reverb=off_chorus=off_dist=35
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 35
     - name: inst=piano_reverb=off_chorus=on_dist=off
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: false
     - name: inst=piano_reverb=off_chorus=on_dist=15
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 15
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 15
     - name: inst=piano_reverb=off_chorus=on_dist=35
       overrides:
-        pedalboard.effects.0.enabled: false
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 35
     - name: inst=piano_reverb=0.3_chorus=off_dist=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.3
-        pedalboard.effects.0.dry_level: 0.7
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.wet_level: 0.3
+        pedalboard.effects.2.dry_level: 0.7
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
     - name: inst=piano_reverb=0.3_chorus=off_dist=15
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.3
-        pedalboard.effects.0.dry_level: 0.7
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 15
+        pedalboard.effects.2.wet_level: 0.3
+        pedalboard.effects.2.dry_level: 0.7
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 15
     - name: inst=piano_reverb=0.3_chorus=off_dist=35
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.3
-        pedalboard.effects.0.dry_level: 0.7
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.2.wet_level: 0.3
+        pedalboard.effects.2.dry_level: 0.7
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 35
     - name: inst=piano_reverb=0.3_chorus=on_dist=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.3
-        pedalboard.effects.0.dry_level: 0.7
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.wet_level: 0.3
+        pedalboard.effects.2.dry_level: 0.7
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: false
     - name: inst=piano_reverb=0.3_chorus=on_dist=15
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.3
-        pedalboard.effects.0.dry_level: 0.7
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 15
+        pedalboard.effects.2.wet_level: 0.3
+        pedalboard.effects.2.dry_level: 0.7
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 15
     - name: inst=piano_reverb=0.3_chorus=on_dist=35
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.3
-        pedalboard.effects.0.dry_level: 0.7
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.2.wet_level: 0.3
+        pedalboard.effects.2.dry_level: 0.7
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 35
     - name: inst=piano_reverb=0.9_chorus=off_dist=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.9
-        pedalboard.effects.0.dry_level: 0.1
-        pedalboard.effects.1.enabled: false
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.wet_level: 0.9
+        pedalboard.effects.2.dry_level: 0.1
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
     - name: inst=piano_reverb=0.9_chorus=off_dist=15
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.9
-        pedalboard.effects.0.dry_level: 0.1
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 15
+        pedalboard.effects.2.wet_level: 0.9
+        pedalboard.effects.2.dry_level: 0.1
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 15
     - name: inst=piano_reverb=0.9_chorus=off_dist=35
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.9
-        pedalboard.effects.0.dry_level: 0.1
-        pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.2.wet_level: 0.9
+        pedalboard.effects.2.dry_level: 0.1
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 35
     - name: inst=piano_reverb=0.9_chorus=on_dist=off
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.9
-        pedalboard.effects.0.dry_level: 0.1
-        pedalboard.effects.1.enabled: true
-        pedalboard.effects.2.enabled: false
+        pedalboard.effects.2.enabled: true
+        pedalboard.effects.2.wet_level: 0.9
+        pedalboard.effects.2.dry_level: 0.1
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: false
     - name: inst=piano_reverb=0.9_chorus=on_dist=15
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.9
-        pedalboard.effects.0.dry_level: 0.1
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 15
+        pedalboard.effects.2.wet_level: 0.9
+        pedalboard.effects.2.dry_level: 0.1
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 15
     - name: inst=piano_reverb=0.9_chorus=on_dist=35
       overrides:
-        pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.wet_level: 0.9
-        pedalboard.effects.0.dry_level: 0.1
-        pedalboard.effects.1.enabled: true
         pedalboard.effects.2.enabled: true
-        pedalboard.effects.2.drive_db: 35
+        pedalboard.effects.2.wet_level: 0.9
+        pedalboard.effects.2.dry_level: 0.1
+        pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
+        pedalboard.effects.4.drive_db: 35
+    - name: inst=piano_tune=-32c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -32.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=-20c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -20.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=-8c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -8.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=8c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 8.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=12c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 12.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=20c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 20.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=-40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -40.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=rt40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
   sweeps: []
   max_workers: 2

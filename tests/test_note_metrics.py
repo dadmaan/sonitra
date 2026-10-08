@@ -101,3 +101,79 @@ def test_notes_from_dicts_sorting_and_offsets() -> None:
     assert [event.pitch for event in events] == [60, 64]
     assert events[0].offset_sec == pytest.approx(1.0)
     assert events[1].duration_sec == pytest.approx(0.5)
+
+
+# --- degenerate (zero-duration) note characterization ---
+
+
+def test_zero_duration_estimate_matches_onset() -> None:
+    """Characterization: onset matching ignores duration.
+
+    ``match_notes`` checks pitch equality and onset tolerance only
+    (note_metrics.py:37-41) — duration is never read. A zero-duration
+    estimate at the right pitch and onset is therefore a correct detection.
+
+    This is intentional (mir_eval convention) and should be left alone;
+    the test pins it so a future duration check breaks loudly.
+    """
+    ref = [NoteEvent(60, 0.0, 0.5, 80)]
+    est = [NoteEvent(60, 0.0, 0.0, 80)]  # degenerate: onset == offset
+    pairs = match_notes(ref, est)
+    assert len(pairs) == 1
+
+
+def test_zero_duration_deflates_precision() -> None:
+    """Characterization: degenerate note deflates precision.
+
+    ``precision_recall_f1`` (note_metrics.py:144) divides by ``len(estimate)``,
+    which counts the phantom note. Adding a single zero-duration phantom to an
+    otherwise perfect estimate therefore drops ``onset_precision`` below 1.0
+    while ``onset_recall`` stays at 1.0.
+    """
+    # REFERENCE scores perfectly against itself; add one non-matching phantom.
+    phantom = NoteEvent(48, 10.0, 10.0, 80)  # zero-duration, far from any ref
+    estimate = REFERENCE + [phantom]
+    results = NoteMetrics().compute(REFERENCE, estimate)
+    assert results["onset_precision"] < 1.0
+    assert results["onset_precision"] == pytest.approx(4 / 5)
+    assert results["onset_recall"] == pytest.approx(1.0)
+    # Recall unchanged because every reference still has a perfect match.
+    assert results["onset_f1"] < 1.0
+
+
+def test_zero_duration_matches_offset_for_short_reference() -> None:
+    """Characterization: offset tolerance floor lets zero match.
+
+    Tolerance is ``max(0.05, 0.2 * ref.duration_sec)`` (note_metrics.py:43)
+    with a 50 ms floor. Against a 50 ms reference a zero-duration estimate
+    passes offset matching too::
+
+        ref = 60 0.0->0.05, est = 60 0.0->0.0
+        tolerance = max(0.05, 0.2*0.05) = 0.05
+        |0.05 - 0.0| = 0.05  not > 0.05  -> MATCHES
+
+    This is not a bug (mir_eval convention) but the boundary should be pinned:
+    a longer reference (e.g. 0.5 s, tolerance 0.1) does NOT match the same
+    zero-duration estimate, proving the result is duration-dependent.
+
+    Verification gate: raising ``DEFAULT_OFFSET_MIN_TOLERANCE_SEC`` above 0.05
+    would keep the short case matching, but lowering it (or changing the
+    ``>`` to ``>=``) would break the first assertion; increasing the ratio
+    or floor would break the second. Any retuning of the floor must
+    consciously update this test.
+    """
+    ref_short = [NoteEvent(60, 0.0, 0.05, 80)]  # 50 ms reference
+    est_zero = [NoteEvent(60, 0.0, 0.0, 80)]  # zero-duration estimate
+    # Floor is 50 ms, diff equals floor -> still a hit (``>`` not ``>=``).
+    assert len(match_notes(ref_short, est_zero, with_offset=True)) == 1
+    # Sanity: without offset check it also matches (onset-only path).
+    assert len(match_notes(ref_short, est_zero, with_offset=False)) == 1
+
+    # Longer reference: 0.5 s -> tolerance 0.1, offset diff 0.5 -> fails.
+    ref_long = [NoteEvent(60, 0.0, 0.5, 80)]
+    assert match_notes(ref_long, est_zero, with_offset=True) == []
+    # Verification gate note: if DEFAULT_OFFSET_MIN_TOLERANCE_SEC were
+    # increased to e.g. 0.6, the long case would spuriously start matching;
+    # if it were decreased, the short case would still match (50 ms diff
+    # equals 50 ms floor) but a 40 ms floor would make the boundary explicit.
+    # Flipping the comparison to ``>=`` would make the short case fail.

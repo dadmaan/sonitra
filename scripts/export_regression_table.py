@@ -1,7 +1,24 @@
-"""Flatten a ``sonitra benchmark`` run into a regression-ready CSV.
+r"""Flatten a ``sonitra benchmark`` run into a regression-ready CSV.
 
 One row per (condition, transcriber, file), with every metric and config
-override as its own column; a metadata CSV can optionally be joined on.
+override as its own column; a metadata CSV can optionally be joined on, and
+rows can be restricted to the dataset splits (e.g. ``test``) it labels.
+
+Examples:
+    # flatten a run to <work-dir>/regression_table.csv
+    python scripts/export_regression_table.py \
+        --work-dir corpus/maestro-v3/benchmark/<run>
+
+    # join dataset metadata (adds meta.* columns)
+    python scripts/export_regression_table.py \
+        --work-dir corpus/maestro-v3/benchmark/<run> \
+        --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv \
+        --output corpus/maestro-v3/benchmark/<run>/regression_table_with_metadata.csv
+
+    # keep only the test split (writes regression_table_split-test.csv)
+    python scripts/export_regression_table.py \
+        --work-dir corpus/maestro-v3/benchmark/<run> \
+        --metadata-csv corpus/maestro-v3/metadata/maestro-v3.0.0.csv --split test
 """
 
 from __future__ import annotations
@@ -200,6 +217,23 @@ def build_rows(
     return rows
 
 
+def filter_rows_by_split(
+    rows: list[dict[str, Any]], split_column: str, splits: set[str]
+) -> list[dict[str, Any]]:
+    """Keep rows whose joined ``meta.<split_column>`` is one of *splits*.
+
+    Rows without a metadata match carry no ``meta.`` keys, so their split is
+    unknown and they are dropped rather than guessed.
+    """
+    key = f"meta.{split_column}"
+    return [row for row in rows if row.get(key) in splits]
+
+
+def split_output_name(splits: set[str]) -> str:
+    """Default output filename for a split export, e.g. ``regression_table_split-test.csv``."""
+    return f"regression_table_split-{'+'.join(sorted(splits))}.csv"
+
+
 def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
     present: set[str] = set()
     for row in rows:
@@ -226,7 +260,9 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--work-dir", required=True, type=Path,
         help="A sonitra benchmark output directory (contains the results JSONL "
@@ -266,7 +302,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--metadata-csv metadata/musicnet_metadata.csv --metadata-join-column id "
         "--metadata-match token-prefix.",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--split", action="append", default=None, metavar="VALUE",
+        help="Keep only rows whose metadata --split-column equals VALUE (repeatable, "
+        "e.g. --split test). Requires --metadata-csv. Rows with no metadata match are "
+        "dropped because their split is unknown. Default output becomes "
+        "<work-dir>/regression_table_split-<values>.csv, so the unfiltered table is "
+        "never overwritten.",
+    )
+    parser.add_argument(
+        "--split-column", default="split",
+        help="Metadata column holding split labels (default: split, as in MAESTRO and GAPS).",
+    )
+    args = parser.parse_args(argv)
+    if args.split and args.metadata_csv is None:
+        parser.error("--split requires --metadata-csv (the split labels come from the metadata)")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -290,9 +341,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.metadata_csv is not None:
         metadata = load_metadata_join(args.metadata_csv, args.metadata_join_column)
 
+    splits: set[str] = set(args.split or [])
+    if splits:
+        if not metadata:
+            print(
+                f"error: --split needs split labels, but metadata CSV {args.metadata_csv} "
+                "is missing or has no rows",
+                file=sys.stderr,
+            )
+            return 1
+        columns = next(iter(metadata.values())).keys()
+        if args.split_column not in columns:
+            print(
+                f"error: split column '{args.split_column}' not found in {args.metadata_csv} "
+                f"(columns: {', '.join(columns)}); set --split-column",
+                file=sys.stderr,
+            )
+            return 1
+        available = {row[args.split_column] for row in metadata.values()}
+        unknown = sorted(splits - available)
+        if unknown:
+            print(
+                f"error: split value(s) {', '.join(repr(v) for v in unknown)} not found in "
+                f"column '{args.split_column}' (available: "
+                f"{', '.join(sorted(v for v in available if v))})",
+                file=sys.stderr,
+            )
+            return 1
+
     records = load_records(results_path)
 
-    # Single resolved song -> metadata key map (Phase 5). Both build_rows
+    # Single resolved song -> metadata key map. Both build_rows
     # and the unmatched count use this map; otherwise prefix matches would
     # still be counted as unmatched.
     song_to_metadata_key: dict[str, str | None] | None = None
@@ -309,14 +388,36 @@ def main(argv: list[str] | None = None) -> int:
         metadata_match=args.metadata_match,
         song_to_metadata_key=song_to_metadata_key,
     )
-    output_path = args.output or (work_dir / "regression_table.csv")
+    if splits:
+        total = len(rows)
+        unmatched_rows = [row for row in rows if f"meta.{args.split_column}" not in row]
+        rows = filter_rows_by_split(rows, args.split_column, splits)
+        label = "+".join(sorted(splits))
+        print(f"kept {len(rows)}/{total} rows ({args.split_column}: {label})", file=sys.stderr)
+        if unmatched_rows:
+            n_songs = len({row["song"] for row in unmatched_rows})
+            print(
+                f"note: {len(unmatched_rows)} rows ({n_songs} songs) have no metadata match, "
+                "so their split is unknown -- excluded",
+                file=sys.stderr,
+            )
+        if not rows:
+            print(
+                f"error: no rows belong to {args.split_column} {label}; nothing written",
+                file=sys.stderr,
+            )
+            return 1
+
+    default_name = split_output_name(splits) if splits else "regression_table.csv"
+    output_path = args.output or (work_dir / default_name)
     write_csv(rows, output_path)
 
-    n_conditions = len({record.condition for record in records})
+    n_conditions = len({row["condition"] for row in rows})
     print(f"wrote {len(rows)} rows across {n_conditions} conditions to {output_path}")
 
     if args.metadata_csv is not None:
-        distinct_songs = {row["song"] for row in rows}
+        # Count over every record, not just rows a --split filter kept.
+        distinct_songs = {Path(record.midi_path).stem for record in records}
         if song_to_metadata_key is not None:
             unmatched = sorted(song for song in distinct_songs if song_to_metadata_key.get(song) is None)
         else:

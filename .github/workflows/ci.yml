@@ -1,0 +1,75 @@
+# Post-merge safety net. The pre-push hook (scripts/hooks/pre-push) already ran the
+# same checks inside the devcontainer, so this exists to catch what a local run cannot:
+# a dependency installed by hand in the container but never declared in pyproject.toml,
+# or a test that only passes because of something in the devcontainer's image.
+#
+# It deliberately calls scripts/ci/check.sh rather than repeating its commands, so the
+# local gate and CI cannot drift apart. Anything changed here belongs in check.sh.
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: this workflow only ever reads the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to the same branch makes the older run pointless.
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Pinned rather than ubuntu-latest, so the OS underneath the runners does not
+    # change under us between runs.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsndfile1 \
+            libfftw3-double3 \
+            fluidsynth \
+            fluid-soundfont-gm \
+            libgomp1 \
+            libgl1
+
+      # fluid-soundfont-gm is named explicitly rather than left to resolution.
+      # libfluidsynth3 depends on the *virtual* package sf3-soundfont-gm, which any of
+      # about seven packages can satisfy, so an unnamed install picks a different
+      # soundfont per distro. The devcontainer resolves it to timgm6mb-soundfont and
+      # Ubuntu to fluid-soundfont-gm; both land at
+      # /usr/share/sounds/sf2/default-GM.sf2 via Debian alternatives, and
+      # tests/test_fluid_synth.py and tests/test_synth_protocol.py skip when that path
+      # is missing. Naming it keeps those tests running here instead of skipping.
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.7.8"
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Q2: dev plus transkun (CPU torch). This mirrors the devcontainer closely
+      # enough that the torch-based tests run instead of skipping, which is the whole
+      # point of a second opinion.
+      - name: Install
+        # --locked doubles as the lock check: it fails rather than re-resolving.
+        run: uv sync --locked --extra dev --extra transkun
+
+      - name: Lock check and fast tests
+        run: bash scripts/ci/check.sh
+
+      # There is no GPU, no corpus/, no R and no VST plugin on the runner, and the
+      # slow tests are excluded by check.sh's -m "not slow". Those tests skip or
+      # deselect by design (D12); they stay manual. Run this workflow manually with
+      # -rs added to check.sh's pytest call to list what is being skipped.

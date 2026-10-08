@@ -3,6 +3,16 @@
 
 Writes per-config results and cross-config summaries to
 ``corpus/<dataset>/eval_results/``.
+
+Examples:
+    # quick trial: one preset, 5 random files
+    python scripts/run_transcribe_eval.py --dataset maestro-v3 --config pedalboard_baseline --limit 5
+
+    # every preset in config/examples/ against a dataset
+    python scripts/run_transcribe_eval.py --dataset maestro-v3
+
+    # re-transcribe and re-score already-rendered audio, two presets in parallel
+    python scripts/run_transcribe_eval.py --dataset maestro-v3 --skip-render --jobs 2
 """
 
 from __future__ import annotations
@@ -48,7 +58,7 @@ _PYTHON: list[str] = _resolve_python()
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render, transcribe and evaluate all configs against the corpus."
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "--dataset",
@@ -186,6 +196,23 @@ def _dump_csv(rows: list[dict], path: Path) -> None:
             )
 
 
+def _build_render_command(
+    config_path: Path,
+    dataset: str | None,
+    limit: int | None,
+    seed: int | None,
+) -> list[str]:
+    """Build the ``sonitra render`` command for one preset config."""
+    render_cmd = [*_PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
+    if dataset is not None:
+        render_cmd += ["--dataset", dataset]
+    if limit is not None:
+        render_cmd += ["--limit", str(limit)]
+        if seed is not None:
+            render_cmd += ["--seed", str(seed)]
+    return render_cmd
+
+
 def _process_config(
     config_path: Path,
     args: argparse.Namespace,
@@ -211,13 +238,9 @@ def _process_config(
 
     if not args.skip_render:
         print(f"  step 1: render     -> {audio_dir}/")
-        render_cmd = [*_PYTHON, "-m", "sonitra", "render", "--config", str(config_path)]
-        if args.dataset is not None:
-            render_cmd += ["--dataset", args.dataset]
-        if args.limit is not None:
-            render_cmd += ["--limit", str(args.limit)]
-        if args.seed is not None:
-            render_cmd += ["--seed", str(args.seed)]
+        render_cmd = _build_render_command(
+            config_path, args.dataset, args.limit, args.seed
+        )
         rc = _run(render_cmd)
         if rc != 0:
             print(f"  FAIL  — render exited {rc}")

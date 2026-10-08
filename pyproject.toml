@@ -1,6 +1,6 @@
 [project]
 name = "sonitra"
-version = "0.4.0"
+version = "0.5.0.dev0"
 description = "Automatic music transcription (AMT) benchmark."
 authors = [
     {name = "Shayan Dadman", email = "dadman.shayan@gmail.com"}
@@ -13,7 +13,14 @@ dependencies = [
     "mido",
     "numpy",
     "scipy",
-    "pedalboard",
+    # Capped at <0.9.25: 0.9.25's manylinux x86_64 wheel executes AVX-512
+    # (vinserti64x2) in a library initialiser, so `import pedalboard`
+    # dies with SIGILL on any CPU without AVX-512 (all Intel 12th-14th
+    # gen consumer/laptop parts). 0.9.24 and earlier are unaffected.
+    # The bound is an upper cap rather than an exclusion because no later
+    # release has been checked on a CPU without AVX-512. Lifting the cap
+    # requires `import pedalboard` to succeed on such a CPU first.
+    "pedalboard>=0.9.24,<0.9.25",
     "fastapi",
     "uvicorn[standard]",
     "httpx",
@@ -22,11 +29,47 @@ dependencies = [
     "pydantic",
     "rich",
     "basic-pitch>=0.4.0,<0.5.0",
+    # Direct since 5a: the basic_pitch loader uses them explicitly
+    # (previously transitive via librosa).
+    "soundfile",
+    "soxr",
+    # Direct: scripts/estimate_tuning.py calls librosa.estimate_tuning;
+    # previously only transitive via basic-pitch.
+    "librosa>=0.11.0,<0.12",
 ]
 
 [project.optional-dependencies]
 basicpitch = [
     "basic-pitch>=0.4.0,<0.5.0",
+]
+transkun = [
+    "transkun==2.0.1",
+    # Direct torch pins so [tool.uv.sources] below can redirect this
+    # extra's torch to the CPU index on Linux: uv requires a source-extra
+    # package to be a direct member of that extra (transkun itself only
+    # pulls torch transitively, which uv 0.7.8 rejects). Versions pinned to
+    # the current lock so the CPU and CUDA forks differ by build only
+    # (+cpu vs CUDA), never by version. Because the forks share a version,
+    # a plain `uv sync` cannot swap the installed build across forks;
+    # `.devcontainer/post-create.sh` verifies the installed build for this
+    # reason.
+    "torch==2.12.1",
+    "torchaudio==2.11.0",
+]
+# CUDA fork of the transkun extra for the two GPU consumers: the production
+# image (docker/Dockerfile target `runtime-gpu`, installed via `--extra
+# transkun-gpu` in `builder-gpu`) and the GPU devcontainer
+# (.devcontainer/post-create.sh, which selects this fork when the image was
+# built with the TensorFlow CUDA wheels). Same pinned transkun; only the
+# torch build differs: `transkun` resolves torch/torchaudio from the PyTorch
+# CPU index on Linux (see [tool.uv.sources] below), while `transkun-gpu`
+# takes PyPI torch - a CUDA 13 build that needs an R580-series (or newer)
+# host driver to see the GPU. The two extras are mutually exclusive under
+# [tool.uv] conflicts, so one uv.lock expresses both forks.
+transkun-gpu = [
+    "transkun==2.0.1",
+    "torch==2.12.1",
+    "torchaudio==2.11.0",
 ]
 demucs = [
     "demucs",
@@ -43,7 +86,7 @@ gpu = [
     # image (target `runtime-gpu`) no longer uses this extra — it installs
     # CUDA/cuDNN system-wide via apt on an nvidia/cuda base image instead,
     # after this pip-wheel approach hit a reproducible TensorFlow 2.15 GPU
-    # registration bug (see the Dockerfile's Stage 3 comment). Left here for
+    # registration bug (see the Dockerfile's Stage 5 comment). Left here for
     # bare-metal installs where the pip-wheel approach may still be fine.
     #
     # Install nvidia-* CUDA runtime wheels directly instead of
@@ -64,6 +107,15 @@ gpu = [
     "nvidia-nccl-cu12==2.16.5 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "nvidia-nvjitlink-cu12==12.2.140 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+xla-ptx = [
+    # ptxas + nvvm/libdevice for TensorFlow's runtime PTX codegen. TF 2.15's
+    # wheels carry cubins only to sm_75 (compute_80 PTX above that), so on any
+    # newer GPU every kernel_gen/XLA op is compiled at runtime and needs
+    # libdevice. TF searches <site-packages>/nvidia/cuda_nvcc, so this must
+    # live in the SAME environment as tensorflow — LD_LIBRARY_PATH cannot
+    # supply it (it is a file lookup, not a dlopen).
+    "nvidia-cuda-nvcc-cu12==12.2.140 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [project.scripts]
 sonitra = "sonitra.cli:app"
@@ -72,7 +124,7 @@ sonitra = "sonitra.cli:app"
 markers = [
     "skip_if_no_vst: requires a real VST plugin path",
     "integration: end-to-end tests requiring a VST",
-    "slow: tests that invoke optional/heavy backends such as basic-pitch",
+    "slow: tests that invoke optional/heavy backends such as basic-pitch or transkun",
     "requires_r: requires an R install with glmmTMB (skipped when absent)",
 ]
 
@@ -82,3 +134,32 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 packages = [{include = "sonitra", from = "src"}]
+
+[tool.uv]
+# One lockfile, two torch builds (uv conflicting-extras pattern): `transkun`
+# (CPU torch) and `transkun-gpu` (CUDA torch) are mutually exclusive, so uv
+# resolves each fork separately and one uv.lock expresses both Docker builds
+# (`builder-cpu` syncs `--extra transkun`, `builder-gpu` syncs
+# `--extra transkun-gpu`). `conflicts` verified working on uv 0.7.8: a single
+# transkun/transkun-gpu pair suffices — `demucs` (which also pulls PyPI torch)
+# needed no extra conflict coverage to lock cleanly.
+conflicts = [
+    [{ extra = "transkun" }, { extra = "transkun-gpu" }],
+]
+
+# PyTorch CPU index (explicit: used only where named in [tool.uv.sources]).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+# The `transkun` (CPU) fork takes torch/torchaudio from the PyTorch CPU
+# index on Linux only; every other fork (incl. `transkun-gpu` and `demucs`
+# on all platforms, and `transkun` off Linux) uses default PyPI torch.
+torch = [
+    { index = "pytorch-cpu", extra = "transkun", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "transkun", marker = "sys_platform == 'linux'" },
+]

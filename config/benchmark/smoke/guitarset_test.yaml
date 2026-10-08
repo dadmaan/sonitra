@@ -1,11 +1,10 @@
-# Effects combinations: compare discrete acoustic scenarios against a common baseline.
-# All six effect types are declared; conditions selectively enable them via overrides.
-# Base state: Compressor (0) + Reverb (1) enabled; Chorus (2), Delay (3),
-#             Distortion (4), Gain (5) disabled.
-# Conditions (named only, no sweeps): 7 total
+# GuitarSet smoke-test: 4 conditions on real guitar audio, benchmark-only.
+# Copied from benchmark_test.yaml with minimum changes (input_type/dataset/
+# soundfont/dtw only); hex-pickup variants deferred.
+# Conditions: baseline, no_reverb, wet_level=0.0, wet_level=0.6
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/effects_combinations.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/smoke/guitarset_test.yaml --dataset guitarset --limit 2
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -17,7 +16,11 @@ render_pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
-  max_workers: 1
+  # Render parallelism. Only honoured when synth_backend is
+  # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
+  # regardless (see pipeline.py), and dawdreamer is forced to 1 by
+  # validate_worker_constraint() because JUCE is not concurrency-safe.
+  max_workers: 8
   log_level: INFO
 
 io:
@@ -25,7 +28,7 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
-  dataset: null
+  dataset: guitarset
 
 dawdreamer:
   block_size: 512
@@ -44,13 +47,13 @@ pedalboard:
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
   effects:
-    - type: Compressor        # index 0
+    - type: Compressor
       threshold_db: -18.0
       ratio: 4.0
       attack_ms: 5.0
       release_ms: 100.0
       enabled: true
-    - type: Reverb            # index 1
+    - type: Reverb
       room_size: 0.4
       damping: 0.5
       wet_level: 0.15
@@ -58,24 +61,6 @@ pedalboard:
       width: 1.0
       freeze_mode: false
       enabled: true
-    - type: Chorus            # index 2
-      rate_hz: 1.0
-      depth: 0.25
-      centre_delay_ms: 7.0
-      feedback: 0.0
-      mix: 0.5
-      enabled: false
-    - type: Delay             # index 3
-      delay_seconds: 0.5
-      feedback: 0.0
-      mix: 0.5
-      enabled: false
-    - type: Distortion        # index 4
-      drive_db: 25.0
-      enabled: false
-    - type: Gain              # index 5
-      gain_db: 6.0
-      enabled: false
 
 normalisation:
   enabled: true
@@ -105,10 +90,12 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
   transcribers:
     - type: basic_pitch
       enabled: true
+      # TensorFlow device string for inference. Requires the GPU image
+      # (docker compose --profile gpu) or a bare-metal `[gpu]` install;
+      # set to "cpu" to force CPU inference.
       device: GPU:0
       onset_threshold: 0.5
       frame_threshold: 0.3
@@ -133,47 +120,32 @@ evaluation:
     enabled: true
     harmony_window_sec: 2.0
   dtw:
+    # Deviation from benchmark_test.yaml (enabled: true): DTW is already
+    # skipped in audio mode (the runner's evaluation.dtw audio-mode
+    # warning), so true would log a warning
+    # every run with no dtw.* data.
     enabled: false
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  max_workers: 4
-
 
 benchmark:
   results_path: benchmark_results.jsonl
-  include_baseline: false
+  include_baseline: true
   baseline_name: baseline
   save_audio: false
   resume: false
   conditions:
-    - name: baseline
-      overrides: {}
-    - name: no_effects
+    - name: no_reverb
       overrides:
-        pedalboard.effects.0.enabled: false
         pedalboard.effects.1.enabled: false
-    - name: heavy_compression
-      overrides:
-        pedalboard.effects.0.ratio: 16.0
-        pedalboard.effects.0.threshold_db: -30.0
-    - name: extreme_reverb
-      overrides:
-        pedalboard.effects.1.wet_level: 0.95
-        pedalboard.effects.1.room_size: 0.95
-    - name: chorus_delay
-      overrides:
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
-    - name: distortion_gain
-      overrides:
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-    - name: all_effects
-      overrides:
-        pedalboard.effects.2.enabled: true
-        pedalboard.effects.3.enabled: true
-        pedalboard.effects.4.enabled: true
-        pedalboard.effects.5.enabled: true
-  sweeps: []
+  sweeps:
+    - parameter: pedalboard.effects.1.wet_level
+      values: [0.0, 0.6]
+  # Process pool over conditions — the only knob that parallelises
+  # `sonitra benchmark`. Kept at 1 because each worker is a separate process
+  # with its own TensorFlow runtime, and TF pre-allocates almost all GPU
+  # memory on init (~22 GB of 24 GB in the first process), so a second worker
+  # is left with nothing. Raising this requires enabling GPU memory growth
+  # first, or setting transcription device back to "cpu".
   max_workers: 1

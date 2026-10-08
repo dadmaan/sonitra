@@ -1,3 +1,4 @@
+from sonitra.effects.base import EffectsChain
 from sonitra.effects.builtin_effects import (
     ChorusConfig,
     CompressorConfig,
@@ -12,6 +13,7 @@ from sonitra.effects.builtin_effects import (
     LowShelfFilterConfig,
     PeakFilterConfig,
     ReverbConfig,
+    TuningOffsetConfig,
     VST3PluginConfig,
 )
 
@@ -21,6 +23,7 @@ __all__ = [
     "DelayConfig",
     "DistortionConfig",
     "EffectConfig",
+    "EffectsChain",
     "GainConfig",
     "HighpassFilterConfig",
     "HighShelfFilterConfig",
@@ -29,5 +32,6 @@ __all__ = [
     "LowShelfFilterConfig",
     "PeakFilterConfig",
     "ReverbConfig",
+    "TuningOffsetConfig",
     "VST3PluginConfig",
 ]

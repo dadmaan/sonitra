@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
+import hashlib
 import json
 import logging
 import multiprocessing
@@ -39,22 +40,90 @@ from sonitra.evaluation.protocol import (
 from sonitra.evaluation.types import NoteEvent, notes_from_dicts
 from sonitra.midi_reader import parse_midi
 from sonitra.midi_writer import write_transcription_outputs
+from sonitra.notes import normalise_notes
 from sonitra.pipeline import run_pipeline
 from sonitra.separation.protocol import make_separator
 from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
+from sonitra.transcribe.base import NumericSettingsError
+from sonitra.transcribe.numerics import numeric_env, read_numeric_env
 from sonitra.transcribe.protocol import TranscriberProtocol, make_transcriber
 
 if TYPE_CHECKING:
     from sonitra.terminal import BenchmarkProgress
+    from sonitra.transcribe.configs import TranscriberConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _preflight_transcribers(transcribers: Sequence[TranscriberProtocol]) -> None:
+    """Resolve every transcriber's device and numeric settings before anything is written.
+
+    Runs exactly once in the parent, ahead of the fingerprint and config.yaml
+    writes. Backends without a ``validate_device`` or ``apply_numeric_settings``
+    method (``external_command``, ``precomputed``) are skipped via ``getattr``. A
+    missing accelerator or a strict numeric failure aborts the whole run rather
+    than dropping that transcriber or degrading to one failed file. The original
+    exception class is preserved so a caller can still tell a numeric failure
+    from a device failure.
+    """
+    from sonitra.transcribe.base import TranscriptionError
+
+    for transcriber in transcribers:
+        steps = (
+            getattr(transcriber, "validate_device", None),
+            getattr(transcriber, "apply_numeric_settings", None),
+        )
+        for step in steps:
+            if step is None:
+                continue
+            try:
+                step()
+            except TranscriptionError as exc:
+                raise type(exc)(f"{transcriber.name}: {exc}") from exc
 
 
 # Shared queue through which worker subprocesses stream per-record events to
 # the parent. Set by the ProcessPoolExecutor initializer; None in the parent
 # (and in serial mode, where no subprocesses exist).
 _WORKER_EVENTS: multiprocessing.Queue | None = None
+
+# Transcribers a worker process has already built, keyed by config plus the
+# numeric settings in force when it was built. Populated only inside pool
+# workers, which live exactly as long as one run_benchmark call.
+_WORKER_TRANSCRIBERS: dict[tuple[str, tuple[str, bool]], TranscriberProtocol] = {}
+
+
+def _worker_transcribers(
+    cfgs: Sequence[TranscriberConfig],
+) -> list[TranscriberProtocol]:
+    """Build each transcriber once per worker process, then reuse the instance.
+
+    Every backend loads its model lazily on first use and the model dies with
+    the instance, so building per condition reloads it once per condition and
+    charges the load to that condition's first ``transcribe_seconds``. The cache
+    lives as long as the worker, which the pool ends at the end of the run.
+
+    The key carries the numeric settings as well as the config: they are
+    process-global, and a run can enter the numeric block with different values,
+    so an instance built under other settings must never be served for these.
+
+    Reuse is safe because no condition or sweep can override anything under
+    ``transcription`` (see :func:`_validate_no_run_level_override`), so every
+    condition of a run asks for exactly these configs.
+    """
+    # One snapshot for the whole call: the environment cannot change mid-loop, so
+    # every config of one condition shares the same numeric settings.
+    settings = read_numeric_env()
+    built: list[TranscriberProtocol] = []
+    for cfg in cfgs:
+        key = (cfg.model_dump_json(), settings)
+        transcriber = _WORKER_TRANSCRIBERS.get(key)
+        if transcriber is None:
+            transcriber = make_transcriber(cfg)
+            _WORKER_TRANSCRIBERS[key] = transcriber
+        built.append(transcriber)
+    return built
 
 
 def _drain_events(event_queue: multiprocessing.Queue, progress: BenchmarkProgress) -> None:
@@ -189,6 +258,161 @@ def _validate_no_input_type_sweep(config: PipelineConfig) -> None:
         )
 
 
+_RUN_LEVEL_KEYS = frozenset(
+    {
+        "io.dataset",
+        "io.metadata_csv",
+        "io.join_column",
+        "io.where",
+        "io.sample",
+        "benchmark.benchmark_dir",
+        "transcription",
+    }
+)
+_RUN_LEVEL_PREFIXES = ("io.where.", "io.sample.", "transcription.")
+
+
+def _is_run_level_key(key: str) -> bool:
+    return key in _RUN_LEVEL_KEYS or key.startswith(_RUN_LEVEL_PREFIXES)
+
+
+def _validate_no_run_level_override(config: PipelineConfig) -> None:
+    """Reject conditions/sweeps that override run-level keys.
+
+    The CLI resolves the dataset, the file selection and the run directory
+    once, before ``run_benchmark`` is called. Overriding ``io.dataset``, the
+    ``io`` selection keys or ``benchmark.benchmark_dir`` here would be
+    recorded in ``BenchmarkRecord.overrides`` but silently ignored -- the same
+    hazard as ``render_pipeline.input_type``.
+
+    The ``transcription`` section is run-level for a second reason: the
+    transcribers and their numeric settings are built once, from the base
+    config, before any condition executes, so an override of anything under
+    it would be recorded and never applied either. A sweep that appeared to
+    change a threshold, or a batch size, would report no difference.
+
+    Raises:
+        ValueError: If any condition or sweep overrides a run-level key.
+    """
+    for condition in config.benchmark.conditions:
+        for key in condition.overrides:
+            if _is_run_level_key(key):
+                raise ValueError(
+                    f"benchmark conditions may not override run-level key '{key}' "
+                    f"(condition '{condition.name}')"
+                )
+    for sweep in config.benchmark.sweeps:
+        if _is_run_level_key(sweep.parameter):
+            raise ValueError(
+                "benchmark conditions may not override run-level key "
+                f"'{sweep.parameter}' (sweep '{sweep.parameter}')"
+            )
+
+
+def _validate_resume_batches(
+    records: Sequence[BenchmarkRecord],
+    transcriber_configs: Sequence[TranscriberConfig],
+    results_file: Path,
+) -> None:
+    """Refuse to resume a basic_pitch run whose batch size changed.
+
+    The batch size is invisible to the fingerprint (an unset value normalises to
+    the old schema default), so a resume is the one place a run can silently mix
+    rows transcribed under two different batch sizes. For every enabled
+    basic_pitch config the batch those rows would run at now is
+    ``resolve_effective_batch(cfg.batch_size, resolve_tf_device(cfg.device))``;
+    each existing ``succeeded`` row of that transcriber ran at its own recorded
+    ``effective_batch`` when present, else at *now* (CPU behaviour did not
+    change) and otherwise at the single batch the old guard forced on an
+    accelerator. ``failed``/``render_failed`` rows carry no notes and are
+    ignored, as are rows from any other transcriber. The device itself is in the
+    fingerprint, so a resume can never change it.
+
+    Runs in the resume branch right after the records are loaded, so a mismatch
+    aborts before the results, the fingerprint or the config snapshot are
+    written.
+
+    Raises:
+        ValueError: If any existing row of a basic_pitch transcriber ran at a
+            batch size other than the one it would run at now.
+    """
+    # Imported here: a backend module must stay off the runner's load path.
+    from sonitra.transcribe.basic_pitch import resolve_effective_batch
+    from sonitra.transcribe.devices import resolve_tf_device
+
+    for transcriber in transcriber_configs:
+        if not transcriber.enabled or transcriber.type != "basic_pitch":
+            continue
+        name = transcriber.name or "basic_pitch"
+        tf_device = resolve_tf_device(transcriber.device, backend=transcriber.type)
+        now = resolve_effective_batch(transcriber.batch_size, tf_device)
+        on_cpu = "cpu" in tf_device.lower()
+        mismatched = 0
+        then = now
+        for record in records:
+            if record.transcriber != name or record.status != "succeeded":
+                continue
+            metadata = record.transcriber_metadata or {}
+            if "effective_batch" in metadata:
+                ran_at = metadata["effective_batch"]
+            elif on_cpu:
+                # CPU batching is unchanged, so an older row already ran at `now`.
+                ran_at = now
+            else:
+                ran_at = 1  # what the old guard forced on any accelerator
+            if ran_at != now:
+                mismatched += 1
+                then = ran_at
+        if mismatched:
+            raise ValueError(
+                f"cannot resume: basic_pitch transcriber '{name}' now runs at batch "
+                f"{now} but {mismatched} existing row(s) in '{results_file}' ran at "
+                f"batch {then}; start a new work_dir"
+            )
+
+
+def _selection_files_sha256(units: Sequence[Path], corpus_root: Path | None) -> str:
+    """Hash unit paths relative to *corpus_root*, POSIX, sorted, newline-joined.
+
+    A unit outside *corpus_root* (or a missing root) falls back to its
+    absolute POSIX path instead of raising.
+    """
+    rendered: list[str] = []
+    for unit in units:
+        relative: str | None = None
+        if corpus_root is not None:
+            try:
+                relative = unit.relative_to(corpus_root).as_posix()
+            except ValueError:
+                relative = None
+        rendered.append(relative if relative is not None else unit.as_posix())
+    return hashlib.sha256("\n".join(sorted(rendered)).encode("utf-8")).hexdigest()
+
+
+def _minimal_selection_block(
+    midi_paths: Sequence[Path],
+    audio_paths: Sequence[Path] | None,
+    corpus_root: Path | None,
+) -> dict[str, Any]:
+    """Build the unconfigured selection block for a run with no filter.
+
+    Same shape as :meth:`sonitra.selection.SelectionResult.provenance` for an
+    unconfigured result, so every ``summary.json`` carries exactly four keys.
+    """
+    if audio_paths is not None:
+        units = list(audio_paths)
+        unit_kind = "recording"
+    else:
+        units = list(midi_paths)
+        unit_kind = "reference_midi"
+    return {
+        "configured": False,
+        "unit": unit_kind,
+        "counts": {"discovered": len(units), "selected": len(units)},
+        "files_sha256": _selection_files_sha256(units, corpus_root),
+    }
+
+
 def run_benchmark(
     midi_paths: Iterable[Path | str],
     work_dir: Path | str,
@@ -197,6 +421,7 @@ def run_benchmark(
     *,
     audio_paths: Iterable[Path | str] | None = None,
     progress: BenchmarkProgress | None = None,
+    selection: dict[str, Any] | None = None,
 ) -> BenchmarkResult:
     """Run the full benchmark: render -> (separate) -> transcribe -> evaluate.
 
@@ -216,13 +441,47 @@ def run_benchmark(
     ``config.io.corpus_root`` itself; both must already be fully resolved by
     the caller (mirrors how *midi_paths* already crosses the CLI->runner
     boundary today) -- only the *pairing* between them is computed here.
+
+    *selection* is the resolved provenance dict built by the caller (the CLI
+    passes ``SelectionResult.provenance(unit_root=...)``); it is written
+    verbatim under the top-level ``selection`` key of ``summary.json``. When
+    ``None``, the runner computes the minimal unconfigured block from the
+    resolved file lists, so every summary carries the same shape.
     """
+    _validate_no_input_type_sweep(config)
+    _validate_no_run_level_override(config)
+
+    # The builders read the numeric settings from the environment, and the
+    # spawned pool workers inherit it, so the config's values are published for
+    # the whole run — in this process and in every worker.
+    with numeric_env(
+        config.transcription.numeric_mode, config.transcription.gpu_memory_growth
+    ):
+        return _run_benchmark(
+            midi_paths,
+            work_dir,
+            config,
+            corpus_root,
+            audio_paths=audio_paths,
+            progress=progress,
+            selection=selection,
+        )
+
+
+def _run_benchmark(
+    midi_paths: Iterable[Path | str],
+    work_dir: Path | str,
+    config: PipelineConfig,
+    corpus_root: Path | None,
+    *,
+    audio_paths: Iterable[Path | str] | None,
+    progress: BenchmarkProgress | None,
+    selection: dict[str, Any] | None,
+) -> BenchmarkResult:
     start = time.perf_counter()
     midi_paths = [Path(path) for path in midi_paths]
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
-
-    _validate_no_input_type_sweep(config)
 
     audio_to_reference: dict[Path, Path] | None = None
     if config.render_pipeline.input_type == InputType.AUDIO:
@@ -244,11 +503,19 @@ def run_benchmark(
     else:
         audio_paths = None
 
+    resolved_selection = (
+        selection
+        if selection is not None
+        else _minimal_selection_block(midi_paths, audio_paths, corpus_root)
+    )
+
     transcriber_configs = [t for t in config.transcription.transcribers if t.enabled]
     if not transcriber_configs:
         raise ValueError("No enabled transcribers configured under 'transcription.transcribers'")
     transcribers = [make_transcriber(cfg) for cfg in transcriber_configs]
     transcriber_names = [t.name for t in transcribers]
+
+    _preflight_transcribers(transcribers)  # raises naming the transcriber
 
     conditions = expand_conditions(config.benchmark)
     condition_order = [condition.name for condition in conditions]
@@ -259,6 +526,20 @@ def run_benchmark(
             "evaluation.dtw is enabled but will be skipped for every record: "
             "not applicable in audio-input mode (real recordings have no "
             "meaningful synth re-render to compare against). See ARCHITECTURE.md."
+        )
+    if config.transcription.max_workers > 1:
+        logger.warning(
+            "transcription.max_workers=%s has no effect in sonitra benchmark "
+            "(it applies to sonitra transcribe); use benchmark.max_workers to run "
+            "conditions in parallel",
+            config.transcription.max_workers,
+        )
+    if config.evaluation.max_workers > 1:
+        logger.warning(
+            "evaluation.max_workers=%s has no effect in sonitra benchmark "
+            "(it applies to sonitra evaluate); use benchmark.max_workers to run "
+            "conditions in parallel",
+            config.evaluation.max_workers,
         )
     n_workers = config.benchmark.max_workers
 
@@ -282,7 +563,19 @@ def run_benchmark(
                 "proceeding without a config-consistency check.",
                 results_file,
             )
+        previous_summary_path = work_dir / "summary.json"
+        if previous_summary_path.exists():
+            previous_summary = json.loads(previous_summary_path.read_text())
+            previous_block = previous_summary.get("selection") or {}
+            previous_sha = previous_block.get("metadata_sha256")
+            incoming_sha = resolved_selection.get("metadata_sha256")
+            if previous_sha is not None and previous_sha != incoming_sha:
+                raise ValueError(
+                    "cannot resume: selection metadata changed since this work "
+                    f"dir was started ({resolved_selection.get('metadata_csv')})"
+                )
         records = load_records(results_file)
+        _validate_resume_batches(records, transcriber_configs, results_file)
     elif results_file.exists():
         logger.info(
             "benchmark.resume is false; discarding existing results at '%s'", results_file
@@ -323,7 +616,7 @@ def run_benchmark(
             references[path] = None
 
     # In audio mode, per-condition totals reflect cells (recording x
-    # transcriber), matching the resolved fan-out granularity (§2.5) --
+    # transcriber), matching the resolved fan-out granularity --
     # not len(midi_paths), which would undercount when several recordings
     # share one reference.
     condition_file_count = len(audio_paths) if audio_paths is not None else len(midi_paths)
@@ -334,10 +627,16 @@ def run_benchmark(
     condition_wall: dict[str, float] = {}
 
     if n_workers > 1:
+        # Spawn, not fork: the device preflight may have initialised
+        # CUDA/TensorFlow/torch in this process, and forked children inherit
+        # that broken CUDA state (every GPU call then fails with
+        # CUDA_ERROR_NOT_INITIALIZED). Spawned workers start clean. The queue
+        # must come from the same context as the pool.
+        mp_context = multiprocessing.get_context("spawn")
         event_queue: multiprocessing.Queue | None = None
         drainer: Thread | None = None
         if progress is not None:
-            event_queue = multiprocessing.Queue()
+            event_queue = mp_context.Queue()
             drainer = Thread(
                 target=_drain_events, args=(event_queue, progress), daemon=True
             )
@@ -345,6 +644,7 @@ def run_benchmark(
         log_dir = work_dir / "logs"
         with ProcessPoolExecutor(
             max_workers=n_workers,
+            mp_context=mp_context,
             initializer=_worker_event_init,
             initargs=(event_queue, log_dir),
         ) as executor:
@@ -372,18 +672,26 @@ def run_benchmark(
                         audio_to_reference,
                     )
                 ] = condition
-            for future in as_completed(futures):
-                condition = futures[future]
-                condition_name, condition_seconds, condition_records = future.result()
-                condition_wall[condition_name] = condition_seconds
-                for record in condition_records:
-                    writer.write(record)
-                    records.append(record)
-                if progress is not None:
-                    progress.on_condition_done(condition.name)
-        if event_queue is not None and drainer is not None:
-            event_queue.put(None)  # sentinel: drainer thread may exit
-            drainer.join()
+            try:
+                for future in as_completed(futures):
+                    condition = futures[future]
+                    condition_name, condition_seconds, condition_records = future.result()
+                    condition_wall[condition_name] = condition_seconds
+                    for record in condition_records:
+                        writer.write(record)
+                        records.append(record)
+                    if progress is not None:
+                        progress.on_condition_done(condition.name)
+            except BaseException:
+                # Without cancelling, the pool drains every already-queued
+                # condition before the fatal error surfaces, so a run that can no
+                # longer be trusted would keep rendering and transcribing.
+                executor.shutdown(wait=True, cancel_futures=True)
+                raise
+            finally:
+                if event_queue is not None and drainer is not None:
+                    event_queue.put(None)  # sentinel: drainer thread may exit
+                    drainer.join()
     else:
         for condition in conditions:
             logger.info("Benchmark condition '%s' (%d overrides)", condition.name, len(condition.overrides))
@@ -440,7 +748,12 @@ def run_benchmark(
     summary_path = work_dir / "summary.json"
     summary_path.write_text(
         json.dumps(
-            {"summary": summary, "degradation": degradation_rows, "timing": timing},
+            {
+                "summary": summary,
+                "degradation": degradation_rows,
+                "timing": timing,
+                "selection": resolved_selection,
+            },
             indent=2,
         )
     )
@@ -470,8 +783,9 @@ def _condition_worker(
 ) -> tuple[str, float, list[BenchmarkRecord]]:
     """Run one benchmark condition in a subprocess (for ProcessPoolExecutor).
 
-    Recreates transcribers and metrics from configs so no non-picklable state
-    crosses the process boundary. Returns ``(condition.name, wall_seconds,
+    Recreates the metrics from the condition config, while the transcribers are
+    built once per worker process and reused by every condition it runs, so each
+    model loads once per worker. Returns ``(condition.name, wall_seconds,
     records)`` where *wall_seconds* is the whole-condition wall-clock
     (render + separate + transcribe + evaluate) measured with
     ``time.perf_counter()``. Records are returned without writing to disk so
@@ -480,7 +794,11 @@ def _condition_worker(
     Path]) and cross the process boundary unchanged; both are None in MIDI
     mode.
     """
-    transcribers = [make_transcriber(cfg) for cfg in transcriber_cfgs]
+    # Reuse is safe here: no condition or sweep can change a transcriber setting,
+    # because the runner rejects any override under the ``transcription`` prefix,
+    # so one instance per config is the right one for every condition this worker
+    # runs.
+    transcribers = _worker_transcribers(transcriber_cfgs)
     symbolic_metrics = make_symbolic_metrics(condition_config.evaluation)
     audio_metrics = make_audio_metrics(condition_config.evaluation)
     wall_start = time.perf_counter()
@@ -580,6 +898,7 @@ def _run_condition(
                     error=str(reason),
                     source_path=str(source_path) if audio_paths is not None else None,
                     render_seconds=entry.get("elapsed_seconds", float("nan")),
+                    transcriber_metadata={},
                 )
                 if writer is not None:
                     writer.write(record)
@@ -774,7 +1093,13 @@ def _evaluate_one(
             separate_seconds=separate_seconds,
             transcribe_seconds=transcribe_seconds,
             evaluate_seconds=evaluate_seconds,
+            transcriber_metadata=dict(getattr(result, "metadata", {}) or {}),
         )
+    except NumericSettingsError:
+        # A strict numeric failure is fatal for the whole run: recording it as one
+        # failed file would let the rest of the run produce rows whose determinism
+        # was never established. Every other transcription failure still is one row.
+        raise
     except Exception as exc:  # noqa: BLE001 - benchmark logs and continues
         logger.exception("Transcription failed: %s on %s", transcriber.name, audio_path)
         record = BenchmarkRecord(
@@ -790,6 +1115,7 @@ def _evaluate_one(
             separate_seconds=separate_seconds,
             transcribe_seconds=transcribe_seconds,
             evaluate_seconds=evaluate_seconds,
+            transcriber_metadata={},
         )
     if writer is not None:
         writer.write(record)
@@ -808,13 +1134,19 @@ def _audio_metric_values(
     audio with the same synthesiser configuration, and audio metrics (DTW)
     score the divergence from the audio the transcriber actually heard.
     """
+    # Pin the resynthesis path through the canonical contract.
+    # This is the one metric input that never passes through notes_from_dicts;
+    # without it a zero-duration phantom would leak to the synth and inflate
+    # duration. normalise_notes drops duration<=0, clamps velocity/start,
+    # sorts, and raises on bad pitch — exactly what notes_from_dicts does.
+    filtered_notes = normalise_notes(estimate_notes)
     reference_audio, sample_rate = read_audio(audio_path)
     synth = make_synth(condition_config)
     duration = max(
-        (float(n["start_sec"]) + float(n["duration_sec"]) for n in estimate_notes),
+        (float(n["start_sec"]) + float(n["duration_sec"]) for n in filtered_notes),
         default=0.0,
     ) + condition_config.render_pipeline.duration_padding_sec
-    estimate_audio = np.asarray(synth.render(estimate_notes, duration_sec=duration))
+    estimate_audio = np.asarray(synth.render(filtered_notes, duration_sec=duration))
 
     values: dict[str, float] = {}
     for metric in audio_metrics:

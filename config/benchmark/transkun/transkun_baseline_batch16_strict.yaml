@@ -1,10 +1,10 @@
-# Compression sweep: measure dynamic-range compression impact on transcription.
-# Reverb is held mild and constant so compression is the independent variable.
-# Conditions: baseline, heavy_compression, ratio={1.0..32.0} (6), threshold={-6.0..-36.0} (5)
-# Total: 13 conditions
+# Publication baseline (CPU): head-to-head basic_pitch vs transkun on the same render.
+# Strict determinism (transcription.numeric_mode: strict, gpu_memory_growth: false).
+# basic_pitch runs with explicit batch_size 16; batch 16 is fully live on CPU.
+# Runs on any host. For the CUDA twin, see transkun_baseline_gpu_batch8_strict.yaml.
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/compression_sweep.yaml --dataset <name>
+#   sonitra benchmark --config config/benchmark/transkun/transkun_baseline_batch16_strict.yaml --dataset test --limit 2 --seed 123
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -16,10 +16,6 @@ render_pipeline:
   duration_padding_sec: 2.0
   overwrite: true
   resume: false
-  # Render parallelism. Only honoured when synth_backend is
-  # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
-  # regardless (see pipeline.py), and dawdreamer is forced to 1 by
-  # validate_worker_constraint() because JUCE is not concurrency-safe.
   max_workers: 1
   log_level: INFO
 
@@ -54,10 +50,10 @@ pedalboard:
       release_ms: 100.0
       enabled: true
     - type: Reverb
-      room_size: 0.3
+      room_size: 0.4
       damping: 0.5
-      wet_level: 0.1
-      dry_level: 0.9
+      wet_level: 0.15
+      dry_level: 0.85
       width: 1.0
       freeze_mode: false
       enabled: true
@@ -90,11 +86,13 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  max_workers: 6
+  numeric_mode: strict
+  gpu_memory_growth: false
   transcribers:
     - type: basic_pitch
       enabled: true
-      device: GPU:0
+      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
+      device: cpu
       onset_threshold: 0.5
       frame_threshold: 0.3
       minimum_note_length_ms: 127.7
@@ -103,6 +101,15 @@ transcription:
       melodia_trick: true
       multiple_pitch_bends: false
       save_raw_outputs: false
+      batch_size: 16
+    - type: transkun
+      enabled: true
+      # CPU preset; see transkun_baseline_gpu.yaml for the CUDA twin.
+      device: cpu
+      segment_size_sec: null
+      segment_hop_sec: null
+      weights_path: null
+      conf_path: null
 
 evaluation:
   note_metrics:
@@ -122,25 +129,13 @@ evaluation:
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  # Thread pool over per-file metric computation (NumPy/SciPy, CPU-bound).
-  # Honoured by `sonitra evaluate`.
-  max_workers: 4
 
 benchmark:
-  results_path: benchmark_results.jsonl
+  results_path: benchmark_results_batch16_strict.jsonl
   include_baseline: true
   baseline_name: baseline
   save_audio: false
   resume: false
-  conditions:
-    - name: heavy_compression
-      overrides:
-        pedalboard.effects.0.ratio: 16.0
-        pedalboard.effects.0.threshold_db: -30.0
-  sweeps:
-    - parameter: pedalboard.effects.0.ratio
-      values: [1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
-    - name: threshold
-      parameter: pedalboard.effects.0.threshold_db
-      values: [-6.0, -12.0, -18.0, -24.0, -36.0]
+  conditions: []
+  sweeps: []
   max_workers: 1

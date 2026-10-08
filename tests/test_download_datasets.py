@@ -80,6 +80,8 @@ def _assert_valid_source(dd: ModuleType, source: dict) -> None:
         "guitarset-full",
         "gaps-midi",
         "gaps-full",
+        "smd-piano-v2",
+        "smd-synth-v1",
     ],
 )
 def test_every_registry_entry_has_valid_sources(dd: ModuleType, key: str) -> None:
@@ -159,11 +161,11 @@ def test_next_steps_registry_field(dd: ModuleType) -> None:
     for key in ["guitarset-mic", "guitarset-mix", "guitarset-full"]:
         assert "next_steps" in dd.DATASETS[key]
         assert "scripts/guitarset_jams_to_midi.py --dry-run" in dd.DATASETS[key]["next_steps"]
-        assert "config/benchmark/guitarset_test.yaml" in dd.DATASETS[key]["next_steps"]
+        assert "config/benchmark/smoke/guitarset_test.yaml" in dd.DATASETS[key]["next_steps"]
     # MusicNet converter
     assert "next_steps" in dd.DATASETS["musicnet-full"]
     assert "scripts/musicnet_labels_to_midi.py" in dd.DATASETS["musicnet-full"]["next_steps"]
-    assert "config/benchmark/musicnet_test.yaml" in dd.DATASETS["musicnet-full"]["next_steps"]
+    assert "config/benchmark/smoke/musicnet_test.yaml" in dd.DATASETS["musicnet-full"]["next_steps"]
     # Also check helper still returns same
     assert dd._guitarset_next_steps() == dd.DATASETS["guitarset-mic"]["next_steps"]
 
@@ -254,7 +256,7 @@ def test_musicnet_presence_via_superseded(dd: ModuleType, tmp_path: Path) -> Non
 def test_musicnet_notes_page_numbers(dd: ModuleType) -> None:
     groups = dd._note_groups()
     numbers = [n for n, _, _ in groups]
-    assert numbers == ["1-3", "4", "5-6", "7-8", "9-11", "12-13"]
+    assert numbers == ["1-3", "4", "5-6", "7-8", "9-11", "12-13", "14", "15"]
 
 
 def test_musicnet_midi_fake_network_never_requests_full_archive(dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1829,6 +1831,151 @@ def test_gaps_description_names_licence_and_unfiltered(dd: ModuleType, key: str)
     assert "MIT" not in spec["description"]
 
 
+# ── SMD registry shape, extraction and records ────────────────────────────
+
+_SMD_URLS = {
+    "smd-piano-v2": "https://zenodo.org/records/13753319/files/SMD-piano_v2.zip",
+    "smd-synth-v1": "https://zenodo.org/records/4637908/files/SMD-synth_v1.zip",
+}
+
+_SMD_SIZE_MB = {
+    "smd-piano-v2": 3_072,
+    "smd-synth-v1": 1_204,
+}
+
+_SMD_PIANO_FOLDERS = (
+    ("midi", ".mid"),
+    ("wav_44100_stereo", ".wav"),
+    ("csv", ".csv"),
+    ("wav_22050_mono", ".wav"),
+    ("midi_wav_22050_mono", ".wav"),
+)
+
+
+def _write_smd_piano_fake_zip(path: Path, stems: list[str]) -> None:
+    """Fake SMD-piano archive: five directory entries + one file per folder per stem."""
+    with zipfile.ZipFile(path, "w") as zf:
+        for folder, _suffix in _SMD_PIANO_FOLDERS:
+            zf.writestr(f"{folder}/", b"")
+        for folder, suffix in _SMD_PIANO_FOLDERS:
+            for stem in stems:
+                zf.writestr(f"{folder}/{stem}{suffix}", f"{folder}:{stem}".encode())
+
+
+def _write_smd_synth_fake_zip(path: Path, stems: list[str]) -> None:
+    """Fake SMD-synth archive: flat root with one .mid + .wav per stem."""
+    with zipfile.ZipFile(path, "w") as zf:
+        for stem in stems:
+            zf.writestr(f"{stem}.mid", f"midi:{stem}".encode())
+            zf.writestr(f"{stem}.wav", f"wav:{stem}".encode())
+
+
+def _extract_smd_fake_zip(dd: ModuleType, key: str, zip_path: Path, dataset_dir: Path) -> int:
+    source = dd.DATASETS[key]["sources"][0]
+    return dd._extract_archive(str(zip_path), "zip", source["extract_map"], dataset_dir)
+
+
+@pytest.mark.parametrize("key", ["smd-piano-v2", "smd-synth-v1"])
+def test_smd_entries_pin_version_fixed_zenodo_records(dd: ModuleType, key: str) -> None:
+    spec = dd.DATASETS[key]
+    assert spec["corpus_subdir"] == key
+    assert "superseded_by" not in spec
+    zip_sources = [s for s in spec["sources"] if s["kind"] == "zip"]
+    assert len(zip_sources) == 1
+    source = zip_sources[0]
+    assert source["url"] == _SMD_URLS[key]
+    assert source["size_mb"] == _SMD_SIZE_MB[key]
+    assert spec["next_steps"] is dd._SMD_NEXT_STEPS
+    assert "scripts/smd_metadata.py" in spec["next_steps"]
+
+
+def test_smd_piano_extract_map_keeps_stereo_midi_and_csv_only(dd: ModuleType, tmp_path: Path) -> None:
+    zip_path = tmp_path / "SMD-piano_v2.zip"
+    _write_smd_piano_fake_zip(zip_path, ["X-SMD"])
+    dataset_dir = tmp_path / "corpus" / "smd-piano-v2"
+    n = _extract_smd_fake_zip(dd, "smd-piano-v2", zip_path, dataset_dir)
+    assert n == 3
+    assert (dataset_dir / "midi" / "X-SMD.mid").read_bytes() == b"midi:X-SMD"
+    assert (dataset_dir / "recordings" / "X-SMD.wav").read_bytes() == b"wav_44100_stereo:X-SMD"
+    assert (dataset_dir / "annotations" / "csv" / "X-SMD.csv").read_bytes() == b"csv:X-SMD"
+    files = sorted(
+        str(p.relative_to(dataset_dir)) for p in dataset_dir.rglob("*") if p.is_file()
+    )
+    assert files == ["annotations/csv/X-SMD.csv", "midi/X-SMD.mid", "recordings/X-SMD.wav"]
+    assert not (dataset_dir / "wav_22050_mono").exists()
+    assert not (dataset_dir / "midi_wav_22050_mono").exists()
+
+
+def test_smd_synth_extract_map_routes_flat_root(dd: ModuleType, tmp_path: Path) -> None:
+    zip_path = tmp_path / "SMD-synth_v1.zip"
+    _write_smd_synth_fake_zip(zip_path, ["X-SMD-synth"])
+    dataset_dir = tmp_path / "corpus" / "smd-synth-v1"
+    n = _extract_smd_fake_zip(dd, "smd-synth-v1", zip_path, dataset_dir)
+    assert n == 2
+    assert (dataset_dir / "midi" / "X-SMD-synth.mid").read_bytes() == b"midi:X-SMD-synth"
+    assert (dataset_dir / "recordings" / "X-SMD-synth.wav").read_bytes() == b"wav:X-SMD-synth"
+    files = sorted(
+        str(p.relative_to(dataset_dir)) for p in dataset_dir.rglob("*") if p.is_file()
+    )
+    assert files == ["midi/X-SMD-synth.mid", "recordings/X-SMD-synth.wav"]
+
+
+@pytest.mark.parametrize("key", ["smd-piano-v2", "smd-synth-v1"])
+def test_smd_extracted_layout_pairs_one_to_one(dd: ModuleType, tmp_path: Path, key: str) -> None:
+    dataset_dir = tmp_path / "corpus" / key
+    if key == "smd-piano-v2":
+        zip_path = tmp_path / "SMD-piano_v2.zip"
+        _write_smd_piano_fake_zip(zip_path, ["X-SMD", "Y-SMD"])
+        expected_files = 6
+    else:
+        zip_path = tmp_path / "SMD-synth_v1.zip"
+        _write_smd_synth_fake_zip(zip_path, ["X-SMD-synth", "Y-SMD-synth"])
+        expected_files = 4
+    n = _extract_smd_fake_zip(dd, key, zip_path, dataset_dir)
+    assert n == expected_files
+    # Imported here so the downloader script itself stays stdlib-only.
+    from sonitra.corpus import (
+        discover_audio_files,
+        discover_midi_files,
+        pair_audio_to_reference,
+    )
+
+    recordings = discover_audio_files(dataset_dir / "recordings")
+    midi = discover_midi_files(dataset_dir / "midi")
+    assert len(recordings) == 2
+    assert len(midi) == 2
+    result = pair_audio_to_reference(recordings, midi)
+    assert sorted(result.mapping) == sorted(recordings)
+    assert result.unpaired_audio == []
+    assert result.unpaired_midi == []
+    assert result.ambiguous == {}
+
+
+def test_smd_download_writes_records_and_no_metadata_dir(
+    dd: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    zip_path = tmp_path / "SMD-piano_v2.zip"
+    _write_smd_piano_fake_zip(zip_path, ["X-SMD"])
+
+    def fake_download_file(url, dest, *, name, output_dir, key, index, progress=None, **kwargs):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(zip_path.read_bytes())
+        return dest.stat().st_size
+
+    monkeypatch.setattr(dd, "_download_file", fake_download_file)
+    output_dir = tmp_path / "corpus"
+    spec = dd.DATASETS["smd-piano-v2"]
+    dd._clear_state_cache()
+    n = dd._download_and_extract("smd-piano-v2", spec, output_dir)
+    assert n == 3
+    dataset_dir = output_dir / "smd-piano-v2"
+    sid = dd._source_id(spec["sources"][0])
+    assert (dataset_dir / ".sources" / f"{sid}.json").exists()
+    dd._clear_state_cache()
+    assert dd._is_already_present("smd-piano-v2", spec, output_dir) is True
+    assert not (dataset_dir / "metadata").exists()
+
+
 # ── gaps-full reuses MIDI already on disk ─────────────────────────────────
 
 _GAPS_LISTINGS = {
@@ -2538,7 +2685,7 @@ def test_print_list_omits_notes(dd: ModuleType, tmp_path: Path, capsys: pytest.C
 
 def test_note_groups_give_one_row_per_dataset_with_picker_numbers(dd: ModuleType) -> None:
     groups = dd._note_groups()
-    assert [numbers for numbers, _, _ in groups] == ["1-3", "4", "5-6", "7-8", "9-11", "12-13"]
+    assert [numbers for numbers, _, _ in groups] == ["1-3", "4", "5-6", "7-8", "9-11", "12-13", "14", "15"]
     assert [name for _, name, _ in groups] == [
         "MAESTRO V3.0.0",
         "Beethoven Symphony Excerpt Dataset (BSED) v1.0",
@@ -2546,6 +2693,8 @@ def test_note_groups_give_one_row_per_dataset_with_picker_numbers(dd: ModuleType
         "Expanded Groove MIDI Dataset",
         "GuitarSet",
         "GAPS (Guitar-Aligned Performance Scores) v1.1",
+        "Saarland Music Data (SMD) MIDI-Audio Piano Music v2",
+        "SMD-synth v1",
     ]
     assert [note for _, _, note in groups] == _unique_notes(dd)
 

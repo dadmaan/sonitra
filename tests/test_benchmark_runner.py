@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import multiprocessing
+import os
+import shutil
+import sys
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -10,12 +16,18 @@ import yaml
 
 from sonitra.benchmark import runner as runner_module
 from sonitra.benchmark.host_info import collect_host_info
+from sonitra.benchmark.results import BenchmarkRecord
 from sonitra.benchmark.runner import run_benchmark
-from sonitra.config import PipelineConfig
+from sonitra.config import ConditionSection, PipelineConfig, SweepSection
 from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
-from sonitra.transcribe.base import TranscriptionResult
+from sonitra.transcribe.base import NumericSettingsError, TranscriptionError, TranscriptionResult
+from sonitra.transcribe.configs import (
+    BasicPitchTranscriberConfig,
+    ExternalCommandTranscriberConfig,
+)
+from sonitra.transcribe.numerics import read_numeric_env
 
 
 @pytest.fixture
@@ -157,6 +169,19 @@ def test_config_snapshot_written_to_work_dir(
     assert [s.name for s in saved.benchmark.sweeps] == [
         s.name for s in benchmark_config.benchmark.sweeps
     ]
+
+
+def test_config_snapshot_records_benchmark_dir(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.benchmark.benchmark_dir = str(tmp_path / "configured")
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    saved = PipelineConfig.model_validate(
+        yaml.safe_load((tmp_path / "config.yaml").read_text())
+    )
+    assert str(saved.benchmark.benchmark_dir) == str(tmp_path / "configured")
 
 
 def test_config_snapshot_persists_and_updates_across_resume(
@@ -330,7 +355,10 @@ class _StubTranscriber:
 
     def transcribe(self, audio_path):
         return TranscriptionResult(
-            notes=self._notes, transcriber=self.name, raw_outputs=self._raw
+            notes=self._notes,
+            transcriber=self.name,
+            raw_outputs=self._raw,
+            backend_type="basic_pitch",
         )
 
 
@@ -485,6 +513,116 @@ def test_benchmark_skips_disabled_transcribers(
     benchmark_config.transcription.transcribers[0].enabled = False
     with pytest.raises(ValueError, match="No enabled transcribers"):
         run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+
+def test_benchmark_preflight_raises_before_render(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sonitra.transcribe.base import TranscriptionError
+
+    class _FakeGpuTranscriber:
+        name = "fake-gpu"
+
+        def validate_device(self) -> tuple[str, bool]:
+            raise TranscriptionError("fake-gpu: no GPU is available")
+
+        def transcribe(self, audio_path: Path | str):  # pragma: no cover
+            raise AssertionError("transcribe must not run after preflight failure")
+
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _FakeGpuTranscriber()
+    )
+    with pytest.raises(TranscriptionError, match="fake-gpu"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+    assert not (tmp_path / "audio").exists()
+    assert not (tmp_path / "benchmark_results.jsonl").exists()
+
+
+_RUN_LEVEL_KEYS = [
+    "io.dataset",
+    "io.metadata_csv",
+    "io.join_column",
+    "io.where",
+    "io.where.split",
+    "io.sample",
+    "io.sample.n",
+    "benchmark.benchmark_dir",
+    # The whole transcription section, because the transcribers and their numeric
+    # settings are built once per run from the base config before any condition
+    # executes. A per-condition override of anything under it — the numeric keys,
+    # a transcriber's own parameters, even the section itself — would be recorded
+    # in BenchmarkRecord.overrides and never applied, reporting a false "no
+    # difference" for the sweep that asked for it.
+    "transcription.numeric_mode",
+    "transcription.gpu_memory_growth",
+    "transcription.transcribers.0.onset_threshold",
+    "transcription.output_dir",
+    "transcription.max_workers",
+    "transcription",
+]
+
+
+@pytest.mark.parametrize("key", _RUN_LEVEL_KEYS)
+def test_condition_overriding_run_level_key_rejected(
+    key: str, benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.conditions.append(
+        ConditionSection(name="run-level-override", overrides={key: 2})
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"benchmark conditions may not override run-level key '{key}' "
+            r"\(condition 'run-level-override'\)"
+        ),
+    ):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+
+@pytest.mark.parametrize("key", _RUN_LEVEL_KEYS)
+def test_sweep_over_run_level_key_rejected(
+    key: str, benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps.append(
+        SweepSection(parameter=key, values=[1, 2], name="run-level")
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"benchmark conditions may not override run-level key '{key}' "
+            rf"\(sweep '{key}'\)"
+        ),
+    ):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+
+@pytest.mark.parametrize("key", ["io.corpus_root", "io.output_format"])
+def test_other_io_keys_are_not_run_level(
+    key: str, benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    from sonitra.benchmark.runner import _is_run_level_key
+
+    assert not _is_run_level_key(key)
+
+
+def test_unrelated_overrides_still_allowed(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.conditions.append(
+        ConditionSection(
+            name="padding-2",
+            overrides={"render_pipeline.duration_padding_sec": 2.0},
+        )
+    )
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+    assert {record.condition for record in result.records} == {
+        "baseline",
+        "padding=1.0",
+        "padding-2",
+    }
 
 
 def test_save_audio_true_keeps_condition_audio_dir(
@@ -734,6 +872,110 @@ def test_resume_rejects_config_fingerprint_mismatch(
         run_benchmark(midi_paths, tmp_path, benchmark_config)
 
 
+def _selection_payload(
+    *,
+    metadata_sha256: str = "a" * 64,
+    metadata_csv: str = "corpus/maestro-v3/metadata/meta.csv",
+) -> dict[str, object]:
+    return {
+        "configured": True,
+        "dataset": "maestro-v3",
+        "metadata_csv": metadata_csv,
+        "metadata_sha256": metadata_sha256,
+        "join_column": "midi_filename",
+        "where": {"split": ["test"]},
+        "sample": None,
+        "unit": "reference_midi",
+        "counts": {
+            "discovered": 5,
+            "unmatched": 0,
+            "excluded_by_where": 3,
+            "unpaired_audio": 0,
+            "selected_before_sample": 2,
+            "selected": 2,
+        },
+        "by_value": {"split": {"test": 2}},
+        "files_sha256": "f" * 64,
+    }
+
+
+def test_summary_json_has_selection_block_when_passed(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    selection = _selection_payload()
+    result = run_benchmark(
+        [midi_fixture("test_c4.mid")],
+        tmp_path,
+        benchmark_config,
+        selection=selection,
+    )
+    payload = json.loads(result.summary_path.read_text())
+    assert payload["selection"] == selection
+
+
+def test_summary_json_selection_defaults_to_minimal_unconfigured_block(
+    benchmark_config: PipelineConfig, midi_fixture, corpus_dir: Path, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+    result = run_benchmark(
+        midi_paths, tmp_path, benchmark_config, corpus_root=corpus_dir
+    )
+
+    payload = json.loads(result.summary_path.read_text())
+    selection = payload["selection"]
+    assert set(selection) == {"configured", "unit", "counts", "files_sha256"}
+    assert selection["configured"] is False
+    assert selection["unit"] == "reference_midi"
+    assert selection["counts"] == {"discovered": 2, "selected": 2}
+    expected_hash = hashlib.sha256(
+        "\n".join(
+            sorted(path.relative_to(corpus_dir).as_posix() for path in midi_paths)
+        ).encode("utf-8")
+    ).hexdigest()
+    assert selection["files_sha256"] == expected_hash
+
+
+def test_resume_refuses_when_metadata_sha_changed(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    run_benchmark(
+        midi_paths, tmp_path, benchmark_config, selection=_selection_payload()
+    )
+
+    benchmark_config.benchmark.resume = True
+    changed = _selection_payload(metadata_sha256="b" * 64)
+    with pytest.raises(ValueError, match="selection metadata changed") as excinfo:
+        run_benchmark(midi_paths, tmp_path, benchmark_config, selection=changed)
+    assert "meta.csv" in str(excinfo.value)
+
+
+def test_resume_allows_pre_change_summary_without_selection(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    run_benchmark(
+        midi_paths, tmp_path, benchmark_config, selection=_selection_payload()
+    )
+
+    # Simulate a summary written before selection provenance existed.
+    summary_path = tmp_path / "summary.json"
+    payload = json.loads(summary_path.read_text())
+    payload.pop("selection")
+    summary_path.write_text(json.dumps(payload))
+
+    benchmark_config.benchmark.resume = True
+    incoming = _selection_payload(metadata_sha256="c" * 64)
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, selection=incoming)
+
+    rewritten = json.loads(result.summary_path.read_text())
+    assert rewritten["selection"] == incoming
+
+
 def test_resume_false_starts_clean_in_reused_work_dir(
     benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
 ) -> None:
@@ -821,3 +1063,742 @@ def test_benchmark_reports_progress_in_parallel_path(
     # which subprocess happened to finish first
     assert [row["condition"] for row in result.summary] == ["baseline", "padding=1.0"]
     assert [row["condition"] for row in result.degradation] == ["padding=1.0"]
+
+
+def _parent_sentinel_visible() -> bool:
+    """Worker probe: does this process see state set on runner in the parent?"""
+    module = sys.modules.get("sonitra.benchmark.runner")
+    return bool(getattr(module, "_PARENT_SENTINEL", False))
+
+
+class _RecordingPool(runner_module.ProcessPoolExecutor):
+    """Real pool that records its kwargs and probes a worker's start method."""
+
+    instances: list["_RecordingPool"] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.init_kwargs = kwargs
+        self.probes: list = []
+        _RecordingPool.instances.append(self)
+
+    def submit(self, fn, /, *args, **kwargs):
+        if not self.probes:
+            self.probes.append(super().submit(_parent_sentinel_visible))
+        return super().submit(fn, *args, **kwargs)
+
+
+@pytest.fixture
+def recording_pool(monkeypatch: pytest.MonkeyPatch) -> type[_RecordingPool]:
+    _RecordingPool.instances = []
+    monkeypatch.setattr(runner_module, "ProcessPoolExecutor", _RecordingPool)
+    return _RecordingPool
+
+
+def test_parallel_benchmark_uses_spawn_context(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, recording_pool
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert len(recording_pool.instances) == 1
+    ctx = recording_pool.instances[0].init_kwargs.get("mp_context")
+    assert ctx is not None
+    assert ctx.get_start_method() == "spawn"
+
+
+def test_parallel_benchmark_workers_are_fresh_interpreters(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    recording_pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+    monkeypatch.setattr(runner_module, "_PARENT_SENTINEL", True, raising=False)
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    # A forked worker inherits parent memory (including any initialised
+    # CUDA state) and would see the sentinel; a spawned one re-imports.
+    probe = recording_pool.instances[0].probes[0]
+    assert probe.result(timeout=60) is False
+
+
+def test_parallel_benchmark_runs_end_to_end_under_spawn(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    # Regression guard: every worker argument and the progress queue must
+    # survive pickling under spawn.
+    benchmark_config.benchmark.max_workers = 2
+    progress = _RecordingProgress()
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+
+    result = run_benchmark(midi_paths, tmp_path, benchmark_config, progress=progress)
+
+    assert len(result.records) == 4
+    assert all(record.status == "succeeded" for record in result.records)
+    assert any(e.status == "done" for e in progress.worker_events)
+
+
+# ── the run publishes the config's transcription numeric settings ───────
+
+
+def test_run_benchmark_library_call_uses_config_numeric_settings(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.transcription.numeric_mode = "strict"
+    benchmark_config.transcription.gpu_memory_growth = True
+    recorded: list[tuple[str, bool]] = []
+    real_factory = runner_module.make_transcriber
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return real_factory(cfg)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert recorded == [("strict", True)]
+    assert all(record.status == "succeeded" for record in result.records)
+
+
+def test_run_benchmark_config_beats_shell_env(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    benchmark_config.transcription.numeric_mode = "strict"
+    benchmark_config.transcription.gpu_memory_growth = True
+    monkeypatch.setenv("SONITRA_NUMERIC_MODE", "off")
+    monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "0")
+    recorded: list[tuple[str, bool]] = []
+    real_factory = runner_module.make_transcriber
+
+    def factory(cfg):
+        recorded.append(read_numeric_env())
+        return real_factory(cfg)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+
+    with caplog.at_level("WARNING", logger="sonitra.transcribe.numerics"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert recorded == [("strict", True)]
+    warned = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "sonitra.transcribe.numerics"
+    ]
+    assert len([m for m in warned if "SONITRA_NUMERIC_MODE" in m]) == 1
+    assert len([m for m in warned if "SONITRA_GPU_MEMORY_GROWTH" in m]) == 1
+
+
+@pytest.mark.parametrize("before", [None, "warn"])
+def test_run_benchmark_restores_env_after_run(
+    before: str | None,
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if before is None:
+        assert "SONITRA_NUMERIC_MODE" not in os.environ
+        assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+    else:
+        monkeypatch.setenv("SONITRA_NUMERIC_MODE", before)
+        monkeypatch.setenv("SONITRA_GPU_MEMORY_GROWTH", "1")
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path / str(before), benchmark_config)
+
+    if before is None:
+        assert "SONITRA_NUMERIC_MODE" not in os.environ
+        assert "SONITRA_GPU_MEMORY_GROWTH" not in os.environ
+    else:
+        assert os.environ["SONITRA_NUMERIC_MODE"] == "warn"
+        assert os.environ["SONITRA_GPU_MEMORY_GROWTH"] == "1"
+
+
+def test_parallel_workers_inherit_config_numeric_settings(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = Path(__file__).parent / "fixtures" / "numeric_env_probe.py"
+    probe_output = tmp_path / "probe.txt"
+    monkeypatch.setenv("SONITRA_NUMERIC_ENV_PROBE", str(probe_output))
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.transcription.transcribers = [
+        ExternalCommandTranscriberConfig(
+            command=f"{sys.executable} {probe} {{input}} {{output}}"
+        )
+    ]
+    benchmark_config.transcription.numeric_mode = "strict"
+    benchmark_config.transcription.gpu_memory_growth = False
+
+    # No stubbing of the process pool: a spawned worker re-imports everything
+    # and reads only its inherited environment, which is the whole claim here.
+    result = run_benchmark(
+        [midi_fixture("test_c4.mid")], tmp_path / "wd", benchmark_config
+    )
+
+    assert all(record.status == "succeeded" for record in result.records)
+    lines = probe_output.read_text(encoding="utf-8").splitlines()
+    assert len(lines) >= 2
+    assert all(line.strip() == "strict" for line in lines)
+
+
+# ── a strict numeric failure aborts the run; other errors stay fail-soft ─
+
+
+class _NumericPreflightStub:
+    """Transcriber stub whose numeric preflight rejects the requested settings."""
+
+    name = "stub"
+
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        raise NumericSettingsError("boom")
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+class _DevicePreflightStub:
+    """Transcriber stub whose device preflight rejects the requested device."""
+
+    name = "stub"
+
+    def validate_device(self) -> tuple[str, bool]:
+        raise TranscriptionError("boom")
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+class _FailingCallStub:
+    """Transcriber stub that records one marker per file and fails from a chosen call on."""
+
+    name = "stub"
+
+    def __init__(
+        self,
+        *,
+        fail_from_call: int,
+        error: BaseException,
+        marker_dir: Path | None = None,
+    ) -> None:
+        self.fail_from_call = fail_from_call
+        self.error = error
+        self.marker_dir = marker_dir
+        self.calls = 0
+
+    def apply_numeric_settings(self) -> tuple[str, ...]:
+        return ()
+
+    def transcribe(self, audio_path):
+        self.calls += 1
+        if self.marker_dir is not None:
+            (self.marker_dir / f"marker-{uuid.uuid4().hex}").write_text(str(audio_path))
+        if self.calls >= self.fail_from_call:
+            raise self.error
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def _result_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text().splitlines() if line.strip()
+    ]
+
+
+def test_preflight_strict_failure_aborts_before_anything_is_written(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _NumericPreflightStub()
+    )
+
+    with pytest.raises(NumericSettingsError, match=r"^stub: boom"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    results_file = tmp_path / benchmark_config.benchmark.results_path
+    assert not (tmp_path / "config.yaml").exists()
+    assert not results_file.with_name(results_file.name + ".fingerprint").exists()
+    assert not results_file.exists()
+    assert not (tmp_path / "audio").exists()
+
+
+def test_preflight_keeps_error_class(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _DevicePreflightStub()
+    )
+
+    with pytest.raises(TranscriptionError) as excinfo:
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert not isinstance(excinfo.value, NumericSettingsError)
+    assert str(excinfo.value).startswith("stub: ")
+
+
+def test_serial_strict_failure_mid_run_is_fatal(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _FailingCallStub(fail_from_call=2, error=NumericSettingsError("boom"))
+    monkeypatch.setattr(runner_module, "make_transcriber", lambda cfg: stub)
+    midi_paths = [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")]
+
+    with pytest.raises(NumericSettingsError):
+        run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    rows = _result_rows(tmp_path / benchmark_config.benchmark.results_path)
+    assert [row["status"] for row in rows] == ["succeeded"]
+    assert rows[0]["midi_path"] == str(midi_paths[0])
+
+
+def test_other_transcription_errors_stay_fail_soft(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _FailingCallStub(fail_from_call=2, error=TranscriptionError("boom"))
+    monkeypatch.setattr(runner_module, "make_transcriber", lambda cfg: stub)
+
+    result = run_benchmark(
+        [midi_fixture("test_c4.mid"), midi_fixture("test_polyphonic.mid")],
+        tmp_path,
+        benchmark_config,
+    )
+
+    rows = _result_rows(result.results_path)
+    assert len(rows) == len(result.records)
+    failed = [row for row in rows if row["status"] == "failed"]
+    succeeded = [row for row in rows if row["status"] == "succeeded"]
+    assert failed and succeeded
+    assert all("boom" in row["error"] for row in failed)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the fork context is Linux-only")
+def test_parallel_strict_failure_is_fatal_and_cancels(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # fork keeps the patched factory and its counters visible in the workers,
+    # which is what makes the per-file markers countable from here.
+    real_get_context = multiprocessing.get_context
+    monkeypatch.setattr(
+        runner_module.multiprocessing,
+        "get_context",
+        lambda method: real_get_context("fork"),
+    )
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.benchmark.include_baseline = False
+    benchmark_config.benchmark.sweeps = [
+        SweepSection(
+            parameter="render_pipeline.duration_padding_sec",
+            values=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+            name="padding",
+        )
+    ]
+    work_dir = tmp_path / "wd"
+    monkeypatch.setattr(
+        runner_module,
+        "make_transcriber",
+        lambda cfg: _FailingCallStub(
+            fail_from_call=1, error=NumericSettingsError("boom"), marker_dir=tmp_path
+        ),
+    )
+
+    with pytest.raises(NumericSettingsError):
+        run_benchmark([midi_fixture("test_c4.mid")], work_dir, benchmark_config)
+
+    rows = _result_rows(work_dir / benchmark_config.benchmark.results_path)
+    assert all(row["status"] != "failed" for row in rows)
+    assert len(list(tmp_path.glob("marker-*"))) < 8
+
+
+# ── resume refuses to mix rows transcribed at two different batch sizes ───
+
+
+def _basic_pitch_config(
+    *,
+    name: str | None = None,
+    device: str = "cpu",
+    batch_size: int | None = None,
+) -> BasicPitchTranscriberConfig:
+    return BasicPitchTranscriberConfig(name=name, device=device, batch_size=batch_size)
+
+
+def _resume_record(
+    *,
+    transcriber: str = "basic_pitch",
+    status: str = "succeeded",
+    metadata: dict | None = None,
+    name: str = "a.mid",
+) -> BenchmarkRecord:
+    return BenchmarkRecord(
+        condition="baseline",
+        transcriber=transcriber,
+        midi_path=name,
+        audio_path=name,
+        status=status,
+        transcriber_metadata={} if metadata is None else metadata,
+    )
+
+
+def _validate_batches(
+    records: list[BenchmarkRecord], configs: list[BasicPitchTranscriberConfig], tmp_path: Path
+) -> None:
+    runner_module._validate_resume_batches(
+        records, configs, tmp_path / "benchmark_results.jsonl"
+    )
+
+
+def test_resume_batches_old_gpu_rows_default(
+    tmp_path: Path,
+) -> None:
+    _validate_batches(
+        [_resume_record(), _resume_record(metadata={})],
+        [_basic_pitch_config(device="cuda", batch_size=None)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_old_gpu_rows_explicit(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _validate_batches(
+            [_resume_record(), _resume_record()],
+            [_basic_pitch_config(device="cuda", batch_size=8)],
+            tmp_path,
+        )
+    assert "now runs at batch 8" in str(excinfo.value)
+    assert "ran at batch 1" in str(excinfo.value)
+
+
+def test_resume_batches_new_gpu_rows_same(tmp_path: Path) -> None:
+    _validate_batches(
+        [_resume_record(metadata={"effective_batch": 8})],
+        [_basic_pitch_config(device="cuda", batch_size=8)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_new_rows_changed(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _validate_batches(
+            [_resume_record(metadata={"effective_batch": 16})],
+            [_basic_pitch_config(device="cpu", batch_size=8)],
+            tmp_path,
+        )
+    assert "now runs at batch 8" in str(excinfo.value)
+    assert "ran at batch 16" in str(excinfo.value)
+
+
+def test_resume_batches_old_cpu_rows(tmp_path: Path) -> None:
+    _validate_batches(
+        [_resume_record(), _resume_record()],
+        [_basic_pitch_config(device="cpu", batch_size=None)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_failed_rows_ignored(tmp_path: Path) -> None:
+    _validate_batches(
+        [
+            _resume_record(status="failed"),
+            _resume_record(status="render_failed", name="b.mid"),
+        ],
+        [_basic_pitch_config(device="cuda", batch_size=8)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_other_transcriber_ignored(tmp_path: Path) -> None:
+    _validate_batches(
+        [_resume_record(transcriber="transkun"), _resume_record(transcriber="oracle")],
+        [_basic_pitch_config(device="cuda", batch_size=8)],
+        tmp_path,
+    )
+
+
+def test_resume_batches_named_basic_pitch(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _validate_batches(
+            [_resume_record(transcriber="bp"), _resume_record(transcriber="bp", name="b.mid")],
+            [_basic_pitch_config(device="cuda", batch_size=8, name="bp")],
+            tmp_path,
+        )
+    assert "'bp'" in str(excinfo.value)
+
+
+class _NamedStubTranscriber:
+    """Minimal transcriber stub for the resume-mismatch integration check."""
+
+    name = "basic_pitch"
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def test_resume_refuses_batch_mismatch_before_writing(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark_config.transcription.transcribers = [
+        BasicPitchTranscriberConfig(device="cpu", batch_size=8)
+    ]
+    monkeypatch.setattr(
+        runner_module, "make_transcriber", lambda cfg: _NamedStubTranscriber()
+    )
+    midi_paths = [midi_fixture("test_c4.mid")]
+
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    results_file = tmp_path / benchmark_config.benchmark.results_path
+    rows = [json.loads(line) for line in results_file.read_text().splitlines() if line.strip()]
+    assert rows, "the first run must write at least one row"
+    rewritten = []
+    for row in rows:
+        row["transcriber_metadata"] = {**row.get("transcriber_metadata", {}), "effective_batch": 16}
+        rewritten.append(json.dumps(row))
+    results_file.write_text("\n".join(rewritten) + "\n")
+
+    fingerprint_file = results_file.with_name(results_file.name + ".fingerprint")
+    watched = [results_file, fingerprint_file, tmp_path / "config.yaml"]
+    before = [path.read_bytes() for path in watched]
+
+    benchmark_config.benchmark.resume = True
+    shutil.rmtree(tmp_path / "audio", ignore_errors=True)
+    with pytest.raises(ValueError, match="batch"):
+        run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    assert [path.read_bytes() for path in watched] == before
+
+
+# ── a worker builds each transcriber once for its whole lifetime ──────────
+
+
+class _CountingStubTranscriber:
+    """Minimal transcriber stub whose name comes from its config."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def transcribe(self, audio_path):
+        return TranscriptionResult(notes=[], transcriber=self.name)
+
+
+def _counting_factory(calls: list[str]) -> object:
+    """A ``make_transcriber`` stand-in that records one entry per build."""
+
+    def factory(cfg):
+        calls.append(cfg.name or cfg.type)
+        return _CountingStubTranscriber(cfg.name or cfg.type)
+
+    return factory
+
+
+def test_worker_transcribers_built_once_per_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+    cfgs = [
+        BasicPitchTranscriberConfig(name="a"),
+        BasicPitchTranscriberConfig(name="b"),
+    ]
+
+    first = runner_module._worker_transcribers(cfgs)
+    second = runner_module._worker_transcribers(cfgs)
+
+    assert calls == ["a", "b"]
+    assert [t.name for t in second] == ["a", "b"]
+    assert all(new is old for new, old in zip(second, first))
+
+
+def test_worker_transcribers_distinct_configs_built_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+
+    runner_module._worker_transcribers([BasicPitchTranscriberConfig(name="a")])
+    runner_module._worker_transcribers([BasicPitchTranscriberConfig(name="b")])
+
+    assert calls == ["a", "b"]
+
+
+def test_worker_transcribers_rebuild_when_numeric_env_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sonitra.transcribe.numerics import numeric_env
+
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+    cfgs = [BasicPitchTranscriberConfig(name="a")]
+
+    with numeric_env("off", False):
+        runner_module._worker_transcribers(cfgs)
+    with numeric_env("strict", False):
+        runner_module._worker_transcribers(cfgs)
+
+    assert calls == ["a", "a"]
+
+
+def test_condition_worker_reuses_transcribers_across_conditions(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sonitra.benchmark.conditions import Condition
+    from sonitra.evaluation.types import notes_from_dicts
+
+    calls: list[str] = []
+    monkeypatch.setattr(runner_module, "make_transcriber", _counting_factory(calls))
+    midi_paths = [midi_fixture("test_c4.mid")]
+    references = {midi_paths[0]: notes_from_dicts(parse_midi(midi_paths[0]))}
+    cfgs = [BasicPitchTranscriberConfig(name="a")]
+
+    outcomes = [
+        runner_module._condition_worker(
+            Condition(name=name, overrides={}),
+            benchmark_config,
+            midi_paths,
+            references,
+            cfgs,
+            tmp_path,
+            None,
+        )
+        for name in ("baseline", "second")
+    ]
+
+    assert calls == ["a"]
+    assert [name for name, _seconds, _records in outcomes] == ["baseline", "second"]
+    for _name, _seconds, records in outcomes:
+        assert [record.status for record in records] == ["succeeded"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the fork context is Linux-only")
+def test_parallel_run_builds_once_per_worker(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # fork keeps the patched factory visible in the workers, so a marker file per
+    # build counts the builds each worker made; production stays on spawn.
+    real_get_context = multiprocessing.get_context
+    monkeypatch.setattr(
+        runner_module.multiprocessing,
+        "get_context",
+        lambda method: real_get_context("fork"),
+    )
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.benchmark.include_baseline = False
+    benchmark_config.benchmark.sweeps = [
+        SweepSection(
+            parameter="render_pipeline.duration_padding_sec",
+            values=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+            name="padding",
+        )
+    ]
+    markers = tmp_path / "builds"
+    markers.mkdir()
+    parent_pid = os.getpid()
+
+    def factory(cfg):
+        (markers / f"build-{os.getpid()}-{uuid.uuid4().hex}").write_text("built")
+        return _CountingStubTranscriber(cfg.name or cfg.type)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path / "wd", benchmark_config)
+
+    assert all(record.status == "succeeded" for record in result.records)
+    assert len(result.records) == 6  # one row per condition, one transcriber
+    # The parent's own preflight build is not a worker build, so it does not count.
+    worker_builds = [
+        marker
+        for marker in markers.iterdir()
+        if not marker.name.startswith(f"build-{parent_pid}-")
+    ]
+    assert len(worker_builds) <= 2
+
+
+# ── worker keys a benchmark cannot act on ────────────────────────────────
+
+
+def _benchmark_worker_warnings(
+    caplog: pytest.LogCaptureFixture, needle: str
+) -> list[str]:
+    """Messages this module logged that mention *needle*."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "sonitra.benchmark.runner" and needle in record.getMessage()
+    ]
+
+
+def test_benchmark_warns_on_inert_transcription_workers(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # transcription.max_workers only ever parallelises `sonitra transcribe`, so a
+    # value here is inert and must say so rather than pass unnoticed.
+    benchmark_config.transcription.max_workers = 6
+
+    with caplog.at_level("WARNING", logger="sonitra.benchmark.runner"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    messages = _benchmark_worker_warnings(caplog, "transcription.max_workers=6")
+    assert len(messages) == 1
+    message = messages[0]
+    assert "transcription.max_workers=6" in message
+    assert "has no effect in sonitra benchmark" in message
+    assert "sonitra transcribe" in message
+    assert "benchmark.max_workers" in message
+
+
+def test_benchmark_warns_on_inert_evaluation_workers(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    benchmark_config.evaluation.max_workers = 4
+
+    with caplog.at_level("WARNING", logger="sonitra.benchmark.runner"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    messages = _benchmark_worker_warnings(caplog, "evaluation.max_workers=4")
+    assert len(messages) == 1
+    message = messages[0]
+    assert "evaluation.max_workers=4" in message
+    assert "has no effect in sonitra benchmark" in message
+    assert "sonitra evaluate" in message
+    assert "benchmark.max_workers" in message
+
+
+def test_benchmark_silent_on_default_workers(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert benchmark_config.transcription.max_workers == 1
+    assert benchmark_config.evaluation.max_workers == 1
+
+    with caplog.at_level("WARNING", logger="sonitra.benchmark.runner"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert _benchmark_worker_warnings(caplog, "transcription.max_workers") == []
+    assert _benchmark_worker_warnings(caplog, "evaluation.max_workers") == []

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import logging
 import math
-import os
-import random
+from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
+from rich.console import Console
+from rich.padding import Padding
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -24,11 +26,20 @@ from sonitra.terminal import (
     FilesPerSecondColumn,
     NullBenchmarkProgress,
     RichBenchmarkProgress,
+    configure_framework_logging,
+    configure_onednn_opts,
     effective_log_level,
     get_console,
     set_log_level,
     setup_logging,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only: importing sonitra.selection at module import pulls in
+    # the config tree, which the CLI loads lazily per command.
+    from sonitra.selection import SelectionResult
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="sonitra")
 
@@ -69,24 +80,367 @@ def _discover_midi_files(directory: Path) -> list[Path]:
 def _apply_subset(
     files: list[Path], limit: int | None, seed: int | None
 ) -> list[Path]:
-    if limit is None or limit >= len(files):
-        return files
-    rng = random.Random(seed)
-    return sorted(rng.sample(files, limit))
+    """Backward-compatible alias for :func:`sonitra.selection.sample_units`."""
+    from sonitra.config import SelectionSample
+    from sonitra.selection import sample_units
+
+    sample = SelectionSample(n=limit, seed=seed or 0) if limit is not None else None
+    return sample_units(files, sample)
 
 
-def _apply_dataset(cfg: PipelineConfig, dataset: str | None, config: Path) -> None:
+def _stderr_console() -> Console:
+    """Return a stderr-bound console matching the main console's flags."""
+    console = get_console()
+    return Console(stderr=True, quiet=console.quiet, no_color=console.no_color)
+
+
+def _fail_selection(exc: Exception) -> None:
+    """Print a selection error to stderr and exit with code 1."""
+    _stderr_console().print(f"[red]error: {exc}[/red]")
+    raise typer.Exit(code=1)
+
+
+def _load_config_or_exit(config: Path) -> PipelineConfig:
+    """Load *config*, or print a one-line error to stderr and exit with code 1."""
+    from rich.markup import escape
+
+    from sonitra.config import ConfigError, load_config
+
+    try:
+        return load_config(config)
+    except FileNotFoundError as exc:
+        _stderr_console().print(f"[red]error: {escape(str(exc))}[/red]")
+    except ConfigError as exc:
+        _stderr_console().print(
+            f"[red]error: invalid config {escape(str(config))}:[/red]\n{escape(str(exc))}"
+        )
+    raise typer.Exit(code=1)
+
+
+def _print_selection(result: SelectionResult) -> None:
+    """Print resolver warnings to stderr and the notice/summary to stdout."""
+    console = get_console()
+    warnings = _stderr_console()
+    if result.notice:
+        console.print(f"[dim]{result.notice}[/dim]")
+    if result.unmatched:
+        names = ", ".join(path.stem for path in result.unmatched[:5])
+        warnings.print(
+            f"[yellow]warning: {len(result.unmatched)} file(s) have no metadata "
+            f"row and were excluded (e.g. {names})[/yellow]"
+        )
+    if result.unpaired_audio:
+        names = ", ".join(path.stem for path in result.unpaired_audio[:5])
+        warnings.print(
+            f"[yellow]warning: {len(result.unpaired_audio)} audio file(s) did not "
+            f"pair to a reference and were excluded (e.g. {names})[/yellow]"
+        )
+    console.print(result.summary_line())
+
+
+# Metric columns of the benchmark summary and degradation tables, in
+# reporting order: note onset, onset+offset, onset+offset+velocity, frame.
+_HEADLINE_METRIC_KEYS: tuple[str, ...] = (
+    "note.onset_f1",
+    "note.onset_offset_f1",
+    "note.onset_offset_velocity_f1",
+    "frame.f1",
+)
+
+# Short column labels for the headline keys. They are used only when the
+# raw-key table would be cut by the console width; the dim legend printed
+# under that table still names the exact keys, so the columns stay
+# traceable to the summary.json keys.
+_HEADLINE_METRIC_LABELS: dict[str, str] = {
+    "note.onset_f1": "onset",
+    "note.onset_offset_f1": "+offset",
+    "note.onset_offset_velocity_f1": "+velocity",
+    "frame.f1": "frame",
+}
+
+_MAX_FAILURE_ROWS = 5
+
+
+def _print_benchmark_failures(console: Console, failed: list[Any]) -> None:
+    """Print failed benchmark records grouped by error message, most common first."""
+    groups: dict[str, list[Any]] = {}
+    for record in failed:
+        groups.setdefault(record.error or record.status, []).append(record)
+    ranked = sorted(groups.items(), key=lambda item: len(item[1]), reverse=True)
+
+    table = Table(title="Benchmark failures", title_style="bold red")
+    table.add_column("error", style="red")
+    table.add_column("count", justify="right")
+    table.add_column("example")
+    for error, group in ranked[:_MAX_FAILURE_ROWS]:
+        example = group[0]
+        table.add_row(
+            error,
+            str(len(group)),
+            f"{example.condition} / {Path(example.midi_path).name}",
+        )
+    if len(ranked) > _MAX_FAILURE_ROWS:
+        table.add_row("", "", f"{len(ranked) - _MAX_FAILURE_ROWS} more distinct errors")
+    console.print(table)
+
+
+def _headline_metric_columns(
+    rows: Sequence[dict[str, Any]], *, prefix: str = ""
+) -> list[str]:
+    """Pick the metric columns for a benchmark summary or degradation table.
+
+    Headline keys present in any row come first, in reporting order; with
+    none present, numeric keys ending in ``f1`` are used, sorted.
+    """
+    numeric = {
+        key
+        for row in rows
+        for key, value in row.items()
+        if isinstance(value, (int, float))
+    }
+    headline = [
+        prefix + key for key in _HEADLINE_METRIC_KEYS if prefix + key in numeric
+    ]
+    if headline:
+        return headline
+    return sorted(key for key in numeric if key.endswith("f1"))
+
+
+def _table_fits(console: Console, table: Table) -> bool:
+    """Return whether *table* renders at its natural width.
+
+    ``Console.measure`` clamps its answer to the console width when the table
+    is too wide, so a strictly smaller natural width is the only result that
+    proves no column is cut. An exact fit falling back one shape early is
+    acceptable; a cut table is not.
+    """
+    return console.measure(table).maximum < console.width
+
+
+def _headline_labels(
+    metric_keys: Sequence[str], *, prefix: str = ""
+) -> list[str] | None:
+    """Map *metric_keys* to their short labels, or ``None`` when any is not headline.
+
+    The degradation table selects the same keys under a ``delta_`` prefix.
+    """
+    labels: list[str] = []
+    for key in metric_keys:
+        base = key[len(prefix):] if prefix and key.startswith(prefix) else key
+        label = _HEADLINE_METRIC_LABELS.get(base)
+        if label is None:
+            return None
+        labels.append(label)
+    return labels
+
+
+def _metric_legend(metric_keys: Sequence[str], *, prefix: str = "") -> str:
+    """Dim line naming the exact keys behind the short column labels."""
+    heading = "delta keys" if prefix else "keys"
+    return f"[dim]{heading}: " + " · ".join(metric_keys) + "[/dim]"
+
+
+def _metric_cell(value: Any, *, delta: bool = False) -> str:
+    """Format one metric cell as markup; negative deltas stay yellow."""
+    if isinstance(value, (int, float)) and math.isnan(value):
+        return "[dim]NaN[/dim]"
+    if isinstance(value, (int, float)):
+        text = f"{value:.4f}"
+        return f"[yellow]{text}[/]" if delta and value < 0 else text
+    return str(value)
+
+
+def _benchmark_metric_table(
+    title: str,
+    rows: Sequence[dict[str, Any]],
+    metric_keys: Sequence[str],
+    *,
+    include_counts: bool = False,
+    labels: Sequence[str] | None = None,
+    delta: bool = False,
+) -> Table:
+    """Build a benchmark summary or degradation table.
+
+    ``labels`` replaces the raw metric headers with the short labels; when it
+    is ``None`` the headers are the raw keys.
+    """
+    table = Table(title=title)
+    table.add_column("condition")
+    table.add_column("transcriber")
+    if include_counts:
+        table.add_column("files", justify="right")
+        table.add_column("ok", justify="right")
+        table.add_column("failed", justify="right")
+    for name in (labels if labels is not None else metric_keys):
+        table.add_column(name, justify="right")
+    for row in rows:
+        cells = [
+            str(row.get("condition", "")),
+            str(row.get("transcriber", "")),
+        ]
+        if include_counts:
+            n_files = int(row.get("n_files", 0))
+            n_ok = int(row.get("n_succeeded", 0))
+            n_failed = n_files - n_ok
+            cells.extend(
+                [
+                    str(n_files),
+                    f"[green]{n_ok}[/]",
+                    f"[red]{n_failed}[/]" if n_failed else "0",
+                ]
+            )
+        for key in metric_keys:
+            cells.append(_metric_cell(row.get(key, float("nan")), delta=delta))
+        table.add_row(*cells)
+    return table
+
+
+def _print_metric_blocks(
+    console: Console,
+    title: str,
+    rows: Sequence[dict[str, Any]],
+    metric_keys: Sequence[str],
+    *,
+    include_counts: bool = False,
+    delta: bool = False,
+) -> None:
+    """Print one key/value block per condition, with the full metric keys.
+
+    Used when no table shape fits the console: printed lines wrap instead of
+    ellipsizing, so every key and value stays readable.
+    """
+    console.print(title, style="bold")
+    for index, row in enumerate(rows):
+        line = f"{row.get('condition', '')} · {row.get('transcriber', '')}"
+        if include_counts:
+            n_files = int(row.get("n_files", 0))
+            n_ok = int(row.get("n_succeeded", 0))
+            line += f" · files {n_files} · ok {n_ok} · failed {n_files - n_ok}"
+        console.print(line)
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column()
+        grid.add_column(justify="right")
+        for key in metric_keys:
+            grid.add_row(
+                f"[dim]{key}[/dim]",
+                _metric_cell(row.get(key, float("nan")), delta=delta),
+            )
+        console.print(Padding(grid, (0, 0, 0, 2), expand=False))
+        if index != len(rows) - 1:
+            console.print()
+
+
+def _print_benchmark_metric_table(
+    console: Console,
+    title: str,
+    rows: Sequence[dict[str, Any]],
+    metric_keys: Sequence[str],
+    *,
+    include_counts: bool = False,
+    delta: bool = False,
+) -> None:
+    """Print a metric table at the widest shape the console can hold.
+
+    The raw-key table is tried first. When it does not fit, headline keys are
+    retried with their short labels and a legend; otherwise, and when even
+    the labelled table does not fit, each condition prints as a key/value
+    block so no header is ever truncated.
+    """
+    raw_table = _benchmark_metric_table(
+        title,
+        rows,
+        metric_keys,
+        include_counts=include_counts,
+        delta=delta,
+    )
+    if _table_fits(console, raw_table):
+        console.print(raw_table)
+        return
+    prefix = "delta_" if delta else ""
+    labels = _headline_labels(metric_keys, prefix=prefix)
+    if labels is not None:
+        labelled_table = _benchmark_metric_table(
+            title,
+            rows,
+            metric_keys,
+            include_counts=include_counts,
+            labels=labels,
+            delta=delta,
+        )
+        if _table_fits(console, labelled_table):
+            console.print(labelled_table)
+            console.print(_metric_legend(metric_keys, prefix=prefix))
+            return
+    _print_metric_blocks(
+        console,
+        title,
+        rows,
+        metric_keys,
+        include_counts=include_counts,
+        delta=delta,
+    )
+
+
+def _apply_dataset(cfg: PipelineConfig, dataset: str | None) -> None:
     """Inject *dataset* into *cfg* when provided.
 
     Args:
         cfg: Loaded pipeline configuration to mutate in place.
         dataset: Dataset name supplied via the CLI ``--dataset`` flag, or
             ``None`` when the flag was not set.
-        config: Path to the YAML config file (kept for symmetry; unused here
-            but documents the call-site contract).
+
+    Raises:
+        SelectionError: when the YAML both sets ``io.dataset`` and filters it
+            with ``io.where``, and *dataset* names a different one; the
+            filter would otherwise be applied to another dataset's metadata.
     """
-    if dataset is not None:
-        cfg.io.dataset = dataset
+    if dataset is None:
+        return
+    if cfg.io.where and cfg.io.dataset is not None and cfg.io.dataset != dataset:
+        from sonitra.selection import SelectionError
+
+        raise SelectionError(
+            f"this config filters dataset '{cfg.io.dataset}' (io.where); "
+            f"--dataset '{dataset}' would apply that filter to another dataset"
+        )
+    cfg.io.dataset = dataset
+
+
+def _apply_selection_overrides(
+    cfg: PipelineConfig, limit: int | None, seed: int | None
+) -> None:
+    """Write ``--limit``/``--seed`` into ``cfg.io.sample``.
+
+    Raises:
+        SelectionError: when the resulting sample fails validation, e.g.
+            ``--limit 0``.
+    """
+    if limit is None and seed is None:
+        return
+
+    from pydantic import ValidationError
+
+    from sonitra.config import SelectionSample
+    from sonitra.selection import SelectionError
+
+    existing = cfg.io.sample
+    if limit is not None:
+        payload = {"n": limit, "seed": seed or 0}
+    else:
+        if existing is None:
+            _stderr_console().print(
+                "[yellow]warning: --seed has no effect without --limit or "
+                "io.sample[/yellow]"
+            )
+            return
+        payload = {"n": existing.n, "seed": seed}
+
+    try:
+        # Validate a rebuilt sample: attribute assignment skips validation, so
+        # --limit 0 would reach the resolver unchecked.
+        cfg.io.sample = SelectionSample.model_validate(payload)
+    except ValidationError as exc:
+        raise SelectionError(f"invalid selection from --limit/--seed: {exc}") from exc
 
 
 @app.command()
@@ -125,15 +479,21 @@ def render(
     """Run the MIDI-to-audio rendering pipeline (MIDI mode) or the audio
     read -> effects -> quality-gate pipeline (audio mode, ``pipeline.input_type:
     audio``)."""
-    from sonitra.config import InputType, load_config, resolve_corpus_paths
+    from sonitra.config import InputType, resolve_corpus_paths
     from sonitra.corpus import discover_audio_files
     from sonitra.pipeline import run_pipeline
+    from sonitra.selection import SelectionError, select_audio, select_references
 
     console = get_console()
-    cfg = load_config(config)
+    cfg = _load_config_or_exit(config)
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
-    _apply_dataset(cfg, dataset, config)
+        configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
+    try:
+        _apply_dataset(cfg, dataset)
+    except SelectionError as exc:
+        _fail_selection(exc)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
     audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
 
@@ -154,7 +514,26 @@ def render(
     if not midi_paths:
         console.print(f"[red]No {source_label} found in[/red] [dim]{actual_corpus}[/dim]")
         raise typer.Exit(code=1)
-    midi_paths = _apply_subset(midi_paths, limit, seed)
+
+    try:
+        _apply_selection_overrides(cfg, limit, seed)
+        if audio_mode:
+            # Pairing needs the reference list; without a filter there is
+            # nothing to pair for, so recordings pass through unchanged.
+            references = (
+                _discover_midi_files(paths.midi)
+                if cfg.io.where
+                else []
+            )
+            selection_result = select_audio(
+                cfg, midi_paths, references, unit_kind="recording"
+            )
+        else:
+            selection_result = select_references(cfg, midi_paths)
+    except SelectionError as exc:
+        _fail_selection(exc)
+    _print_selection(selection_result)
+    midi_paths = selection_result.units
 
     progress: Progress | None = None
     task_id: Any = None
@@ -232,28 +611,41 @@ def transcribe(
     """Transcribe audio files to MIDI with the configured transcribers."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from sonitra.config import load_config, resolve_corpus_paths
+    from rich.markup import escape
+
+    from sonitra.config import resolve_corpus_paths
     from sonitra.midi_writer import write_transcription_outputs
+    from sonitra.selection import SelectionError, select_audio
+    from sonitra.transcribe.base import NumericSettingsError
+    from sonitra.transcribe.numerics import numeric_env
     from sonitra.transcribe.protocol import make_transcriber
 
     console = get_console()
-    cfg = load_config(config)
+    cfg = _load_config_or_exit(config)
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
-    _apply_dataset(cfg, dataset, config)
+        configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
+    try:
+        _apply_dataset(cfg, dataset)
+    except SelectionError as exc:
+        _fail_selection(exc)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
 
     if audio is not None:
         actual_audio = audio
-    elif dataset is not None:
+    elif cfg.io.dataset is not None:
         actual_audio = paths.audio
     else:
-        console.print("[red]--audio or --dataset must be provided[/red]")
+        console.print(
+            "[red]--audio is required when no dataset is set "
+            "(--dataset or io.dataset)[/red]"
+        )
         raise typer.Exit(code=1)
 
     if output is not None:
         actual_output = output
-    elif dataset is not None:
+    elif cfg.io.dataset is not None:
         actual_output = paths.transcription
     else:
         actual_output = Path("transcriptions")
@@ -273,7 +665,21 @@ def transcribe(
     if not audio_paths:
         console.print(f"[red]No audio files found in[/red] [dim]{actual_audio}[/dim]")
         raise typer.Exit(code=1)
-    audio_paths = _apply_subset(audio_paths, limit, seed)
+
+    try:
+        _apply_selection_overrides(cfg, limit, seed)
+        # References are only needed to pair rendered audio back to MIDI when
+        # a filter selects a subset; without one, --audio works as before.
+        references = (
+            _discover_midi_files(paths.midi)
+            if cfg.io.where
+            else []
+        )
+        selection_result = select_audio(cfg, audio_paths, references, unit_kind="audio")
+    except SelectionError as exc:
+        _fail_selection(exc)
+    _print_selection(selection_result)
+    audio_paths = selection_result.units
 
     failures = 0
     failure_details: list[tuple[str, str, str]] = []
@@ -287,55 +693,70 @@ def transcribe(
             result = backend_transcribe(audio_path)
             write_transcription_outputs(result, midi_path)
             return f"{backend_name}: {audio_path.name} -> {midi_path}", None
+        except NumericSettingsError:
+            # Fatal for the run, not a per-file failure: every remaining file would
+            # be transcribed under settings that are known not to be in force.
+            raise
         except Exception as exc:  # noqa: BLE001 - CLI reports and continues
             return f"{backend_name}: {audio_path.name} FAILED ({exc})", str(exc)
 
     try:
-        for transcriber_cfg in transcriber_configs:
-            backend = make_transcriber(transcriber_cfg)
-            failed_this = 0
-            progress: Progress | None = None
-            task_id: Any = None
-            if show_progress:
-                progress = Progress(*_progress_columns(), refresh_per_second=10)
-                task_id = progress.add_task(backend.name, total=len(audio_paths))
+        with numeric_env(
+            cfg.transcription.numeric_mode, cfg.transcription.gpu_memory_growth
+        ):
+            for transcriber_cfg in transcriber_configs:
+                backend = make_transcriber(transcriber_cfg)
+                apply_numeric = getattr(backend, "apply_numeric_settings", None)
+                if apply_numeric is not None:
+                    # Resolved before the first file so a strict failure costs
+                    # nothing instead of landing halfway through the batch.
+                    apply_numeric()
+                failed_this = 0
+                progress: Progress | None = None
+                task_id: Any = None
+                if show_progress:
+                    progress = Progress(*_progress_columns(), refresh_per_second=10)
+                    task_id = progress.add_task(backend.name, total=len(audio_paths))
 
-            with progress or nullcontext():
-                if n_workers > 1:
-                    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                        future_to_path = {
-                            executor.submit(_transcribe_one, backend.name, backend.transcribe, ap): ap
-                            for ap in audio_paths
-                        }
-                        for future in as_completed(future_to_path):
-                            _, err = future.result()
+                with progress or nullcontext():
+                    if n_workers > 1:
+                        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                            future_to_path = {
+                                executor.submit(_transcribe_one, backend.name, backend.transcribe, ap): ap
+                                for ap in audio_paths
+                            }
+                            for future in as_completed(future_to_path):
+                                _, err = future.result()
+                                if progress is not None:
+                                    progress.update(task_id, advance=1)
+                                if err is not None:
+                                    failures += 1
+                                    failed_this += 1
+                                    if len(failure_details) < 10:
+                                        failure_details.append(
+                                            (backend.name, future_to_path[future].name, err)
+                                        )
+                    else:
+                        for audio_path in audio_paths:
+                            _, err = _transcribe_one(backend.name, backend.transcribe, audio_path)
                             if progress is not None:
                                 progress.update(task_id, advance=1)
                             if err is not None:
                                 failures += 1
                                 failed_this += 1
                                 if len(failure_details) < 10:
-                                    failure_details.append(
-                                        (backend.name, future_to_path[future].name, err)
-                                    )
-                else:
-                    for audio_path in audio_paths:
-                        _, err = _transcribe_one(backend.name, backend.transcribe, audio_path)
-                        if progress is not None:
-                            progress.update(task_id, advance=1)
-                        if err is not None:
-                            failures += 1
-                            failed_this += 1
-                            if len(failure_details) < 10:
-                                failure_details.append((backend.name, audio_path.name, err))
+                                    failure_details.append((backend.name, audio_path.name, err))
 
-            console.print(
-                f"[cyan]{backend.name}[/]: [green]{len(audio_paths) - failed_this} ok[/], "
-                f"[red]{failed_this} failed[/]"
-            )
+                console.print(
+                    f"[cyan]{backend.name}[/]: [green]{len(audio_paths) - failed_this} ok[/], "
+                    f"[red]{failed_this} failed[/]"
+                )
     except KeyboardInterrupt:
         console.print("[yellow]Interrupted — partial transcriptions kept[/yellow]")
         raise typer.Exit(130)
+    except NumericSettingsError as exc:
+        _stderr_console().print(f"[red]error: {escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
 
     if failures:
         table = Table(title="Transcription failures", title_style="bold red")
@@ -362,8 +783,8 @@ def evaluate(
     estimate: Optional[Path] = typer.Option(
         None, "--estimate", "-e", help="Directory of estimated/transcribed MIDI files"
     ),
-    config: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="Pipeline config YAML (for metric settings)"
+    config: Path = typer.Option(
+        "config.yaml", "--config", "-c", help="Path to pipeline config YAML"
     ),
     output: Optional[Path] = typer.Option(
         None, "--output", "-o", help="Write per-file results to this JSONL path"
@@ -388,54 +809,40 @@ def evaluate(
     import json
     from concurrent.futures import ThreadPoolExecutor
 
-    from sonitra.config import EvaluationSection, load_config, resolve_corpus_paths
+    from sonitra.config import resolve_corpus_paths
     from sonitra.evaluation.protocol import evaluate_notes, make_symbolic_metrics
     from sonitra.evaluation.types import notes_from_dicts
     from sonitra.midi_reader import parse_midi
+    from sonitra.selection import SelectionError, sample_units, select_references
 
     console = get_console()
+    cfg = _load_config_or_exit(config)
+    if not _CLI_VERBOSE:
+        set_log_level(effective_log_level(cfg))
+        configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
+    try:
+        _apply_dataset(cfg, dataset)
+    except SelectionError as exc:
+        _fail_selection(exc)
+    paths = resolve_corpus_paths(cfg, config_name=config.stem)
+    section = cfg.evaluation
 
-    eval_cfg = None
-    # Derive metric settings and dataset-scoped paths in one config load.
-    if dataset is not None and config is not None:
-        full_cfg = load_config(config)
-        if not _CLI_VERBOSE:
-            set_log_level(effective_log_level(full_cfg))
-        full_cfg.io.dataset = dataset
-        section = full_cfg.evaluation
-        eval_paths = resolve_corpus_paths(full_cfg, config_name=config.stem)
-        midi_dir: Path | None = eval_paths.midi
+    if cfg.io.dataset is not None:
+        midi_dir: Path | None = paths.midi
         # Transcribers may omit the optional `name`; fall back to the backend
         # type exactly as the transcribe command's output dirs are named.
         first_transcriber = "basic_pitch"
-        if full_cfg.transcription.transcribers:
+        if cfg.transcription.transcribers:
             first_transcriber = (
-                full_cfg.transcription.transcribers[0].name
-                or full_cfg.transcription.transcribers[0].type
+                cfg.transcription.transcribers[0].name
+                or cfg.transcription.transcribers[0].type
             )
-        transcription_dir: Path | None = eval_paths.transcription
-        config_stem: str | None = config.stem
-        eval_cfg = full_cfg
-    elif dataset is not None:
-        # No config provided; use defaults for metric settings and path bases.
-        section = EvaluationSection()
-        midi_dir = Path("corpus") / dataset / "midi"
-        first_transcriber = "basic_pitch"
-        transcription_dir = Path("corpus") / dataset / "transcription"
-        config_stem = None
+        transcription_dir: Path | None = paths.transcription
     else:
-        if config is not None:
-            loaded_cfg = load_config(config)
-            if not _CLI_VERBOSE:
-                set_log_level(effective_log_level(loaded_cfg))
-            section = loaded_cfg.evaluation
-            eval_cfg = loaded_cfg
-        else:
-            section = EvaluationSection()
         midi_dir = None
         first_transcriber = None
         transcription_dir = None
-        config_stem = None
 
     metrics = make_symbolic_metrics(section)
 
@@ -443,20 +850,26 @@ def evaluate(
     actual_reference: Path
     if reference is not None:
         actual_reference = reference
-    elif dataset is not None:
+    elif cfg.io.dataset is not None:
         actual_reference = midi_dir  # type: ignore[assignment]
     else:
-        console.print("[red]--reference is required when --dataset is not set[/red]")
+        console.print(
+            "[red]--reference is required when no dataset is set "
+            "(--dataset or io.dataset)[/red]"
+        )
         raise typer.Exit(code=1)
 
     # Resolve estimate path.
     actual_estimate: Path
     if estimate is not None:
         actual_estimate = estimate
-    elif dataset is not None:
+    elif cfg.io.dataset is not None:
         actual_estimate = transcription_dir / first_transcriber  # type: ignore[operator]
     else:
-        console.print("[red]--estimate is required when --dataset is not set[/red]")
+        console.print(
+            "[red]--estimate is required when no dataset is set "
+            "(--dataset or io.dataset)[/red]"
+        )
         raise typer.Exit(code=1)
 
     reference_paths = _discover_midi_files(actual_reference)
@@ -475,12 +888,26 @@ def evaluate(
             None,
         )
 
-    if limit is not None:
-        reference_paths = [p for p in reference_paths if _find_estimate(p) is not None]
-        if not reference_paths:
-            console.print("[red]No reference files have matching estimates[/red]")
-            raise typer.Exit(code=1)
-    reference_paths = _apply_subset(reference_paths, limit, seed)
+    try:
+        _apply_selection_overrides(cfg, limit, seed)
+        result = select_references(cfg, reference_paths, apply_sample=False)
+        selection_sample = cfg.io.sample
+        if selection_sample is not None:
+            # Keep the existing ordering: refs with an estimate are filtered
+            # before sampling, so every sampled unit is scoreable.
+            with_estimates = [
+                p for p in result.units if _find_estimate(p) is not None
+            ]
+            if not with_estimates:
+                console.print("[red]No reference files have matching estimates[/red]")
+                raise typer.Exit(code=1)
+            result = result.with_sampled_units(
+                sample_units(with_estimates, selection_sample)
+            )
+    except SelectionError as exc:
+        _fail_selection(exc)
+    reference_paths = result.units
+    _print_selection(result)
 
     # Pairs by stem; assumes globally unique filenames across the reference corpus.
     # See .local/notes/TODO.md for the known limitation with nested datasets.
@@ -489,18 +916,24 @@ def evaluate(
         if est_path is None:
             return None
         rel = ref_path.relative_to(actual_reference)
-        values = evaluate_notes(
-            notes_from_dicts(parse_midi(ref_path)),
-            notes_from_dicts(parse_midi(est_path)),
-            metrics,
-        )
+        try:
+            values = evaluate_notes(
+                notes_from_dicts(parse_midi(ref_path)),
+                notes_from_dicts(parse_midi(est_path)),
+                metrics,
+            )
+        except Exception as exc:  # noqa: BLE001 - evaluate logs and continues
+            # Unreadable MIDI (parse_midi raises OSError on a missing MTrk
+            # header) or a contract violation must not abort the batch.
+            logger.warning("evaluate failed for %s: %s", rel, exc)
+            return {"file": str(rel), "error": str(exc)}
         return {"file": str(rel), **values}
 
     show_progress = console.is_terminal and not console.quiet
-    if eval_cfg is not None:
-        show_progress = show_progress and eval_cfg.observability.progress
+    show_progress = show_progress and cfg.observability.progress
 
     rows: list[dict] = []
+    failures: list[dict] = []
     skips = 0
     progress: Progress | None = None
     task_id: Any = None
@@ -516,6 +949,10 @@ def evaluate(
             skips += 1
             if progress is not None and task_id is not None:
                 progress.update(task_id, description=f"evaluate - {skips} skipped")
+        elif "error" in result:
+            failures.append(result)
+            if progress is not None and task_id is not None:
+                progress.update(task_id, description=f"evaluate - {len(failures)} failed")
         else:
             rows.append(result)
 
@@ -533,15 +970,22 @@ def evaluate(
         console.print("[yellow]Interrupted — partial results kept[/yellow]")
         raise typer.Exit(130)
 
-    if not rows:
-        console.print("[red]No reference/estimate pairs evaluated[/red]")
-        raise typer.Exit(code=1)
-
+    # Failure records are written to the JSONL so the run leaves a per-item
+    # trace, but they are kept out of `rows` so means stay over scored pairs.
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8") as handle:
-            for row in rows:
+            for row in [*rows, *failures]:
                 handle.write(json.dumps(row) + "\n")
+
+    if failures:
+        console.print(f"[yellow]{len(failures)} pair(s) failed to evaluate[/yellow]")
+        for row in failures:
+            console.print(f"  [dim]{row['file']}: {row['error']}[/dim]")
+
+    if not rows:
+        console.print("[red]No reference/estimate pairs evaluated[/red]")
+        raise typer.Exit(code=1)
 
     metric_names = sorted({key for row in rows for key in row if key != "file"})
     console.print(f"Evaluated {len(rows)} pairs (mean over files):")
@@ -563,7 +1007,13 @@ def benchmark(
         None, "--corpus", "-i", help="Directory of reference MIDI files"
     ),
     workdir: Optional[Path] = typer.Option(
-        None, "--workdir", "-w", help="Working directory for audio/transcriptions/results"
+        None,
+        "--workdir",
+        "-w",
+        help=(
+            "Full run directory; overrides benchmark.benchmark_dir and the "
+            "default corpus/{dataset}/benchmark/{config stem}"
+        ),
     ),
     dataset: Optional[str] = typer.Option(
         None,
@@ -583,19 +1033,41 @@ def benchmark(
 ) -> None:
     """Run the full AMT benchmark: render, transcribe, and evaluate per condition."""
     from sonitra.benchmark.runner import run_benchmark
-    from sonitra.config import InputType, load_config, resolve_corpus_paths
-    from sonitra.corpus import discover_audio_files, pair_audio_to_reference
+    from rich.markup import escape
+
+    from sonitra.config import InputType, resolve_benchmark_dir, resolve_corpus_paths
+    from sonitra.corpus import discover_audio_files
+    from sonitra.selection import SelectionError, select_audio, select_references
+    from sonitra.transcribe.base import TranscriptionError
 
     console = get_console()
-    cfg = load_config(config)
+    cfg = _load_config_or_exit(config)
     if not _CLI_VERBOSE:
         set_log_level(effective_log_level(cfg))
-    _apply_dataset(cfg, dataset, config)
+        configure_framework_logging(effective_log_level(cfg))
+        configure_onednn_opts()
+    yaml_dataset = cfg.io.dataset
+    try:
+        if (
+            cfg.benchmark.benchmark_dir is not None
+            and dataset is not None
+            and dataset != yaml_dataset
+            and workdir is None
+        ):
+            raise SelectionError(
+                f"benchmark.benchmark_dir is fixed ({cfg.benchmark.benchmark_dir}) "
+                f"but --dataset '{dataset}' differs from io.dataset "
+                f"'{yaml_dataset}'; pass --workdir or edit benchmark_dir"
+            )
+        _apply_dataset(cfg, dataset)
+    except SelectionError as exc:
+        _fail_selection(exc)
     paths = resolve_corpus_paths(cfg, config_name=config.stem)
     audio_mode = cfg.render_pipeline.input_type == InputType.AUDIO
 
     # --corpus keeps meaning "reference MIDI dir" in both modes -- it is
-    # never used to locate audio-mode recordings (PLAN.md §2.5.1/§3 Phase 5).
+    # never used to locate audio-mode recordings, which always come from
+    # <corpus_root>/<dataset>/recordings.
     actual_corpus = corpus if corpus is not None else paths.midi
     # corpus_root passed to run_benchmark must be an ancestor of the paths
     # that are actually rendered/evaluated as source_path -- the recordings
@@ -603,12 +1075,9 @@ def benchmark(
     # --corpus/actual_corpus denotes); otherwise Path.relative_to() in
     # _resolve_output_path/_evaluate_one raises ValueError.
     render_corpus_root = paths.recordings if audio_mode else actual_corpus
-    if workdir is not None:
-        actual_workdir = workdir
-    elif dataset is not None:
-        actual_workdir = Path(cfg.io.corpus_root) / dataset / "benchmark" / config.stem
-    else:
-        actual_workdir = Path("benchmark") / config.stem
+    actual_workdir = (
+        workdir if workdir is not None else resolve_benchmark_dir(cfg, config.stem)
+    )
 
     midi_paths = _discover_midi_files(actual_corpus)
     if not midi_paths:
@@ -616,29 +1085,40 @@ def benchmark(
         raise typer.Exit(code=1)
 
     audio_paths: list[Path] | None = None
-    if audio_mode:
-        # Subsetting order matters (PLAN.md §2.5.1): --limit/--seed applies
-        # to the *recordings* list first (the true per-cell unit), then
-        # midi_paths is re-derived as the deduplicated, sorted set of
-        # references paired to the *sampled* recordings -- never sampled
-        # independently, so the two lists stay mutually consistent.
-        recordings = discover_audio_files(paths.recordings)
-        if not recordings:
-            console.print(
-                f"[red]No audio files found in[/red] [dim]{paths.recordings}[/dim]"
+    try:
+        _apply_selection_overrides(cfg, limit, seed)
+        if audio_mode:
+            # --limit/--seed applies to the recordings (the per-cell unit)
+            # *after* pairing, so unpaired recordings never consume the
+            # sample budget; midi_paths is re-derived from the sampled pairs
+            # and never sampled independently, keeping the two lists
+            # mutually consistent.
+            recordings = discover_audio_files(paths.recordings)
+            if not recordings:
+                console.print(
+                    f"[red]No audio files found in[/red] [dim]{paths.recordings}[/dim]"
+                )
+                raise typer.Exit(code=1)
+            selection_result = select_audio(
+                cfg,
+                recordings,
+                midi_paths,
+                unit_kind="recording",
+                always_pair=True,
             )
-            raise typer.Exit(code=1)
-        recordings = _apply_subset(recordings, limit, seed)
-        pairing = pair_audio_to_reference(recordings, midi_paths)
-        audio_paths = recordings
-        midi_paths = sorted(set(pairing.mapping.values()))
-        if not midi_paths:
-            console.print(
-                "[red]No sampled recordings paired to a reference MIDI[/red]"
-            )
-            raise typer.Exit(code=1)
-    else:
-        midi_paths = _apply_subset(midi_paths, limit, seed)
+            audio_paths = selection_result.units
+            midi_paths = selection_result.references
+        else:
+            selection_result = select_references(cfg, midi_paths)
+            midi_paths = selection_result.units
+    except SelectionError as exc:
+        _fail_selection(exc)
+    _print_selection(selection_result)
+    # Relative to the directory the units were discovered from, so the hash
+    # stays host-independent and honours --corpus in MIDI mode.
+    selection_provenance = selection_result.provenance(
+        unit_root=paths.recordings if audio_mode else actual_corpus
+    )
 
     show_progress = _progress_enabled(cfg)
     devices = {
@@ -665,10 +1145,18 @@ def benchmark(
                 corpus_root=render_corpus_root,
                 audio_paths=audio_paths,
                 progress=prog,
+                selection=selection_provenance,
             )
     except KeyboardInterrupt:
         console.print("[yellow]Interrupted — partial results kept in manifests[/yellow]")
         raise typer.Exit(130)
+    except TranscriptionError as exc:
+        # Raised by the preflight before any render (missing optional backend,
+        # absent accelerator, or a strict numeric failure) and re-raised by a
+        # worker condition that hits one mid-run. Ordinary per-file failures
+        # never reach here: the run records them and continues.
+        _stderr_console().print(f"[red]error: {escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
 
     succeeded = sum(1 for record in result.records if record.status == "succeeded")
     total = len(result.records)
@@ -685,45 +1173,18 @@ def benchmark(
     console.print(f"Results: [dim]{result.results_path}[/dim]")
     console.print(f"Summary: [dim]{result.summary_path}[/dim]")
 
+    failed_records = [record for record in result.records if record.status != "succeeded"]
+    if failed_records:
+        _print_benchmark_failures(console, failed_records)
+
     if result.summary:
-        table = Table(title="Benchmark summary")
-        table.add_column("condition")
-        table.add_column("transcriber")
-        table.add_column("files", justify="right")
-        table.add_column("ok", justify="right")
-        table.add_column("failed", justify="right")
-        metric_keys = sorted(
-            {
-                key
-                for row in result.summary
-                for key in row
-                if key not in {"condition", "transcriber", "n_files", "n_succeeded"}
-            }
+        _print_benchmark_metric_table(
+            console,
+            "Benchmark summary",
+            result.summary,
+            _headline_metric_columns(result.summary),
+            include_counts=True,
         )
-        f1_keys = [key for key in metric_keys if key == "f1" or key.endswith(".f1")]
-        for name in f1_keys:
-            table.add_column(name, justify="right")
-        for row in result.summary:
-            n_files = int(row.get("n_files", 0))
-            n_ok = int(row.get("n_succeeded", 0))
-            n_failed = n_files - n_ok
-            cells = [
-                str(row.get("condition", "")),
-                str(row.get("transcriber", "")),
-                str(n_files),
-                f"[green]{n_ok}[/]",
-                f"[red]{n_failed}[/]" if n_failed else "0",
-            ]
-            for name in f1_keys:
-                value = row.get(name, float("nan"))
-                if isinstance(value, (int, float)) and math.isnan(value):
-                    cells.append("[dim]NaN[/dim]")
-                elif isinstance(value, (int, float)):
-                    cells.append(f"{value:.4f}")
-                else:
-                    cells.append(str(value))
-            table.add_row(*cells)
-        console.print(table)
 
     timing_conditions = (
         result.timing.get("conditions") if result.timing is not None else None
@@ -766,37 +1227,67 @@ def benchmark(
             timing_table.add_row(*cells)
         console.print(timing_table)
 
+        # Per-transcriber breakdown (Option A): transcribe/evaluate are
+        # per-cell measurements, so they can be attributed per backend from
+        # the `per_transcriber` roll-up already stored in summary.json.
+        # wall/render/separate stay on the condition table above: wall is a
+        # condition stopwatch and render/separate are shared per file.
+        by_transcriber_rows: list[tuple[str, str, object, object, object]] = []
+        for entry in timing_conditions:
+            condition_name = str(entry.get("condition", ""))
+            for pt in entry.get("per_transcriber") or []:
+                by_transcriber_rows.append(
+                    (
+                        condition_name,
+                        str(pt.get("transcriber", "")),
+                        pt.get("transcribe_seconds", float("nan")),
+                        pt.get("evaluate_seconds", float("nan")),
+                        pt.get("n_succeeded", 0),
+                    )
+                )
+        if by_transcriber_rows:
+            bt_table = Table(title="Benchmark timing by transcriber (seconds)")
+            bt_table.add_column("condition")
+            bt_table.add_column("transcriber")
+            bt_table.add_column("transcribe (sec)", justify="right")
+            bt_table.add_column("evaluate (sec)", justify="right")
+            bt_table.add_column("ok", justify="right")
+            for cond, name, t_sec, e_sec, n_ok in by_transcriber_rows:
+                bt_cells = [cond, name]
+                for value in (t_sec, e_sec):
+                    if isinstance(value, (int, float)) and math.isnan(value):
+                        bt_cells.append("[dim]NaN[/dim]")
+                    elif isinstance(value, (int, float)):
+                        bt_cells.append(f"{value:.1f}")
+                    else:
+                        bt_cells.append(str(value))
+                bt_cells.append(
+                    str(int(n_ok)) if isinstance(n_ok, (int, float)) else str(n_ok)
+                )
+                bt_table.add_row(*bt_cells)
+            console.print(bt_table)
+            console.print(
+                "[dim]per-transcriber values sum succeeded runs only.[/dim]"
+            )
+
     if result.degradation:
-        deg_table = Table(title="Benchmark degradation (delta vs baseline)")
-        deg_table.add_column("condition")
-        deg_table.add_column("transcriber")
-        all_delta_keys = sorted(
+        delta_keys = _headline_metric_columns(
+            result.degradation, prefix="delta_"
+        ) or sorted(
             {
                 key
                 for row in result.degradation
-                for key in row
-                if key not in {"condition", "transcriber"}
+                for key, value in row.items()
+                if isinstance(value, (int, float))
             }
         )
-        delta_keys = [key for key in all_delta_keys if key.endswith(".f1")]
-        if not delta_keys:
-            delta_keys = all_delta_keys
-        for key in delta_keys:
-            deg_table.add_column(key, justify="right")
-        for row in result.degradation:
-            cells = [str(row.get("condition", "")), str(row.get("transcriber", ""))]
-            for key in delta_keys:
-                value = row.get(key, float("nan"))
-                if isinstance(value, (int, float)) and math.isnan(value):
-                    cells.append("[dim]NaN[/dim]")
-                elif isinstance(value, (int, float)):
-                    cells.append(
-                        f"[yellow]{value:.4f}[/]" if value < 0 else f"{value:.4f}"
-                    )
-                else:
-                    cells.append(str(value))
-            deg_table.add_row(*cells)
-        console.print(deg_table)
+        _print_benchmark_metric_table(
+            console,
+            "Benchmark degradation (delta vs baseline)",
+            result.degradation,
+            delta_keys,
+            delta=True,
+        )
 
     if succeeded < total:
         raise typer.Exit(code=1)
@@ -931,10 +1422,10 @@ def main(
     console = get_console(quiet=quiet)
     setup_logging("DEBUG" if verbose else "INFO", console=console)
 
-    # Suppress TF/absl C++ logs (idempotent, respects user overrides). Set
-    # before any TensorFlow import; also inherited by benchmark pool workers.
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
-    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    # TF C++ logs follow the log level (respects user overrides). Set before
+    # any TensorFlow import; also inherited by benchmark pool workers.
+    configure_framework_logging("DEBUG" if verbose else "INFO")
+    configure_onednn_opts()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,200 @@
+# Tuning-offset smoke test: FluidSynth renders of MAESTRO reference MIDI,
+# benchmark-only — the run exists to prove the tuning offset transcribes
+# cleanly, not to feed a render preset.
+# Copied from paper_experiments/piano_only.yaml with the reverb/chorus/
+# distortion conditions dropped, so the run measures the offset alone: the two
+# leading TuningOffset slots stay disabled and the baseline is the untouched
+# signal. MIDI input means the run needs the reference MIDI only, not the
+# recordings.
+# Conditions: baseline, inst=piano_tune=-32c, inst=piano_tune=40c, inst=piano_tune=rt40c
+#
+# Usage:
+#   sonitra benchmark --config config/benchmark/smoke/tuning_piano_test.yaml --dataset maestro-v3 --limit 2
+#
+# io.sample caps the run at two files, which keeps a smoke run short, and
+# benchmark.save_audio writes the renders so the offset can be heard.
+render_pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  input_type: midi
+  bpm: 120
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: true
+  resume: false
+  max_workers: 8
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+  dataset: maestro-v3
+  metadata_csv: maestro-v3.0.0.csv
+  join_column: midi_filename
+  where:
+    split: [test]
+  sample:
+    n: 2
+    seed: 0
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.5
+  effects:
+    # The tuning offset leads the chain: what is out of tune is the instrument
+    # itself, so the shift belongs ahead of the amp, cabinet and room. Slot 1
+    # exists only for the round-trip control, which shifts +c then -c to expose
+    # the processing artifacts at the largest offset. Both slots ship disabled,
+    # and a zero-cent slot is a passthrough, so a chain that declares either one
+    # without switching it on leaves the signal unprocessed.
+    - type: TuningOffset      # index 0 — the instrument's own tuning offset
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    - type: TuningOffset      # index 1 — return leg, used by the round trip only
+      cents: 0.0
+      high_quality: true
+      transient_mode: crisp
+      transient_detector: compound
+      retain_phase_continuity: true
+      use_long_fft_window: null
+      use_time_domain_smoothing: false
+      preserve_formants: true
+      enabled: false
+    - type: Reverb            # index 2
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.0
+      dry_level: 1.0
+      width: 1.0
+      freeze_mode: false
+      enabled: false
+    - type: Chorus            # index 3
+      rate_hz: 1.0
+      depth: 0.25
+      centre_delay_ms: 7.0
+      feedback: 0.0
+      mix: 0.5
+      enabled: false
+    - type: Distortion        # index 4
+      drive_db: 25.0
+      enabled: false
+
+normalisation:
+  enabled: true
+  mode: rms
+  target_db: -18.0
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.001
+  min_duration_sec: 0.1
+  max_duration_deviation_sec: 1.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: true
+  manifest_path: renders.jsonl
+  write_failed_list: true
+  emit_sse_events: false
+
+separation:
+  enabled: false
+  backend: passthrough
+  model: htdemucs
+  device: cpu
+  stem: null
+  output_dir: stems
+
+transcription:
+  output_dir: transcriptions
+  transcribers:
+    - type: basic_pitch
+      enabled: true
+      # CPU-only smoke run, so no GPU image is required.
+      device: cpu
+      onset_threshold: 0.5
+      frame_threshold: 0.3
+      minimum_note_length_ms: 127.7
+      minimum_frequency_hz: null
+      maximum_frequency_hz: null
+      melodia_trick: true
+      multiple_pitch_bends: false
+      save_raw_outputs: false
+
+evaluation:
+  note_metrics:
+    enabled: true
+    onset_tolerance_sec: 0.05
+    offset_ratio: 0.2
+    offset_min_tolerance_sec: 0.05
+    velocity_tolerance: 0.1
+  frame_metrics:
+    enabled: true
+    hop_sec: 0.01
+  expressive_metrics:
+    enabled: true
+    harmony_window_sec: 2.0
+  dtw:
+    enabled: false
+    frame_size: 4096
+    hop_size: 2048
+    max_frames: 4000
+
+benchmark:
+  results_path: benchmark_results.jsonl
+  include_baseline: true
+  baseline_name: baseline
+  save_audio: true
+  resume: true
+  conditions:
+    - name: inst=piano_tune=-32c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: -32.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+    - name: inst=piano_tune=rt40c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.1.enabled: true
+        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+  sweeps: []
+  max_workers: 2

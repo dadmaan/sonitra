@@ -32,6 +32,7 @@ class PrecomputedTranscriber:
                     transcriber=self.name,
                     source_audio=audio_path,
                     midi_path=candidate,
+                    backend_type="precomputed",
                 )
         raise TranscriptionError(
             f"No precomputed MIDI for '{audio_path.stem}' in {self.midi_dir}"

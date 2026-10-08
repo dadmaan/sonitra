@@ -3,6 +3,16 @@
 Merges each clip's six per-string note blocks into one MIDI file and writes a
 metadata CSV with a JSON provenance sidecar. Unison notes are kept unless
 ``--dedupe-unisons`` is given.
+
+Examples:
+    # count notes and files without writing anything
+    python scripts/guitarset_jams_to_midi.py --dry-run
+
+    # convert corpus/guitarset/annotations/ to midi/ + metadata/guitarset.csv
+    python scripts/guitarset_jams_to_midi.py
+
+    # convert with unison duplicates removed, rewriting existing files
+    python scripts/guitarset_jams_to_midi.py --dedupe-unisons --overwrite
 """
 
 from __future__ import annotations
@@ -369,7 +379,9 @@ def _is_within(path: Path, parent: Path) -> bool:
 
 
 def _parse_args(argv: List[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--corpus-root", default=Path("corpus"), type=Path,
         help="Corpus root directory (default: corpus).",

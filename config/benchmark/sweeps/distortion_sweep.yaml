@@ -1,8 +1,9 @@
-# Benchmark smoke-test: 4 conditions, designed to complete quickly on a small corpus.
-# Conditions: baseline, no_reverb, wet_level=0.0, wet_level=0.6
+# Distortion sweep: measure signal distortion / clipping-like degradation.
+# Conditions: baseline, mild_overdrive, heavy_distortion, drive={0.0..30.0} (6)
+# Total: 9 conditions
 #
 # Usage:
-#   sonitra benchmark --config config/benchmark/benchmark_test.yaml --dataset test --limit 2
+#   sonitra benchmark --config config/benchmark/sweeps/distortion_sweep.yaml --dataset <name>
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -18,7 +19,7 @@ render_pipeline:
   # pedalboard_instrument; fluidsynth and dawdreamer_* render serially
   # regardless (see pipeline.py), and dawdreamer is forced to 1 by
   # validate_worker_constraint() because JUCE is not concurrency-safe.
-  max_workers: 8
+  max_workers: 1
   log_level: INFO
 
 io:
@@ -51,13 +52,8 @@ pedalboard:
       attack_ms: 5.0
       release_ms: 100.0
       enabled: true
-    - type: Reverb
-      room_size: 0.4
-      damping: 0.5
-      wet_level: 0.15
-      dry_level: 0.85
-      width: 1.0
-      freeze_mode: false
+    - type: Distortion
+      drive_db: 0.0
       enabled: true
 
 normalisation:
@@ -88,16 +84,9 @@ separation:
 
 transcription:
   output_dir: transcriptions
-  # Thread pool over audio files, sharing one TensorFlow process (and so one
-  # GPU context) — safe to raise. Honoured by `sonitra transcribe`;
-  # `sonitra benchmark` parallelises via benchmark.max_workers instead.
-  max_workers: 1
   transcribers:
     - type: basic_pitch
       enabled: true
-      # TensorFlow device string for inference. Requires the GPU image
-      # (docker compose --profile gpu) or a bare-metal `[gpu]` install;
-      # set to "cpu" to force CPU inference.
       device: GPU:0
       onset_threshold: 0.5
       frame_threshold: 0.3
@@ -122,31 +111,26 @@ evaluation:
     enabled: true
     harmony_window_sec: 2.0
   dtw:
-    enabled: true
+    enabled: false
     frame_size: 4096
     hop_size: 2048
     max_frames: 4000
-  # Thread pool over per-file metric computation (NumPy/SciPy, CPU-bound).
-  # Honoured by `sonitra evaluate`.
-  max_workers: 1
 
 benchmark:
   results_path: benchmark_results.jsonl
   include_baseline: true
   baseline_name: baseline
-  save_audio: true
+  save_audio: false
   resume: false
   conditions:
-    - name: no_reverb
+    - name: mild_overdrive
       overrides:
-        pedalboard.effects.1.enabled: false
+        pedalboard.effects.1.drive_db: 6.0
+    - name: heavy_distortion
+      overrides:
+        pedalboard.effects.1.drive_db: 24.0
   sweeps:
-    - parameter: pedalboard.effects.1.wet_level
-      values: [0.0, 0.6]
-  # Process pool over conditions — the only knob that parallelises
-  # `sonitra benchmark`. Kept at 1 because each worker is a separate process
-  # with its own TensorFlow runtime, and TF pre-allocates almost all GPU
-  # memory on init (~22 GB of 24 GB in the first process), so a second worker
-  # is left with nothing. Raising this requires enabling GPU memory growth
-  # first, or setting transcription device back to "cpu".
+    - name: drive
+      parameter: pedalboard.effects.1.drive_db
+      values: [0.0, 6.0, 12.0, 18.0, 24.0, 30.0]
   max_workers: 1

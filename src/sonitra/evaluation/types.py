@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
+from sonitra.notes import make_note
+
 
 @dataclass(frozen=True)
 class NoteEvent:
@@ -22,13 +24,20 @@ def notes_from_dicts(notes: Iterable[dict[str, Any]]) -> list[NoteEvent]:
     """Convert midi_reader-style note dicts into sorted NoteEvents."""
     events: list[NoteEvent] = []
     for note in notes:
-        onset = float(note["start_sec"])
+        normalised = make_note(
+            pitch=note["pitch"],
+            velocity=note.get("velocity", 64),
+            start_sec=note["start_sec"],
+            duration_sec=note["duration_sec"],
+        )
+        if normalised is None:
+            continue
         events.append(
             NoteEvent(
-                pitch=int(note["pitch"]),
-                onset_sec=onset,
-                offset_sec=onset + float(note["duration_sec"]),
-                velocity=int(note.get("velocity", 0)),
+                pitch=normalised["pitch"],
+                onset_sec=normalised["start_sec"],
+                offset_sec=normalised["start_sec"] + normalised["duration_sec"],
+                velocity=normalised["velocity"],
             )
         )
     return sorted(events, key=lambda e: (e.onset_sec, e.pitch))

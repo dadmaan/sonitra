@@ -15,15 +15,15 @@ from sonitra.storage import write_wav
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 #
-# Builds on the Phase-3 `audio_corpus_dir` fixture (tests/conftest.py), which
+# Builds on the `audio_corpus_dir` fixture (tests/conftest.py), which
 # already lays out:
 #   midi/piece_0.mid, midi/piece_1.mid
 #   recordings/piece_0_performer1.wav, recordings/piece_1_performer1.wav
-# (piece_N_performerX pairs to piece_N.mid via the §2.3 token-prefix rule.)
+# (piece_N_performerX pairs to piece_N.mid via the token-prefix rule.)
 #
 # The `precomputed` transcriber looks up its own midi_dir *by audio stem*
-# (PrecomputedTranscriber.transcribe), which is orthogonal to the §2.3
-# pairing scheme (that pairs by reference filename tokens). So every
+# (PrecomputedTranscriber.transcribe), which is orthogonal to the
+# pairing scheme: that pairs by reference filename tokens. So every
 # recording used with the precomputed transcriber needs its own
 # `<recording-stem>.mid` seeded into a dedicated lookup dir, distinct from
 # the pairing reference in `midi/`.
@@ -38,7 +38,7 @@ def precomputed_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def audio_benchmark_config(tmp_path: Path, precomputed_dir: Path) -> PipelineConfig:
-    # fluidsynth backend, no fluidsynth section: valid in audio mode (P1) --
+    # fluidsynth backend, no fluidsynth section: valid in audio mode --
     # the synth is never constructed for audio-mode input.
     return PipelineConfig.model_validate(
         {

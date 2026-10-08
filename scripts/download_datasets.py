@@ -4,6 +4,19 @@
 Runs on the Python standard library alone; with ``rich`` and a terminal it adds
 an interactive picker and live progress. Interrupted downloads resume on the
 next run; ``--force`` starts over.
+
+Examples:
+    # list available datasets
+    python scripts/download_datasets.py --list
+
+    # download one dataset (MAESTRO v3 MIDI + metadata, ~57 MB)
+    python scripts/download_datasets.py maestro-v3-midi
+
+    # download everything, four at a time
+    python scripts/download_datasets.py --all --jobs 4
+
+    # re-download a dataset from scratch
+    python scripts/download_datasets.py maestro-v3-midi --force
 """
 
 from __future__ import annotations
@@ -65,7 +78,7 @@ _GUITARSET_NEXT_STEPS = (
     "Next steps for GuitarSet (JAMS ground truth needs one conversion):\n"
     "  python scripts/guitarset_jams_to_midi.py --dry-run\n"
     "  python scripts/guitarset_jams_to_midi.py\n"
-    "  sonitra benchmark --config config/benchmark/guitarset_test.yaml "
+    "  sonitra benchmark --config config/benchmark/smoke/guitarset_test.yaml "
     "--dataset guitarset --limit 2"
 )
 
@@ -73,8 +86,14 @@ _MUSICNET_NEXT_STEPS = (
     "Next steps for MusicNet (label CSVs need one conversion):\n"
     "  python scripts/musicnet_labels_to_midi.py --dry-run\n"
     "  python scripts/musicnet_labels_to_midi.py\n"
-    "  sonitra benchmark --config config/benchmark/musicnet_test.yaml "
+    "  sonitra benchmark --config config/benchmark/smoke/musicnet_test.yaml "
     "--dataset musicnet --limit 2"
+)
+
+_SMD_NEXT_STEPS = (
+    "Optional next step for SMD (metadata CSVs linking the real and synthesised versions):\n"
+    "  python scripts/smd_metadata.py --dry-run\n"
+    "  python scripts/smd_metadata.py"
 )
 
 DATASETS: Dict[str, Dict] = {
@@ -541,6 +560,66 @@ DATASETS: Dict[str, Dict] = {
                 "target_subdir": "metadata",
                 "filename": "gaps_metadata_with_splits.csv",
                 "size_mb": 1,
+            },
+        ],
+    },
+    "smd-piano-v2": {
+        "name": "Saarland Music Data (SMD) MIDI-Audio Piano Music v2",
+        "description": (
+            "50 Disklavier piano performances (4.7 h): real 44.1 kHz stereo "
+            "recordings with MIDI captured by the piano, plus per-note CSVs; the "
+            "archive's 22.05 kHz mono copies and FluidSynth renders are not "
+            "extracted. CC BY 3.0 on Zenodo; the project site states CC BY-NC-SA "
+            "3.0, so treat as noncommercial. Müller et al., ISMIR 2011."
+        ),
+        "note": (
+            "Solo piano. 50 classical pieces (about 4.7 h) played by music "
+            "students on a Disklavier, which recorded the MIDI as they played. "
+            "Made for transcription, alignment and performance analysis."
+        ),
+        "corpus_subdir": "smd-piano-v2",
+        "next_steps": _SMD_NEXT_STEPS,
+        "sources": [
+            {
+                # SMD-piano_v2.zip: 3,221,582,754 B, md5 984cfc48f1fa2785594769eb1e674697 verified 2026-10-06
+                "url": "https://zenodo.org/records/13753319/files/SMD-piano_v2.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("midi/", frozenset({".mid", ".midi"}), "midi"),
+                    ("wav_44100_stereo/", frozenset({".wav"}), "recordings"),
+                    ("csv/", frozenset({".csv"}), "annotations/csv"),
+                ],
+                "size_mb": 3_072,
+            },
+        ],
+    },
+    "smd-synth-v1": {
+        "name": "SMD-synth v1 (synthesised SMD piano)",
+        "description": (
+            "The same 50 SMD performances re-synthesised so every note stops at "
+            "its MIDI note-off: 44.1 kHz stereo audio + cleaned MIDI (sustain "
+            "pedal removed, MIDI errors fixed, starts and ends trimmed), so its "
+            "MIDI differs from smd-piano-v2's. CC BY 4.0 on Zenodo; derived from "
+            "SMD, whose project site states CC BY-NC-SA 3.0, so treat as "
+            "noncommercial. Taenzer et al., 2021."
+        ),
+        "note": (
+            "Synthesised solo piano. The 50 SMD performances rendered so each "
+            "note stops exactly at its MIDI note-off, with the pedal removed. "
+            "Made as a clean counterpart to the real SMD recordings."
+        ),
+        "corpus_subdir": "smd-synth-v1",
+        "next_steps": _SMD_NEXT_STEPS,
+        "sources": [
+            {
+                # SMD-synth_v1.zip: 1,262,442,726 B, md5 6fcc26d09a0995368f967642ba10e1bc verified 2026-10-06
+                "url": "https://zenodo.org/records/4637908/files/SMD-synth_v1.zip",
+                "kind": "zip",
+                "extract_map": [
+                    ("", frozenset({".mid", ".midi"}), "midi"),
+                    ("", frozenset({".wav"}), "recordings"),
+                ],
+                "size_mb": 1_204,
             },
         ],
     },
@@ -2611,21 +2690,8 @@ def _positive_int(value: str) -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download AMT benchmark datasets into the Sonitra corpus directory.",
+        description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="\n".join(
-            [
-                "Examples:",
-                "  python scripts/download_datasets.py --list",
-                "  python scripts/download_datasets.py --notes",
-                "  python scripts/download_datasets.py maestro-v3-midi",
-                "  python scripts/download_datasets.py bsed",
-                "  python scripts/download_datasets.py --all",
-                "  python scripts/download_datasets.py --all --jobs 4",
-                "  python scripts/download_datasets.py maestro-v3-midi --force",
-                "  python scripts/download_datasets.py  (interactive picker on a TTY)",
-            ]
-        ),
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(

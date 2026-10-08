@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# pre-push: run the CI checks inside the devcontainer, and refuse the push when they cannot run or fail.
+# Usage: git calls it as `pre-push <remote-name> <remote-url>` with one ref per line on stdin; install with `git config core.hooksPath scripts/hooks`.
+set -euo pipefail
+
+readonly ZERO_SHA="0000000000000000000000000000000000000000"
+readonly CHECKED_REFS=("refs/heads/dev" "refs/heads/main")
+readonly COMPOSE_LABEL="com.docker.compose.service=sonitra"
+
+refuse() {
+  printf 'pre-push: %s\n' "$1" >&2
+  printf 'pre-push: bypass in an emergency: git push --no-verify\n' >&2
+  exit 1
+}
+
+# --- which refs does this push touch? -----------------------------------------
+kept_ref=""
+kept_sha=""
+mode_flag=""
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  keep=0
+  for candidate in "${CHECKED_REFS[@]}"; do
+    if [ "$remote_ref" = "$candidate" ]; then
+      keep=1
+      break
+    fi
+  done
+  # A zero local sha deletes the remote ref, which has no code to check.
+  [ "$keep" -eq 1 ] || continue
+  [ "$local_sha" != "$ZERO_SHA" ] || continue
+  # The checks test the checked-out code, so one checkout can push one commit.
+  if [ -n "$kept_sha" ] && [ "$kept_sha" != "$local_sha" ]; then
+    refuse "check out ${kept_ref#refs/heads/} before pushing it; the checks test the checked-out code"
+  fi
+  kept_ref="$remote_ref"
+  kept_sha="$local_sha"
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    mode_flag="--full"
+  fi
+done
+
+if [ -z "$kept_sha" ]; then
+  exit 0
+fi
+
+# --- the working tree is what gets checked ------------------------------------
+if [ -n "$(git status --porcelain)" ]; then
+  refuse "commit or stash your changes first; the checks run on the working tree"
+fi
+
+if [ "$kept_sha" != "$(git rev-parse HEAD 2>/dev/null || true)" ]; then
+  refuse "check out ${kept_ref#refs/heads/} before pushing it; the checks test the checked-out code"
+fi
+
+# --- find the devcontainer ----------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+  refuse "docker was not found on PATH; start Docker Desktop and push again"
+fi
+
+container="$(git config --get sonitra.checkContainer || true)"
+if [ -z "$container" ]; then
+  # stderr is left alone: docker's own complaint (daemon down, permission
+  # denied) is the useful part of a failing `docker ps`.
+  if ! ps_output="$(docker ps --filter "label=${COMPOSE_LABEL}" --format '{{.Names}}')"; then
+    refuse "docker ps failed; is Docker Desktop running?"
+  fi
+  names=()
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    names+=("$name")
+  done <<<"$ps_output"
+  case "${#names[@]}" in
+  0)
+    refuse "the devcontainer is not running; start it (VS Code: Reopen in Container) and push again"
+    ;;
+  1)
+    container="${names[0]}"
+    ;;
+  *)
+    refuse "several sonitra containers are running; pick one with: git config sonitra.checkContainer <name>"
+    ;;
+  esac
+fi
+
+# --- run the checks in the container, never on this host ----------------------
+branch="${kept_ref#refs/heads/}"
+if [ -n "$mode_flag" ]; then
+  mode="full"
+  check_command="bash scripts/ci/check.sh --full"
+else
+  mode="fast"
+  check_command="bash scripts/ci/check.sh"
+fi
+
+printf 'pre-push: checking %s at %s (%s) in container %s\n' \
+  "$branch" "$(git rev-parse --short HEAD)" "$mode" "$container"
+
+# Git for Windows runs hooks in its bundled MSYS bash, which rewrites POSIX
+# arguments on their way to the native docker.exe and leaves the daemon with a
+# mangled `-w` path. The prefix is inert in shells that do no such rewriting,
+# so this line also works under WSL git and on Linux and macOS.
+MSYS_NO_PATHCONV=1 docker exec -u node -w /workspace "$container" bash -lc "$check_command" || exit $?

@@ -1,24 +1,32 @@
 # =============================================================================
 # Sonitra — Production Dockerfile
-# Multi-stage build: `builder` installs Python deps into a single venv that
-# both runtime images reuse; `runtime` is a clean CPU-only slim image;
-# `runtime-gpu` layers the same venv onto an NVIDIA CUDA base image for GPU
-# inference. Pick the target via `docker build --target runtime-gpu` (or the
-# `target:` key in docker-compose.yml — see the `sonitra-gpu` service).
+# Multi-stage build: a shared `builder-base` (apt deps + uv binary + manifests)
+# fans out into `builder-cpu` and `builder-gpu`, each running its own `uv sync`
+# into its own /app/.venv (`--extra transkun` = PyTorch CPU build on Linux,
+# `--extra transkun-gpu` = PyPI CUDA build); `runtime` is a clean CPU-only slim
+# image carrying the CPU venv, `runtime-gpu` layers the CUDA venv onto an NVIDIA
+# CUDA base image for GPU inference and copies its CPython from
+# `python:3.11-slim-bookworm` so that venv runs on the interpreter it was built
+# with (jammy's apt python3.11 is a pre-release; see the interpreter comment in
+# the stage). Pick the target via
+# `docker build --target runtime-gpu` (or the `target:` key in
+# docker-compose.yml — see the `sonitra-gpu` service). Each runtime image holds
+# exactly one venv — just no longer the *same* venv.
 #
 # Build context: repo root (set in docker/docker-compose.yml as context: ..)
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1 — builder
-# Installs uv and syncs the full dependency tree into /app/.venv. Produces
-# one venv shared by both the CPU and GPU runtime stages: TensorFlow's CUDA
-# libraries come from the GPU runtime stage's base image (apt-installed,
-# discovered via the standard ldconfig cache) rather than from pip, so this
-# stage never needs to know whether it's building for CPU or GPU.
-# Build tools are kept here and discarded in the runtime stage.
+# Stage 1 — builder-base
+# Shared base for both fork builders: build-time apt packages, the uv binary,
+# and the dependency manifests. The heavy `uv sync` lives in `builder-cpu` /
+# `builder-gpu` below (one venv per fork), so this stage stays fully shared
+# and cached. TensorFlow's CUDA libraries come from the GPU runtime stage's
+# base image (apt-installed, discovered via the standard ldconfig cache)
+# rather than from pip, so no builder stage needs the CUDA toolkit.
+# Build tools are kept here and discarded in the runtime stages.
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim AS builder-base
 
 # apt runs unattended during a build. Without a non-interactive frontend,
 # any package whose postinst calls debconf will open a prompt that BuildKit
@@ -47,14 +55,33 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency manifests first so that the heavy `uv sync` layer is
-# cached for all subsequent builds that don't change the lockfile.
+# Copy dependency manifests first so that the fork builders' heavy `uv sync`
+# layers are cached for all subsequent builds that don't change the lockfile.
 # README.md is required because pyproject.toml declares it as the readme field.
 COPY pyproject.toml uv.lock README.md ./
 
+# ---------------------------------------------------------------------------
+# Stage 2 — builder-cpu
+# CPU fork: syncs the `transkun` extra, which resolves torch/torchaudio from
+# the PyTorch CPU index on Linux (see [tool.uv.sources] in pyproject.toml).
+# Produces the /app/.venv that the `runtime` stage copies.
+# ---------------------------------------------------------------------------
+FROM builder-base AS builder-cpu
+
+# 1/0 switch for the transkun backend, threaded through from
+# docker-compose.yml exactly like INSTALL_R (default 1). With 0 the venv
+# builds without transkun and CPU torch at all.
+ARG INSTALL_TRANSKUN=1
+
 # Install all third-party dependencies (but not the project package itself)
-# so this layer survives source-code-only changes.
-RUN uv sync --frozen --no-dev --no-install-project
+# so this layer survives source-code-only changes. `--locked` (not `--frozen`)
+# fails the build on a stale lockfile instead of silently shipping a forbidden
+# pin — the stale pedalboard 0.9.23 reached the images exactly this way.
+# The cache mount keeps uv's download cache across builds.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    TRANSKUN_EXTRA=""; \
+    if [ "$INSTALL_TRANSKUN" = "1" ]; then TRANSKUN_EXTRA="--extra transkun"; fi; \
+    uv sync --locked --no-dev --no-install-project ${TRANSKUN_EXTRA}
 
 # Copy source and complete the install (editable install of sonitra itself).
 COPY src/ src/
@@ -62,15 +89,47 @@ COPY src/ src/
 COPY config/ config/
 # scripts/run_transcribe_eval.py — batch runner invoked directly, not part of the package.
 COPY scripts/ scripts/
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    TRANSKUN_EXTRA=""; \
+    if [ "$INSTALL_TRANSKUN" = "1" ]; then TRANSKUN_EXTRA="--extra transkun"; fi; \
+    uv sync --locked --no-dev ${TRANSKUN_EXTRA}
 
 # ---------------------------------------------------------------------------
-# Stage 2 — runtime (CPU)
-# Minimal image: only runtime shared libraries + the built venv from builder.
+# Stage 3 — builder-gpu
+# CUDA fork: syncs the `transkun-gpu` extra, which takes PyPI torch (a CUDA 13
+# build needing an R580-series or newer host driver to see the GPU). Produces
+# the /app/.venv that the `runtime-gpu` stage copies. Stays on
+# python:3.11-slim — torch and transkun ship as prebuilt manylinux wheels
+# needing no CUDA toolkit at build time, and the GPU stage's python-symlink
+# constraint (see `runtime-gpu`) is untouched by keeping the same interpreter
+# path here.
+# ---------------------------------------------------------------------------
+FROM builder-base AS builder-gpu
+
+# Same 1/0 switch as `builder-cpu` above.
+ARG INSTALL_TRANSKUN=1
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    TRANSKUN_EXTRA=""; \
+    if [ "$INSTALL_TRANSKUN" = "1" ]; then TRANSKUN_EXTRA="--extra transkun-gpu"; fi; \
+    uv sync --locked --no-dev --no-install-project ${TRANSKUN_EXTRA}
+
+COPY src/ src/
+COPY config/ config/
+COPY scripts/ scripts/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    TRANSKUN_EXTRA=""; \
+    if [ "$INSTALL_TRANSKUN" = "1" ]; then TRANSKUN_EXTRA="--extra transkun-gpu"; fi; \
+    uv sync --locked --no-dev ${TRANSKUN_EXTRA}
+
+# ---------------------------------------------------------------------------
+# Stage 4 — runtime (CPU)
+# Minimal image: only runtime shared libraries + the CPU venv from
+# `builder-cpu`.
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim AS runtime
 
-# Build-only non-interactive apt frontend — see the builder stage above.
+# Build-only non-interactive apt frontend — see the builder-base stage above.
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Fix the container timezone explicitly. This gives tzdata (installed as a
@@ -163,17 +222,24 @@ ENV PATH="/app/.venv/bin:$PATH"
 # writes to /app/.cache/uv, which is owned by the sonitra user.
 ENV UV_CACHE_DIR=/app/.cache/uv
 
-# Copy the fully-built project tree from the builder stage, setting ownership
+# Where the transcriber weights are installed. /models is a bind mount at runtime,
+# so nothing is baked in here — the entrypoint runs scripts/setup_hft_transformer.py
+# on container start. The same host directory is mounted at this path by the
+# devcontainer, hence the path outside /app.
+ENV SONITRA_MODELS_DIR=/models
+
+# Copy the fully-built project tree from the `builder-cpu` stage, setting ownership
 # in a single pass via --chown (avoids a slow chown -R on a large tree).
-COPY --from=builder --chown=sonitra:sonitra /app /app
+COPY --from=builder-cpu --chown=sonitra:sonitra /app /app
 
 # Create named volume mount-points owned by the non-root user.
 # These directories are intended to be bind-mounted at runtime; they exist
 # in the image so the container starts cleanly even without mounts.
 # /app/.cache/uv is created here so uv can write its runtime cache without
-# requiring a home directory.
-RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
-    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv \
+# requiring a home directory. /models sits outside /app because the devcontainer
+# mounts the same host directory at the same path (see SONITRA_MODELS_DIR above).
+RUN mkdir -p /app/corpus /app/output /app/.cache/uv /models \
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv /models \
     && chown sonitra:sonitra /app
 
 # Entrypoint script lives in docker/ in the repo; build context is repo root.
@@ -196,10 +262,14 @@ ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sonitra", "serve", "--port", "8000"]
 
 # ---------------------------------------------------------------------------
-# Stage 3 — runtime (GPU)
-# Same venv as the CPU runtime, layered onto an NVIDIA CUDA base image
+# Stage 5 — runtime (GPU)
+# The CUDA venv from `builder-gpu`, layered onto an NVIDIA CUDA base image
 # instead of python:3.11-slim so cuDNN/cuBLAS/cuFFT/etc. are apt-installed
-# system-wide and discovered via the standard ldconfig cache.
+# system-wide and discovered via the standard ldconfig cache. This stage also
+# copies its CPython from python:3.11-slim-bookworm so the venv runs on the
+# interpreter it was built with — jammy's apt python3.11 is a pre-release
+# without sys.get_int_max_str_digits, which torch's dynamo path calls (see the
+# interpreter comment below).
 #
 # This replaces an earlier approach that installed CUDA as pip wheels
 # (nvidia-*-cu12, still available for bare-metal installs via pyproject.toml's
@@ -222,7 +292,7 @@ CMD ["sonitra", "serve", "--port", "8000"]
 # ---------------------------------------------------------------------------
 FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS runtime-gpu
 
-# Build-only non-interactive apt frontend + fixed timezone — see the builder
+# Build-only non-interactive apt frontend + fixed timezone — see the builder-base
 # and runtime stages above. This stage is where the tzdata prompt actually
 # bit: jammy's r-base-core drags tzdata in unconfigured.
 ARG DEBIAN_FRONTEND=noninteractive
@@ -231,19 +301,27 @@ ENV TZ=Europe/Oslo
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 
-# python3.11 + libcudnn8 come from apt (Ubuntu's jammy universe repo and
-# NVIDIA's own apt repo, respectively — the nvidia/cuda base image already
-# has the latter configured). Not version-pinned: the exact Debian revision
+# libcudnn8 comes from NVIDIA's own apt repo (the nvidia/cuda base image
+# already has it configured). Not version-pinned: the exact Debian revision
 # suffix for a cuDNN 8.9.4.25 build wasn't verifiable without a live apt
 # query against this repo, and a wrong pin fails the build outright. Check
 # `apt list -a libcudnn8` on the build host if TF's cuDNN version check ends
 # up caring about the exact point release (the old pip-wheel pin was
 # nvidia-cudnn-cu12==8.9.4.25, for reference).
 #
-# The venv copied from `builder` was built against python:3.11-slim's
-# python3.11, and the venv's own python binary is a symlink to it rather
-# than a self-contained copy — so this stage must expose python3.11 at the
-# exact same /usr/local/bin/python3(.11) path for that symlink to resolve.
+# No python3.11 from apt. Jammy ships 3.11.0rc1, a pre-release that predates
+# sys.get_int_max_str_digits (added before 3.11.0 final). torch's dynamo
+# polyfill calls that attribute unguarded for any sys.version_info >= (3, 11),
+# so `import torch._dynamo` dies with AttributeError — and TransKun reaches
+# dynamo through torch.utils.checkpoint, which is how the backend failed on
+# this image while basic_pitch, TensorFlow and torch.cuda all worked.
+#
+# The venv copied from `builder-gpu` was built on python:3.11-slim's 3.11.16
+# and its bin/python is a symlink to /usr/local/bin/python3.11, so this stage
+# must expose a final 3.11 at that exact path. Copying /usr/local from
+# python:3.11-slim-bookworm supplies the same 3.11.16 built on Debian 12
+# (glibc 2.36), which runs on jammy (2.35); the trixie tag's build does not —
+# its libpython3.11.so.1.0 requires GLIBC_2.38.
 #
 # /etc/localtime and /etc/timezone are seeded before the first apt call so
 # tzdata's postinst finds the timezone already chosen (see ENV TZ above).
@@ -251,8 +329,6 @@ RUN ln -snf /usr/share/zoneinfo/Europe/Oslo /etc/localtime \
     && echo Europe/Oslo > /etc/timezone \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3.11 \
-        python3.11-venv \
         libcudnn8 \
         libsndfile1 \
         libfftw3-double3 \
@@ -261,10 +337,13 @@ RUN ln -snf /usr/share/zoneinfo/Europe/Oslo /etc/localtime \
         libgl1 \
         gosu \
         tmux \
-    && ln -sf /usr/bin/python3.11 /usr/local/bin/python3.11 \
-    && ln -sf /usr/local/bin/python3.11 /usr/local/bin/python3 \
-    && ln -sf /usr/local/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
+
+# The interpreter the copied venv expects (see above). Placed after the apt
+# layer so a future change to the bookworm tag invalidates only this layer
+# and the ones below it. The copy also provides /usr/local/bin/python3 and
+# `python`; no symlinks are created here.
+COPY --from=python:3.11-slim-bookworm /usr/local /usr/local
 
 # R + glmmTMB for scripts/run_mixed_effects_analysis.py — same rationale as the
 # CPU runtime stage above, but sourced from jammy's universe repo (already in
@@ -300,10 +379,28 @@ WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_CACHE_DIR=/app/.cache/uv
 
-COPY --from=builder --chown=sonitra:sonitra /app /app
+# Weights directory — same reasoning as in the CPU runtime stage above.
+ENV SONITRA_MODELS_DIR=/models
 
-RUN mkdir -p /app/corpus /app/output /app/.cache/uv \
-    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv \
+# CUDA coexistence pin (TF 2.15 + torch in one process): TensorFlow dlopens the
+# apt-installed libcudnn.so.8 by soname, while torch preloads its own bundled
+# cuDNN 9 (nvidia-cudnn-cu13 wheels) by absolute path — so the two never share a
+# cuDNN, provided no venv path shadows the apt library. This pin lists system
+# library dirs only (driver mounts, CUDA toolkit, apt) and deliberately excludes
+# every /app/.venv path. Verified by the Stage 19 library-path check.
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda-12.2/lib64:/usr/lib/x86_64-linux-gnu
+COPY --from=builder-gpu --chown=sonitra:sonitra /app /app
+
+# Fail the build if the copied interpreter and the venv disagree on the 3.11
+# patch release — the python:3.11-slim and python:3.11-slim-bookworm tags
+# move independently. uv 0.7.8 writes `version_info = 3.11.16` to pyvenv.cfg;
+# `tr` strips any trailing whitespace so a format change cannot cause a
+# spurious mismatch.
+RUN test "$(python3.11 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" \
+        = "$(sed -n 's/^version_info = //p' /app/.venv/pyvenv.cfg | tr -d '[:space:]')"
+
+RUN mkdir -p /app/corpus /app/output /app/.cache/uv /models \
+    && chown -R sonitra:sonitra /app/corpus /app/output /app/.cache/uv /models \
     && chown sonitra:sonitra /app
 
 COPY docker/entrypoint.sh /entrypoint.sh

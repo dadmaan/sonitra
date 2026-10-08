@@ -36,10 +36,12 @@ Currently supported:
 | `guitarset-full` | GuitarSet (Xi et al., ISMIR 2018) — CC BY 4.0 | Both recording variants (720 WAVs) + JAMS annotations in one run (requires conversion; one-run equivalent of `-mic` + `-mix`) | ~1.3 GB |
 | `gaps-midi` | [GAPS](https://huggingface.co/datasets/xavriley/GAPS) (Riley et al., ISMIR 2024) — CC BY-NC-SA 4.0, research use | 404 classical-guitar MIDI references + metadata, no audio | ~3 MB |
 | `gaps-full` | GAPS (Riley et al., ISMIR 2024) — CC BY-NC-SA 4.0, research use | 404 classical-guitar recordings (~23 h) + aligned MIDI + MusicXML + syncpoints + metadata, no conversion needed (re-uses MIDI already fetched by `gaps-midi`) | ~15.3 GB |
+| `smd-piano-v2` | [Saarland Music Data (SMD)](https://zenodo.org/records/13753319) v2 (Müller et al., ISMIR 2011) — CC BY 3.0 on Zenodo; the project site states CC BY-NC-SA 3.0, so treat as noncommercial | 50 Disklavier piano performances (4.7 h): real 44.1 kHz stereo recordings + the MIDI captured by the piano + per-note CSVs | ~3.2 GB |
+| `smd-synth-v1` | [SMD-synth](https://zenodo.org/records/4637908) v1 (Taenzer et al., 2021) — CC BY 4.0 on Zenodo; derived from SMD (CC BY-NC-SA 3.0 on its project site), so treat as noncommercial | The same 50 performances re-synthesised: 44.1 kHz stereo recordings + cleaned MIDI | ~1.3 GB |
 
 E-GMD holds drum performances, so you can download it but not yet benchmark it. Sonitra's transcription and scoring tools target pitched instruments like piano and guitar, not drum hits. [MAPS](https://adasp.telecom-paris.fr/resources/2010-07-08-maps-database/) is not scripted. It sits behind a sign-up form with no direct download link, so the script cannot fetch it on its own.
 
-Files go under `corpus/{dataset}/midi/`. This is the dataset-first layout, for example `corpus/maestro-v3/midi/2004/…`. MIDI means a digital score file. Sets that also ship real audio, such as `bsed`, `maestro-v3-full` and `-wav`, `musicnet-full`, and `e-gmd-full`, also fill `corpus/{dataset}/recordings/` (`musicnet-midi`, `maestro-v3-midi`, `e-gmd-midi`, and `gaps-midi` are MIDI/metadata only). Sonitra keeps this separate on purpose from `audio/`, which holds only audio Sonitra itself renders (`corpus/{dataset}/audio/<config_name>/`). Sets with track notes (CSV, JSON, README, LICENSE files) fill `corpus/{dataset}/metadata/`. CSV means comma-separated values, a simple table format. `musicnet-full` also fills `corpus/musicnet/annotations/labels/` (per-note label CSVs, audio-aligned) and `corpus/musicnet/annotations/score_midi/` (reference copy of the score MIDI); `annotations/` otherwise holds GuitarSet JAMS and GAPS MusicXML/syncpoints. Sonitra plans to add more sets and instruments later.
+Files go under `corpus/{dataset}/midi/`. This is the dataset-first layout, for example `corpus/maestro-v3/midi/2004/…`. MIDI means a digital score file. Sets that also ship real audio, such as `bsed`, `maestro-v3-full` and `-wav`, `musicnet-full`, `e-gmd-full`, and `smd-piano-v2`, also fill `corpus/{dataset}/recordings/` (`musicnet-midi`, `maestro-v3-midi`, `e-gmd-midi`, and `gaps-midi` are MIDI/metadata only). `smd-synth-v1` also fills `recordings/`, but with synthesised audio rather than real recordings (BSED already includes one synthetic rendition among its real ones). Sonitra keeps this separate on purpose from `audio/`, which holds only audio Sonitra itself renders (`corpus/{dataset}/audio/<config_name>/`). Sets with track notes (CSV, JSON, README, LICENSE files) fill `corpus/{dataset}/metadata/`. CSV means comma-separated values, a simple table format. `musicnet-full` also fills `corpus/musicnet/annotations/labels/` (per-note label CSVs, audio-aligned) and `corpus/musicnet/annotations/score_midi/` (reference copy of the score MIDI); `annotations/` otherwise holds GuitarSet JAMS, GAPS MusicXML/syncpoints, and SMD's per-note CSVs (`corpus/smd-piano-v2/annotations/csv/`). Sonitra plans to add more sets and instruments later.
 
 Note: if you fetched `maestro-v3` with an older script before the `-midi`/`-wav`/`-full` split, its metadata files (`maestro-v3.0.0.csv`/`.json`, `README`, `LICENSE`) landed in `midi/` instead of `metadata/`. If you run `maestro-v3-midi` again, the script sees `metadata/` as missing and fetches the small MIDI zip again. Your old files in `midi/` stay as they are. You can move them to `metadata/` by hand if you want.
 
@@ -53,7 +55,7 @@ You must convert the answers before use. The downloader puts nothing in `midi/` 
 python scripts/download_datasets.py guitarset-full   # JAMS → corpus/guitarset/annotations/, both audios → corpus/guitarset/recordings/
 python scripts/guitarset_jams_to_midi.py --dry-run  # inspect counts first
 python scripts/guitarset_jams_to_midi.py            # annotations/ → midi/ (360 unsuffixed stems) + metadata/guitarset.csv
-sonitra benchmark --config config/benchmark/guitarset_test.yaml --dataset guitarset --limit 2
+sonitra benchmark --config config/benchmark/smoke/guitarset_test.yaml --dataset guitarset --limit 2
 ```
 
 `scripts/guitarset_jams_to_midi.py` (standard library plus `sonitra.midi_writer`) merges the six per-string `note_midi` blocks into one note list per clip. It rounds pitch with `pitch = round(value)` and sets loudness to a fixed velocity of 100, because GuitarSet has no loudness data. It writes a General MIDI `program_change` on channel 0 ahead of the first note (`--program`, default 24, Acoustic Guitar (nylon); `--no-program` omits it): without one, a GM player such as the Windows GS Wavetable synth falls back to program 0 and the reference plays back as piano. The program affects playback timbre only — `parse_midi` reads notes and ignores it, so no metric changes. It writes `corpus/guitarset/midi/*.mid` plus `corpus/guitarset/metadata/guitarset.csv`, one row per clip with join column `midi_filename`. It also writes a `<csv>.provenance.json` log file. `annotations/` is a new corpus target folder, the same one `ROADMAP.md` plans for BSED's alignment files.
@@ -73,7 +75,7 @@ Two keys share `corpus/gaps/`, the same pattern as the `maestro-v3-*` and `e-gmd
 ```bash
 python scripts/download_datasets.py gaps-midi   # ~3 MB: MIDI + metadata into corpus/gaps/
 python scripts/download_datasets.py gaps-full   # ~15.3 GB: adds recordings, MusicXML, syncpoints
-sonitra benchmark --config config/benchmark/gaps_test.yaml --dataset gaps --limit 2
+sonitra benchmark --config config/benchmark/smoke/gaps_test.yaml --dataset gaps --limit 2
 ```
 
 The download key and the dataset name differ. `--dataset gaps` stays the same whichever key you fetched, because both keys fill `corpus/gaps/`.
@@ -113,7 +115,7 @@ python scripts/download_datasets.py musicnet-full              # ~10.6 GB: adds 
 python scripts/musicnet_labels_to_midi.py --dry-run            # inspect counts first
 python scripts/musicnet_labels_to_midi.py                      # annotations/labels/ → midi/<id>.mid + metadata/musicnet.csv
 python scripts/musicnet_labels_to_midi.py --replace-score-midi # if midi/ still holds the score tree, moves it to annotations/score_midi/
-sonitra benchmark --config config/benchmark/musicnet_test.yaml --dataset musicnet --limit 2
+sonitra benchmark --config config/benchmark/smoke/musicnet_test.yaml --dataset musicnet --limit 2
 ```
 
 If `--output-midi` contains any MIDI not at top-level `<id>.mid` (the `musicnet-midi` score tree), the converter refuses with exit 1; pass `--replace-score-midi` to move or delete it (identical copies are deleted, differing copies are refused rather than lost, and empty dirs are removed). After `musicnet-full` is present, `musicnet-midi` reads as present via `superseded_by`, so a later downloader run does not restore the score tree. The converter also accepts a v0.3.0 layout (`--labels corpus/musicnet/metadata`) — the `*_labels` parent match is layout-agnostic. `ticks_per_beat = sample_rate // 2` (22 050 at 44.1 kHz, fits MIDI's signed 16-bit division) so 1 tick = 1 sample at 120 BPM; `parse_midi` round-trip is sample-exact (`round(t * sr) == sample`, not float equality).
@@ -135,6 +137,63 @@ In `exact` mode an unmatched warning suggests `--metadata-match token-prefix`.
 
 v0.3.0 migration (breaking): `musicnet` → `musicnet-full` with no alias (as `maestro-v3` in v0.3.0); label CSVs moved from `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/*_labels/`; score MIDI for `-full` moved from `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/`. If you have a v0.3.0 `corpus/musicnet/`, move `metadata/musicnet/*_labels/` to `annotations/labels/musicnet/` and `midi/musicnet_midis/` to `annotations/score_midi/musicnet_midis/` (or let `python scripts/musicnet_labels_to_midi.py --replace-score-midi` do the second move). Otherwise `musicnet-full`'s legacy presence check (every target dir non-empty) fails and it re-downloads ~10.6 GB; the file-level skip-by-size saves the writes, not the download.
 
+### SMD (Disklavier piano, real and synthesised)
+
+[Saarland Music Data (SMD)](https://zenodo.org/records/13753319) holds 50 classical piano pieces (about 4.7 h each set) played by music students on a Disklavier, which recorded the MIDI as they played. Eight performers played on four recording dates. The project is published twice on Zenodo: `smd-piano-v2` (record [13753319](https://zenodo.org/records/13753319), v2, Müller et al., ISMIR 2011) ships the real recordings, while `smd-synth-v1` (record [4637908](https://zenodo.org/records/4637908), v1, Taenzer et al., 2021, doi:10.5281/zenodo.4637908) re-synthesises the same 50 performances so every note stops at its MIDI note-off (pedal removed, MIDI errors fixed, starts and ends trimmed).
+
+`smd-piano-v2` (~3.2 GB download, ~3.0 GB extracted) fetches 50 `.mid` files into `midi/`, 50 44.1 kHz/16-bit/stereo WAVs into `recordings/`, and 50 per-note CSVs (`Start;Duration;Pitch;Velocity;Instrument`, `;`-separated, velocity 0-1) into `annotations/csv/`. The archive also holds 50 22.05 kHz mono downsampled WAVs and 50 FluidSynth renders of the same MIDI; both stay unextracted because they duplicate the higher-quality recordings and the renderable MIDI. The routing rule matches prefixes with the trailing slash, so the `midi/` rule cannot match `midi_wav_22050_mono/...`. `smd-synth-v1` (~1.3 GB download, ~3.0 GB extracted; the deflated members make extraction about 2.3x the download) fetches everything it ships: the archive is flat, and its 50 `*-SMD-synth.mid` and 50 `*-SMD-synth.wav` (44.1 kHz/16-bit/stereo) files route to `midi/` and `recordings/`.
+
+Layout after download:
+
+```
+midi/<Composer>_<Work>_<NNN>_<YYYYMMDD>-SMD.mid               smd-piano-v2
+midi/<Composer>_<Work>_<NNN>_<YYYYMMDD>-SMD-synth.mid         smd-synth-v1
+recordings/<Composer>_<Work>_<NNN>_<YYYYMMDD>-SMD.wav         smd-piano-v2 (real)
+recordings/<Composer>_<Work>_<NNN>_<YYYYMMDD>-SMD-synth.wav   smd-synth-v1 (synthesised)
+annotations/csv/<Composer>_<Work>_<NNN>_<YYYYMMDD>-SMD.csv    smd-piano-v2 (per-note)
+metadata/<dataset>.csv (+ .provenance.json)                   smd_metadata.py output
+.sources/<source_id>.json                                     download records
+```
+
+All 100 stems match `Composer_Work_NNN_YYYYMMDD-SMD[-synth]`; dropping the `-SMD` / `-SMD-synth` ending gives the exact one-to-one match, because the synth set covers the same 50 performances. The two sets can never share a `midi/` folder because their MIDI differs.
+
+The synth MIDI is a cleaned copy, not the piano MIDI: 23 of the 50 performances lost notes (3,368 in total) and the starts are trimmed (first-onset shift piano minus synth: -0.06 to 6.02 s). The piano MIDI is type 1, 2 tracks, 480 ticks per beat, program 0; the synth MIDI is type 1, 2 tracks, 15,360 ticks per beat, no program. The piano MIDI carries CC64 sustain (thousands of events per file) plus CC67; the synth MIDI has one CC64 event per file. `parse_midi` ends each note at key release and does not extend it to pedal release (as for MAESTRO), so offset and duration scores against the real recordings read pessimistically. Note totals: 151,206 (piano) and 147,838 (synth); audio 4.72 h and 4.70 h. The audio trails the last note-off by 0.04-6.58 s (piano) and 0.05-3.06 s (synth), and the first onset sits 0.19-6.27 s (piano) and 0.11-1.71 s (synth) into the file.
+
+Licences: `smd-piano-v2` is CC BY 3.0 on Zenodo while the project site states CC BY-NC-SA 3.0, and `smd-synth-v1` is CC BY 4.0 on Zenodo while it derives from SMD, whose project site states CC BY-NC-SA 3.0. Treat both as noncommercial.
+
+The metadata script parses MIDI with `sonitra.midi_reader.parse_midi`, so it needs the project env; the downloader stays stdlib-only:
+
+```bash
+python scripts/download_datasets.py smd-synth-v1   # ~1.3 GB: synthesised recordings + cleaned MIDI
+python scripts/download_datasets.py smd-piano-v2   # ~3.2 GB: real recordings + captured MIDI + per-note CSVs
+python scripts/smd_metadata.py --dry-run           # count files and matches first
+python scripts/smd_metadata.py                     # metadata/<dataset>.csv for both sets
+```
+
+`scripts/smd_metadata.py` writes one `corpus/<dataset>/metadata/<dataset>.csv` per present set plus a `<csv>.provenance.json` sidecar; either dataset may be missing. The columns, in order: `midi_filename`, `performance_id`, `variant`, `composer`, `work`, `performer_id`, `recording_date`, `smd_piano_stem`, `smd_synth_stem`, `n_notes`, `duration_sec`. `performance_id` is the stem with a trailing `-SMD` or `-SMD-synth` removed and links a row to its counterpart; `variant` is `piano` or `synth`; `smd_piano_stem` and `smd_synth_stem` hold the counterpart stems, blank when that set lacks the performance; `recording_date` is ISO `YYYY-MM-DD`; `performer_id` keeps the 3-digit string; `n_notes` and `duration_sec` come from `parse_midi` (duration = end of the last note). One performance is spelled `Rachmaninov` upstream (Op. 39 No. 1) and is normalised to `Rachmaninoff` in `composer`, while the raw spelling stays in `midi_filename` and the alias is recorded in the provenance. Reruns overwrite only those two outputs, never `midi/`, `recordings/` or `annotations/`.
+
+For a cross-set comparison, run one benchmark config with `--dataset smd-piano-v2`, then with `--dataset smd-synth-v1`; export each run with `--metadata-csv corpus/<dataset>/metadata/<dataset>.csv` (default join column `midi_filename`) so rows gain `meta.performance_id`, `meta.variant`, `meta.composer`, and the other metadata columns; stack the two tables and compare on `meta.performance_id`, with `meta.variant` as the real-vs-synth factor. Caveat: the two references differ (cleaned synth MIDI, trimmed, no pedal), so a per-performance difference mixes the audio change with the reference change; `meta.n_notes` on each side shows how much the reference changed.
+
+The download preflight budgets only the download (`size_mb` x 1.05), but peak disk is download + extracted, because the archive is deleted only after extraction: about 6.2 GB for `smd-piano-v2` (~3.2 GB + ~3.0 GB) and 4.2 GB for `smd-synth-v1` (~1.3 GB + ~3.0 GB).
+
+Upstream spelling quirk: `Rachmaninoff` (3 files, Op. 36) versus `Rachmaninov` (1 file, Op. 39 No. 1); the alias above handles it.
+
+Use SMD with `sonitra benchmark`. The stems match exactly as for GAPS, so `evaluate` would pair too, but the documented path is `benchmark`. There is no SMD-specific smoke config, so use an existing working config:
+
+```bash
+sonitra benchmark --config config/benchmark/smoke/benchmark_test.yaml --dataset smd-piano-v2 --limit 2
+```
+
+### Dataset splits
+
+A filtered run (`io.where`; see [Configuration → File selection](configuration.md#file-selection)) matches the dataset's metadata CSV to each reference file by file name, ignoring folders and the file ending. The split information each dataset provides differs:
+
+- **MAESTRO:** the metadata has a `split` column with 962 train / 137 validation / 177 test files. The split is not by year.
+- **GAPS:** the metadata has a `split` column, left blank for unpublished files, matched on `midi_path`. The test split has 30 rows. Three files (`Bc1wc`, `CM1wc`, `mN1wc`) exist on disk as `*-fine-aligned.mid` with no metadata row, so a filtered run leaves them out.
+- **GuitarSet:** no official split. Its metadata CSV has a `player_id` column if you want to filter or group by performer.
+- **MusicNet:** the split lives in the label folder names (`train_labels`/`test_labels`). After you run the converter, `metadata/musicnet.csv` has a `split` column plus the `midi_filename` join column, so a converted corpus can be filtered by split. The raw score layout has no split column.
+- **SMD:** no official split. After `scripts/smd_metadata.py` runs, each `metadata/<dataset>.csv` offers `composer`, `performer_id` and `performance_id` for filtering or grouping, with the default `midi_filename` join column.
+
 ### Joining dataset metadata into a benchmark export
 
 `scripts/export_regression_table.py` (see [CLI reference](cli.md)) can add a dataset's `corpus/{dataset}/metadata/*.csv` to a benchmark results table. Use this to add composer or work details for further analysis, for example:
@@ -148,7 +207,7 @@ python scripts/export_regression_table.py \
 
 The joined table is the input that `scripts/run_mixed_effects_analysis.py` expects (see [Statistical analysis](statistical-analysis.md)).
 
-The join works for any dataset. `--metadata-join-column` names the CSV column that holds a filename. MAESTRO's column is `midi_filename`; MusicNet's score metadata uses `id`, while the converter's `metadata/musicnet.csv` uses `midi_filename`. By default Sonitra matches by exact file stem (`--metadata-match exact`); use `--metadata-match token-prefix` when the reference stem carries extra tokens beyond the metadata id (e.g. MusicNet score MIDI `1727_schubert_op114_2` → `1727`) — it tries an exact match first, then a unique token-prefix match using the same logic as audio-to-MIDI pairing (see `sonitra.corpus.match_token_prefix`). Every other column from a matched row is added as `meta.<column>`. Sonitra makes no demand that sets share the same columns, because they do not. For example, MusicNet's metadata has `movement` and `ensemble`, while MAESTRO's does not.
+The join works for any dataset. `--metadata-join-column` names the CSV column that holds a filename. MAESTRO's column is `midi_filename`; MusicNet's score metadata uses `id`, while the converter's `metadata/musicnet.csv` uses `midi_filename`. Both SMD metadata CSVs (`metadata/smd-piano-v2.csv` and `metadata/smd-synth-v1.csv`) use the default `midi_filename` column. By default Sonitra matches by exact file stem (`--metadata-match exact`); use `--metadata-match token-prefix` when the reference stem carries extra tokens beyond the metadata id (e.g. MusicNet score MIDI `1727_schubert_op114_2` → `1727`) — it tries an exact match first, then a unique token-prefix match using the same logic as audio-to-MIDI pairing (see `sonitra.corpus.match_token_prefix`). Every other column from a matched row is added as `meta.<column>`. Sonitra makes no demand that sets share the same columns, because they do not. For example, MusicNet's metadata has `movement` and `ensemble`, while MAESTRO's does not.
 
 ---
 [← Back to README](../README.md)
