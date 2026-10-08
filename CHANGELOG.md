@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-08
+
 ### Added
 
 - Two SMD keys in `scripts/download_datasets.py`: `smd-piano-v2` (50 real Disklavier performances: 44.1 kHz stereo audio, captured MIDI, per-note CSVs) and `smd-synth-v1` (the same performances re-synthesised with cleaned MIDI), both pinned to version-fixed Zenodo records by size and md5 and leaving the archives' duplicate 22.05 kHz and FluidSynth members unextracted. Covered by the SMD cases in `tests/test_download_datasets.py`.
@@ -397,7 +399,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
 - Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve the relative subpath from the corpus root in all output paths. Two files in different subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no longer overwrite each other on disk or silently cross-pair during evaluation. (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.6...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.5.0
 [0.5.0-dev.6]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.5...v0.5.0-dev.6
 [0.5.0-dev.4]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.3...v0.5.0-dev.4
 [0.5.0-dev.3]: https://github.com/dadmaan/sonitra/compare/v0.5.0-dev.2...v0.5.0-dev.3
