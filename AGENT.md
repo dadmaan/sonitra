@@ -23,7 +23,7 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
 - Weights are installed by `python scripts/setup_hft_transformer.py`. Exit code `3` means torch is absent, so skip it quietly; other non-zero codes are real failures. It runs automatically in both containers.
 - Switching between the `transkun` (CPU) and `transkun-gpu` forks in an existing venv needs `--reinstall-package torch --reinstall-package torchaudio`; the GPU fork's specifier has no local segment, so a plain `uv sync` can audit the environment as correct and keep the old build.
 - Without `uv`: `python -m pytest tests/`.
-- In-container work must not commit `uv.lock`: the containers sync `--locked`, so a lock change breaks every other environment until it is reviewed deliberately.
+- Generate `uv.lock` changes with the pinned uv 0.7.8 (the devcontainer bakes it; CI installs it), review `git diff uv.lock`, and commit the lock with the `pyproject.toml` change. `uv lock` only rewrites the lockfile and never syncs, so it is safe inside the devcontainer; `uv sync` on the host would clobber the shared `.venv`.
 - Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
 - No linter or type-checker config; pytest is the quality gate.
 - CLI (Typer, also `python -m sonitra`): `sonitra init|render|transcribe|evaluate|benchmark --config FILE [--dataset NAME]`, `sonitra serve --port 8000`.
