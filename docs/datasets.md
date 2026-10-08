@@ -22,7 +22,7 @@ Have your own scores or recordings instead? See [Using your own dataset](custom-
 Currently supported:
 
 | Key | Dataset | Files | Size |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `maestro-v3-midi` | [MAESTRO V3.0.0](https://magenta.withgoogle.com/datasets/maestro) — CC BY-NC-SA 4.0, noncommercial | 1,276 piano MIDI files + metadata, no audio | ~57 MB |
 | `maestro-v3-wav` | MAESTRO V3.0.0 — CC BY-NC-SA 4.0, noncommercial | Paired recordings + metadata, no MIDI (downloads the same full archive as `-full` and discards MIDI members — MAESTRO ships no audio-only archive) | ~120 GB |
 | `maestro-v3-full` | MAESTRO V3.0.0 — CC BY-NC-SA 4.0, noncommercial | MIDI + recordings + metadata | ~120 GB |
@@ -194,6 +194,13 @@ A filtered run (`io.where`; see [Configuration → File selection](configuration
 - **MusicNet:** the split lives in the label folder names (`train_labels`/`test_labels`). After you run the converter, `metadata/musicnet.csv` has a `split` column plus the `midi_filename` join column, so a converted corpus can be filtered by split. The raw score layout has no split column.
 - **SMD:** no official split. After `scripts/smd_metadata.py` runs, each `metadata/<dataset>.csv` offers `composer`, `performer_id` and `performance_id` for filtering or grouping, with the default `midi_filename` join column.
 
+### Overlap with model training data
+
+Some datasets overlap the training data of the bundled transcribers, which matters when you read their scores:
+
+- **Basic Pitch:** trained on Molina, GuitarSet, MAESTRO, Slakh, Phenicx, iKala and MedleyDB (Bittner et al., ICASSP 2022), so GuitarSet and MAESTRO results are not out-of-sample for it.
+- **TransKun** and **hFT-Transformer:** trained on MAESTRO V3 (see [Model cards](model-cards.md)). The MAESTRO test split is held out from that training.
+
 ### Joining dataset metadata into a benchmark export
 
 `scripts/export_regression_table.py` (see [CLI reference](cli.md)) can add a dataset's `corpus/{dataset}/metadata/*.csv` to a benchmark results table. Use this to add composer or work details for further analysis, for example:
@@ -210,4 +217,5 @@ The joined table is the input that `scripts/run_mixed_effects_analysis.py` expec
 The join works for any dataset. `--metadata-join-column` names the CSV column that holds a filename. MAESTRO's column is `midi_filename`; MusicNet's score metadata uses `id`, while the converter's `metadata/musicnet.csv` uses `midi_filename`. Both SMD metadata CSVs (`metadata/smd-piano-v2.csv` and `metadata/smd-synth-v1.csv`) use the default `midi_filename` column. By default Sonitra matches by exact file stem (`--metadata-match exact`); use `--metadata-match token-prefix` when the reference stem carries extra tokens beyond the metadata id (e.g. MusicNet score MIDI `1727_schubert_op114_2` → `1727`) — it tries an exact match first, then a unique token-prefix match using the same logic as audio-to-MIDI pairing (see `sonitra.corpus.match_token_prefix`). Every other column from a matched row is added as `meta.<column>`. Sonitra makes no demand that sets share the same columns, because they do not. For example, MusicNet's metadata has `movement` and `ensemble`, while MAESTRO's does not.
 
 ---
+
 [← Back to README](../README.md)

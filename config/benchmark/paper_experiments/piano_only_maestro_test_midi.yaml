@@ -1,4 +1,4 @@
-# MAESTRO-v3 official test split, MIDI input: basic_pitch on CPU and TransKun on CUDA in one run.
+# MAESTRO-v3 official test split, MIDI input: basic_pitch on CPU, TransKun and hFT-Transformer on CUDA.
 # Run: sonitra benchmark --config config/benchmark/paper_experiments/piano_only_maestro_test_midi.yaml
 # These models were trained on MAESTRO's train split, so this preset scores the held-out test split.
 render_pipeline:
