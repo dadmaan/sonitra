@@ -1,6 +1,6 @@
-# MAESTRO-v3 official test split, audio input: basic_pitch on CPU, TransKun and hFT-Transformer on CUDA.
-# Run: sonitra benchmark --config config/benchmark/paper_experiments/piano_only_maestro_test_audio.yaml
-# These models were trained on MAESTRO's train split, so this preset scores the held-out test split.
+# SMD-piano-v2, audio input: all 50 Disklavier recordings (no official split), basic_pitch on CPU,
+# TransKun and hFT-Transformer on CUDA in one run. Each recording is scored against its captured MIDI.
+# Run: sonitra benchmark --config config/benchmark/paper_experiments/piano_only_smd_piano_v2.yaml
 render_pipeline:
   synth_backend: fluidsynth
   effects_chain: pedalboard
@@ -20,11 +20,7 @@ io:
   output_format: wav
   mp3_bitrate_kbps: 192
   file_naming: "{stem}"
-  dataset: maestro-v3
-  metadata_csv: maestro-v3.0.0.csv
-  join_column: midi_filename
-  where:
-    split: [test]
+  dataset: smd-piano-v2
 
 dawdreamer:
   block_size: 512
