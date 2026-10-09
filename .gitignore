@@ -159,6 +159,7 @@ renders.failed.txt
 
 plugin/
 corpus/
+output/
 preset/
 misc/
 models/

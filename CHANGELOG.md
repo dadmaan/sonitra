@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/render_benchmark_examples.py`: renders one excerpt of one source piece through every condition of each selected benchmark config, one audio file per condition plus the resolved `config.yaml` and a `manifest.json` per config under `--output` and a whole-run `render_summary.json`, so a study's conditions can be compared by ear; nothing is transcribed or scored. Configs on the same dataset share one piece — a seeded pick (`--seed`, default `0`) or a `--source DATASET=STEM` pin — which means `io.where` and `io.sample` are deliberately ignored for the pick (a test-split config and a train-probe config could otherwise never share a piece) and the ignored filters are recorded under `filters_ignored` in the manifest. Running without `--yes` opens a numbered picker (row numbers and ranges, folder names, all/none/invert). Covered by `tests/test_render_benchmark_examples.py`.
+
 ## [0.5.1] - 2026-10-08
 
 Add SMD dataset configs for paper experimentation.
