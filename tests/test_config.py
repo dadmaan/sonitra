@@ -374,6 +374,96 @@ def test_transcription_rejects_unknown_key() -> None:
         PipelineConfig.model_validate(bad)
 
 
+# ── Transcriber name uniqueness ───────────────────────────────────────
+
+def test_transcriber_names_reject_two_unnamed_same_type() -> None:
+    bad = {
+        **_minimal_config_dict(),
+        "transcription": {
+            "transcribers": [
+                {"type": "basic_pitch"},
+                {"type": "basic_pitch"},
+            ]
+        },
+    }
+    with pytest.raises(ConfigError, match="basic_pitch"):
+        PipelineConfig.model_validate(bad)
+
+
+def test_transcriber_names_reject_explicit_name_colliding_with_default() -> None:
+    bad = {
+        **_minimal_config_dict(),
+        "transcription": {
+            "transcribers": [
+                {"type": "basic_pitch", "name": "transkun"},
+                {"type": "transkun"},
+            ]
+        },
+    }
+    with pytest.raises(ConfigError, match="transkun"):
+        PipelineConfig.model_validate(bad)
+
+
+def test_transcriber_names_accept_distinct_names() -> None:
+    cfg = PipelineConfig.model_validate(
+        {
+            **_minimal_config_dict(),
+            "transcription": {
+                "transcribers": [
+                    {"type": "basic_pitch", "name": "bp_a"},
+                    {"type": "basic_pitch", "name": "bp_b"},
+                ]
+            },
+        }
+    )
+    assert [t.name for t in cfg.transcription.transcribers] == ["bp_a", "bp_b"]
+
+
+def test_transcriber_names_count_disabled_entries() -> None:
+    bad = {
+        **_minimal_config_dict(),
+        "transcription": {
+            "transcribers": [
+                {"type": "basic_pitch", "name": "bp_dup"},
+                {"type": "basic_pitch", "name": "bp_dup", "enabled": False},
+            ]
+        },
+    }
+    with pytest.raises(ConfigError, match="bp_dup"):
+        PipelineConfig.model_validate(bad)
+
+
+def test_transcriber_names_empty_string_falls_back_to_type() -> None:
+    bad = {
+        **_minimal_config_dict(),
+        "transcription": {
+            "transcribers": [
+                {"type": "basic_pitch", "name": ""},
+                {"type": "basic_pitch"},
+            ]
+        },
+    }
+    with pytest.raises(ConfigError, match="basic_pitch"):
+        PipelineConfig.model_validate(bad)
+
+
+def test_transcriber_names_report_every_duplicate_sorted() -> None:
+    bad = {
+        **_minimal_config_dict(),
+        "transcription": {
+            "transcribers": [
+                {"type": "basic_pitch"},
+                {"type": "basic_pitch"},
+                {"type": "transkun"},
+                {"type": "transkun"},
+            ]
+        },
+    }
+    with pytest.raises(ConfigError) as excinfo:
+        PipelineConfig.model_validate(bad)
+    assert "duplicated: ['basic_pitch', 'transkun']" in str(excinfo.value)
+
+
 def test_source_yaml_documents_io_filter_keys_and_no_selection_block() -> None:
     text = default_config_path().read_text()
     cfg = load_config(default_config_path())

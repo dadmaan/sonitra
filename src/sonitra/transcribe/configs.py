@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _TranscriberBase(BaseModel):
@@ -63,6 +63,23 @@ class TranskunTranscriberConfig(_TranscriberBase):
     segment_hop_sec: float | None = None
     weights_path: Path | str | None = None
     conf_path: Path | str | None = None
+
+    @model_validator(mode="after")
+    def _validate_segment_pair(self) -> "TranskunTranscriberConfig":
+        # Upstream transcribe() falls back to the bundled conf only when both
+        # values are unset; one value alone fails on the first file, and a hop
+        # larger than the size makes the padding negative (cropping).
+        size, hop = self.segment_size_sec, self.segment_hop_sec
+        if (size is None) != (hop is None):
+            raise ValueError(
+                "segment_size_sec and segment_hop_sec must be set together or both null"
+            )
+        if size is not None and hop is not None:
+            if size <= 0 or hop <= 0:
+                raise ValueError("segment_size_sec and segment_hop_sec must be > 0")
+            if hop > size:
+                raise ValueError("segment_hop_sec must not exceed segment_size_sec")
+        return self
 
 
 class HftTransformerTranscriberConfig(_TranscriberBase):
