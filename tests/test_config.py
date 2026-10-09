@@ -321,12 +321,18 @@ def test_all_runnable_configs_carry_new_basic_pitch_keys() -> None:
     checked = 0
     for path in runnable:
         cfg = load_config(path)
+        resolved = path.resolve()
         # Presets without a basic_pitch transcriber have nothing to check here.
         for basic_pitch in (
             t for t in cfg.transcription.transcribers if t.type == "basic_pitch"
         ):
             checked += 1
-            assert basic_pitch.melodia_trick is True, path
+            sweep = _PARAM_SWEEPS.get(resolved)
+            declared = sweep.get(basic_pitch.name, {}) if sweep is not None else {}
+            # The melodia=off sweep variant switches the step off on purpose to
+            # measure it; every other entry keeps the published default.
+            if "melodia_trick" not in declared:
+                assert basic_pitch.melodia_trick is True, path
             assert basic_pitch.multiple_pitch_bends is False, path
             relative = path.relative_to(config_dir)
             if relative.parts[0] == "examples":
@@ -492,6 +498,54 @@ _MAESTRO_SPLIT_PRESETS = (
     _MAESTRO_TRAIN_PROBE_MIDI,
 )
 
+# One transcriber-parameter study per model, each listing the published default
+# first and then one-factor variants. The inner dict holds only the keys that
+# differ from that model's default entry; the shape tests pin every value to
+# what `model_dump(mode="json")` yields.
+_PARAM_SWEEPS: dict[Path, dict[str, dict[str, Any]]] = {
+    _PAPER_EXPERIMENTS / "transcriber_params_basic_pitch_maestro_test_audio.yaml": {
+        "bp_default": {},
+        "bp_onset=0.3": {"onset_threshold": 0.3},
+        "bp_onset=0.4": {"onset_threshold": 0.4},
+        "bp_onset=0.6": {"onset_threshold": 0.6},
+        "bp_onset=0.7": {"onset_threshold": 0.7},
+        "bp_frame=0.1": {"frame_threshold": 0.1},
+        "bp_frame=0.2": {"frame_threshold": 0.2},
+        "bp_frame=0.4": {"frame_threshold": 0.4},
+        "bp_frame=0.5": {"frame_threshold": 0.5},
+        "bp_minlen=58ms": {"minimum_note_length_ms": 58.0},
+        "bp_minlen=197ms": {"minimum_note_length_ms": 197.4},
+        "bp_melodia=off": {"melodia_trick": False},
+    },
+    _PAPER_EXPERIMENTS / "transcriber_params_transkun_maestro_test_audio.yaml": {
+        "tk_default": {},
+        "tk_seg=8s": {"segment_size_sec": 8.0, "segment_hop_sec": 4.0},
+        "tk_seg=12s": {"segment_size_sec": 12.0, "segment_hop_sec": 6.0},
+        "tk_seg=24s": {"segment_size_sec": 24.0, "segment_hop_sec": 12.0},
+        "tk_seg=32s": {"segment_size_sec": 32.0, "segment_hop_sec": 16.0},
+        "tk_hop=4s": {"segment_size_sec": 16.0, "segment_hop_sec": 4.0},
+        "tk_hop=12s": {"segment_size_sec": 16.0, "segment_hop_sec": 12.0},
+        "tk_hop=16s": {"segment_size_sec": 16.0, "segment_hop_sec": 16.0},
+    },
+    _PAPER_EXPERIMENTS / "transcriber_params_hft_transformer_maestro_test_audio.yaml": {
+        "hft_default": {},
+        "hft_onset=0.3": {"onset_threshold": 0.3},
+        "hft_onset=0.4": {"onset_threshold": 0.4},
+        "hft_onset=0.6": {"onset_threshold": 0.6},
+        "hft_onset=0.7": {"onset_threshold": 0.7},
+        "hft_offset=0.3": {"offset_threshold": 0.3},
+        "hft_offset=0.4": {"offset_threshold": 0.4},
+        "hft_offset=0.6": {"offset_threshold": 0.6},
+        "hft_offset=0.7": {"offset_threshold": 0.7},
+        "hft_mpe=0.3": {"mpe_threshold": 0.3},
+        "hft_mpe=0.4": {"mpe_threshold": 0.4},
+        "hft_mpe=0.6": {"mpe_threshold": 0.6},
+        "hft_mpe=0.7": {"mpe_threshold": 0.7},
+        "hft_stride=32": {"n_stride": 32},
+        "hft_head=first": {"output": "first"},
+    },
+}
+
 
 def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     flat: dict[str, Any] = {}
@@ -611,6 +665,85 @@ def test_maestro_train_probes_differ_from_test_twin_only_by_io_filter() -> None:
             "io.sample.n",
             "io.sample.seed",
         }, probe_path
+
+
+# ── Transcriber parameter sweeps ─────────────────────────────────────
+
+def test_param_sweeps_differ_from_test_preset_only_by_transcribers_and_conditions() -> None:
+    preset = _flatten(load_config(_MAESTRO_TEST_AUDIO).model_dump(mode="json"))
+    for path in _PARAM_SWEEPS:
+        flat = _flatten(load_config(path).model_dump(mode="json"))
+        assert _differing_keys(preset, flat) == {
+            "transcription.transcribers",
+            "benchmark.conditions",
+            "benchmark.max_workers",
+        }, path
+
+
+def test_param_sweeps_run_only_the_baseline() -> None:
+    for path in _PARAM_SWEEPS:
+        cfg = load_config(path)
+        assert [c.name for c in expand_conditions(cfg.benchmark)] == ["baseline"], path
+
+
+def test_param_sweep_defaults_match_the_preset_entry() -> None:
+    preset_by_type = {
+        t.type: t.model_dump(mode="json")
+        for t in load_config(_MAESTRO_TEST_AUDIO).transcription.transcribers
+    }
+    for path, variants in _PARAM_SWEEPS.items():
+        cfg = load_config(path)
+        default = next(t for t in cfg.transcription.transcribers if t.name == next(iter(variants)))
+        expected = {k: v for k, v in preset_by_type[default.type].items() if k != "name"}
+        actual = {k: v for k, v in default.model_dump(mode="json").items() if k != "name"}
+        assert _differing_keys(expected, actual) == set(), (path, default.name)
+
+
+def test_param_sweep_variants_change_exactly_their_declared_keys() -> None:
+    for path, variants in _PARAM_SWEEPS.items():
+        cfg = load_config(path)
+        entries = cfg.transcription.transcribers
+        assert [t.name for t in entries] == list(variants), path
+        default = next(t for t in entries if t.name == next(iter(variants)))
+        default_knobs = {k: v for k, v in default.model_dump(mode="json").items() if k != "name"}
+        for name, declared in variants.items():
+            entry = next(t for t in entries if t.name == name)
+            knobs = {k: v for k, v in entry.model_dump(mode="json").items() if k != "name"}
+            assert _differing_keys(default_knobs, knobs) == set(declared), (path, name)
+            assert {key: knobs[key] for key in declared} == declared, (path, name)
+
+
+def test_param_sweep_names_are_path_safe() -> None:
+    for path, variants in _PARAM_SWEEPS.items():
+        for name in variants:
+            assert re.fullmatch(r"[a-z]+_[a-z0-9.=]+", name), (path, name)
+
+
+def test_param_sweep_stems_stay_out_of_model_cards() -> None:
+    import importlib.util
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "export_model_baselines.py"
+    spec = importlib.util.spec_from_file_location("export_model_baselines", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    prefixes = [prefix.strip() for prefix in module.DEFAULT_RUN_PREFIXES.split(",")]
+    for path in _PARAM_SWEEPS:
+        assert not any(path.stem.startswith(prefix) for prefix in prefixes), (path, prefixes)
+
+
+def test_param_sweep_devices() -> None:
+    for path in _PARAM_SWEEPS:
+        cfg = load_config(path)
+        for entry in cfg.transcription.transcribers:
+            if entry.type == "basic_pitch":
+                assert entry.device == "cpu", (path, entry.name)
+                assert entry.batch_size == 16, (path, entry.name)
+            else:
+                assert entry.device == "cuda", (path, entry.name)
+                if entry.type == "hft_transformer":
+                    assert entry.checkpoint == "maestro", (path, entry.name)
+                    assert entry.batch_size == 1, (path, entry.name)
 
 
 # ── Global tuning offset ─────────────────────────────────────────────
