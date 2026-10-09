@@ -88,6 +88,43 @@ def test_transkun_config_paths_accept_str_and_path() -> None:
     assert str(cfg2.weights_path) == "/tmp/w.pt"
 
 
+def _transkun_config_dict(**overrides: object) -> dict:
+    return {
+        **_minimal_config_dict(),
+        "transcription": {"transcribers": [{"type": "transkun", **overrides}]},
+    }
+
+
+def test_transkun_segment_pair_half_set_rejected() -> None:
+    for overrides in ({"segment_size_sec": 16}, {"segment_hop_sec": 8}):
+        with pytest.raises(ConfigError, match=r"segment_size_sec.*segment_hop_sec"):
+            PipelineConfig.model_validate(_transkun_config_dict(**overrides))
+
+
+def test_transkun_segment_hop_exceeding_size_rejected() -> None:
+    with pytest.raises(ConfigError, match="segment_hop_sec"):
+        PipelineConfig.model_validate(
+            _transkun_config_dict(segment_size_sec=8, segment_hop_sec=12)
+        )
+
+
+def test_transkun_segment_values_must_be_positive() -> None:
+    for size, hop in ((0, 0), (-16, -8)):
+        with pytest.raises(ConfigError, match="> 0"):
+            PipelineConfig.model_validate(
+                _transkun_config_dict(segment_size_sec=size, segment_hop_sec=hop)
+            )
+
+
+def test_transkun_segment_pair_valid_combinations_accepted() -> None:
+    for size, hop in ((None, None), (16, 8), (16, 16)):
+        cfg = PipelineConfig.model_validate(
+            _transkun_config_dict(segment_size_sec=size, segment_hop_sec=hop)
+        )
+        transcriber = cfg.transcription.transcribers[0]
+        assert (transcriber.segment_size_sec, transcriber.segment_hop_sec) == (size, hop)
+
+
 # ── mapper helpers ─────────────────────────────────────────────────────
 
 class _FakeNote:

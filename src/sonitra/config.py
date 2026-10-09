@@ -253,6 +253,17 @@ class TranscriptionSection(BaseModel):
     numeric_mode: Literal["off", "warn", "strict"] = "off"
     gpu_memory_growth: bool = False
 
+    @model_validator(mode="after")
+    def _validate_unique_transcriber_names(self) -> "TranscriptionSection":
+        names = [t.name or t.type for t in self.transcribers]
+        duplicated = sorted({name for name in names if names.count(name) > 1})
+        if duplicated:
+            raise ValueError(
+                f"transcriber names must be unique; duplicated: {duplicated}. "
+                "Set a distinct 'name' on each entry of the same type."
+            )
+        return self
+
 
 class NoteMetricsSection(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -245,17 +245,17 @@ transcription:
           batch_size: null # windows per inference call; null = 1 on GPU, 16 on CPU; any value applies on every device (on CUDA, values above 8 changed notes slightly in measurement)
         # Pre-exported MIDI from any external tool:
         # - type: precomputed
-        #   name: klangio             # used as the output subdirectory name
+        #   name: klangio             # used as the output subdirectory name; must be unique across all entries (default: the type)
         #   midi_dir: ./external/klangio
         # Any CLI tool that reads audio and writes MIDI:
         # - type: external_command
-        #   name: my-amt-tool
+        #   name: my-amt-tool         # must be unique across all entries (default: the type)
         #   command: "amt-tool transcribe {input} -o {output}"
         # TransKun — requires `pip install sonitra[transkun]`:
         # - type: transkun
         #   device: cpu               # unified: cpu, cuda, cuda:N, GPU:N (plus mps); GPU:0 → cuda:0
-        #   segment_size_sec: null    # null lets bundled conf stay default (16s)
-        #   segment_hop_sec: null     # null lets bundled conf stay default (8s)
+        #   segment_size_sec: null    # null lets bundled conf stay default (16s); set both segment values or neither
+        #   segment_hop_sec: null     # null lets bundled conf stay default (8s); hop must not exceed the size
         #   weights_path: null        # null uses bundled checkpoint
         #   conf_path: null           # null uses bundled conf
         # Sony hFT-Transformer — requires `pip install sonitra[transkun]` plus

@@ -11,7 +11,7 @@ Sonitra checks your config with Pydantic, a Python tool that validates settings.
 These are the main sections and what each one does:
 
 | Section | Controls |
-|---|---|
+| --- | --- |
 | `render_pipeline` | Synth backend (`synth_backend`), effects chain (`effects_chain`), host BPM (tempo-synced plugins / FluidSynth tick grid; notes follow each MIDI file's own tempo map), sample rate, bit depth, channels, parallelism (`max_workers`), input source (`input_type`: `midi` by default, or `audio` to use your own recordings instead of rendering, see [Using your own dataset](custom-datasets.md)) |
 | `io` | `corpus_root` (base path), `dataset` (scopes all paths under `corpus_root/{dataset}/`), output format (`wav`, `flac`, `mp3`), file naming template, file selection (`metadata_csv`, `join_column`, `where`, `sample`; see [File selection](#file-selection)) |
 | `dawdreamer` | Faust script path, VST3 plugin path, preset path — required when `synth_backend: dawdreamer_vst`; `plugin_path` must NOT be set for `synth_backend: dawdreamer_faust` |
@@ -29,25 +29,27 @@ These are the main sections and what each one does:
 This section picks how Sonitra turns MIDI scores into sound, and whether it adds effects after. MIDI is a digital score format. A synth backend is the tool that plays the score. An effects chain is an optional set of audio effects applied after.
 
 `render_pipeline.synth_backend`
+
 | Value | Synth engine | Requires |
-|---|---|---|
+| --- | --- | --- |
 | `dawdreamer_faust` | DawDreamer + built-in Faust oscillator | — |
 | `dawdreamer_vst` | DawDreamer + VST3 instrument | `dawdreamer.plugin_path` |
 | `fluidsynth` | FluidSynth CLI + SoundFont | `fluidsynth.soundfont_path` (plus optional `fluidsynth.program` to force a GM program, otherwise inherited from the source MIDI when unambiguous) |
 | `pedalboard_instrument` | Pedalboard VST3 instrument | `pedalboard.instrument.plugin_path` |
 
 `render_pipeline.effects_chain`
-| Value | Behaviour |
-|---|---|
-| `none` | No effects processing after synthesis |
+
+| Value        | Behaviour                                            |
+| ------------ | ---------------------------------------------------- |
+| `none`       | No effects processing after synthesis                |
 | `pedalboard` | Apply the `pedalboard.effects` chain after synthesis |
 
 ## Transcription backends
 
-A transcriber turns audio back into notes. AMT means automatic music transcription, turning sound into a score. Basic Pitch is Spotify's free transcription tool and the default. Set `device` to `cuda` (or `GPU:0` — both spellings work) to run it on your graphics card. Sonitra translates `cuda` to the TensorFlow name `GPU:0` internally. You need the `[gpu]` install on Linux x86_64 for that.
+A transcriber turns audio back into notes. AMT means automatic music transcription, turning sound into a score. Basic Pitch is Spotify's free transcription tool and the default. Set `device` to `cuda` (or `GPU:0` — both spellings work) to run it on your graphics card. Sonitra translates `cuda` to the TensorFlow name `GPU:0` internally. You need the `[gpu]` install on Linux x86_64 for that. The `name` key defaults to the transcriber's `type` and must be unique across all entries.
 
 | Backend | `type` value | Notes |
-|---|---|---|
+| --- | --- | --- |
 | Spotify Basic Pitch | `basic_pitch` | Installed by default; supports unified `device` values `cpu`, `cuda`, `cuda:N`, `GPU:N` (default: `cpu`; `cuda` is translated to TensorFlow's `GPU:0` internally — requires `[gpu]` extras on Linux x86_64) |
 | TransKun | `transkun` | Piano only; requires `pip install 'sonitra[transkun]'` (bundled 56 MB checkpoint, PyTorch). Supports `device` values `cpu`, `cuda`, `cuda:1`, `mps` and `GPU:0` (translated to `cuda:0` internally). See `config/source.yaml` commented block and `config/benchmark/transkun/transkun_baseline.yaml` |
 | Sony hFT-Transformer | `hft_transformer` | Piano only; needs `pip install 'sonitra[transkun]'` too (no new extra), plus a one-time weights install: `python scripts/setup_hft_transformer.py`. Keys: `device` (unified `cpu`, `cuda`, `cuda:N`, `GPU:N`), `checkpoint: maestro`, `weights_path`, `output` (`second` is the time-axis head and the default), `n_stride` (0–64, 0 = no overlapping windows), `onset_threshold` / `offset_threshold` / `mpe_threshold` (each default 0.5), `batch_size` (default 1). See `config/source.yaml` commented block and [model-cards.md](model-cards.md) |
@@ -126,7 +128,7 @@ Use sweeps when you want to test one control while all else stays the same. For 
 Four sections have a `max_workers` setting. It sets how many tasks run at once. Only two of them affect `sonitra benchmark`:
 
 | Key | Used by `sonitra benchmark`? | What it parallelises |
-|---|---|---|
+| --- | --- | --- |
 | `benchmark.max_workers` | Yes | Conditions (process-level, one condition per subprocess) |
 | `render_pipeline.max_workers` | Yes | Per-file rendering inside each condition |
 | `transcription.max_workers` | No | Audio files per transcriber in standalone `sonitra transcribe` |
@@ -149,4 +151,5 @@ Sonitra reads these only for the single-step commands `sonitra transcribe` and `
 Sonitra leaves all four `max_workers` keys out of the benchmark fingerprint. The fingerprint tracks whether your config changed. So you can change worker counts between runs and still resume.
 
 ---
+
 [← Back to README](../README.md)

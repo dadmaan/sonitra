@@ -12,7 +12,7 @@ Configs live in subfolders by purpose. Put a new study in the matching folder.
 - `sweeps/`: one or a few `pedalboard` parameters stepped across a grid of values.
 - `transkun/`: Basic Pitch vs TransKun baselines on CPU and CUDA, including the batched strict variants.
 - `methods/`: checks of the benchmark setup itself (numeric settings, synthesis engine), not of the models.
-- `paper_experiments/`: the paper's degradation studies and the MAESTRO test-split and train-probe presets.
+- `paper_experiments/`: the paper's degradation studies, the MAESTRO test-split and train-probe presets, and the transcriber-parameter sweeps.
 - `old_recording/`, `telephone_channel/`, `rotary_speaker/`, `venue_acoustics/`: grounded scenario studies, each with its own `README.md`.
 
 ---
@@ -260,6 +260,9 @@ The fingerprint does cover which files the run uses: `io.where`, `io.metadata_cs
 | `transkun/transkun_baseline_gpu.yaml` | TransKun vs Basic Pitch baseline (CUDA; requires GPU host) | 1 |
 | `transkun/transkun_baseline_batch16_strict.yaml` | TransKun vs Basic Pitch baseline (CPU; strict numerics, Basic Pitch batch size 16) | 1 |
 | `transkun/transkun_baseline_gpu_batch8_strict.yaml` | TransKun vs Basic Pitch baseline (CUDA; strict numerics, Basic Pitch batch size 8; requires GPU host) | 1 |
+| `paper_experiments/transcriber_params_basic_pitch_maestro_test_audio.yaml` | Transcriber settings around the published defaults (MAESTRO test split, audio) | 12 |
+| `paper_experiments/transcriber_params_transkun_maestro_test_audio.yaml` | Transcriber settings around the published defaults (MAESTRO test split, audio) | 8 |
+| `paper_experiments/transcriber_params_hft_transformer_maestro_test_audio.yaml` | Transcriber settings around the published defaults (MAESTRO test split, audio) | 15 |
 | `methods/synthesis_backends.yaml` | Synthesis engine (FluidSynth, Faust, Vital) | 3 |
 | `methods/numerics_check.yaml` | Numeric settings (`transcription.numeric_mode`): measurement error bars, not model scores | 1 |
 | `old_recording/vintage_scenarios.yaml` | Vintage recording chains (bandwidth + dynamics) | 7 |
@@ -281,6 +284,30 @@ The fingerprint does cover which files the run uses: `io.where`, `io.metadata_cs
 The `_audio` presets read the real recordings, and the `_midi` presets render the reference MIDI. All four set `transcription.numeric_mode: strict` (deterministic kernels, TF32 off) and `transcription.gpu_memory_growth: true`. Without memory growth, TensorFlow reserves most of the GPU even with Basic Pitch on the CPU, which can leave TransKun in the same process without memory. Under strict numerics, Basic Pitch gave the same scores on the CPU as on the GPU in the measured comparison, and on the CPU the batch size moves note probabilities by under 1e-6, far below the 0.5 note threshold (see [Reproducibility](../../docs/reproducibility.md)). `benchmark.max_workers` is 2 for audio and 1 for MIDI, because each worker loads its own TransKun model onto the GPU.
 
 Comparing a probe run against its test twin measures each model's train-versus-test gap (the difference between its train-split and test-split scores) in that input mode. In audio mode Sonitra plays the real MAESTRO recordings, which overlap the models' training audio; in MIDI mode Sonitra renders its own audio, so only the note sequences overlap. The export that builds the model-cards table skips both probes, because a sampled run is not a baseline.
+
+### Transcriber-parameter sweeps
+
+`paper_experiments/` also holds three configs that vary one transcriber setting at a time around the published defaults, on the same MAESTRO test split and real-audio input as `piano_only_maestro_test_audio.yaml`: `transcriber_params_basic_pitch_maestro_test_audio.yaml` (12 Basic Pitch variants), `transcriber_params_transkun_maestro_test_audio.yaml` (8 TransKun variants) and `transcriber_params_hft_transformer_maestro_test_audio.yaml` (15 hFT-Transformer variants). Each config runs the single `baseline` condition, with one transcriber entry per variant.
+
+Variants are separate entries rather than conditions because a condition may not override any key under `transcription`: the transcribers are built once before conditions run. Each entry needs its own `name` because the transcription folder and the resume keys use it, and transcriber names must be unique across all entries, enabled or not: two entries that end up with the same name (an explicit `name`, or the `type` when `name` is unset or empty) make the config fail to load with a `ConfigError`.
+
+The design is one-factor: each variant changes exactly one setting of its model's published default and leaves everything else at the value `piano_only_maestro_test_audio.yaml` uses. The published defaults are:
+
+| Model | Published defaults | Source |
+| --- | --- | --- |
+| Basic Pitch | onset threshold 0.5, frame threshold 0.3, minimum note length 127.7 ms, melodia trick on | Bittner et al., ICASSP 2022 (melodia is a release-time step, not in the paper) |
+| TransKun | 16 s segments at 50 % overlap | TransKun, ISMIR 2024, arXiv 2404.09466 |
+| hFT-Transformer | onset, offset and mpe thresholds 0.5, `output: second`, `n_stride: 0` | arXiv 2307.04305 |
+
+The `*_default` entry of each config keeps the preset's settings, so it reproduces the preset's baseline row for that model; read every other variant against that row. The degradation table in `summary.json` compares conditions, and this run has only the baseline, so it stays empty.
+
+Caveats:
+
+- TransKun segment sizes above 16 s are longer than the model's training chunks. The model still accepts them, but it was trained on 16 s chunks, so results above that size are extrapolation.
+- hFT-Transformer `output: first` is the training-time head; `hft_head=first` is an ablation, not a published alternative.
+- Every Basic Pitch entry runs the full model again, even when only the note decoding differs, so the 12 variants repeat the same inference 12 times.
+- A two-file smoke run projected to the 177-file test split gives roughly 13.9 h for the Basic Pitch config, 8.2 h for TransKun and 18.4 h for hFT-Transformer, about 40.4 h in total; times scale with piece length.
+- The run names start with `transcriber_params_`, so the model-cards export (which collects `piano_only`/`guitar_only` runs) skips them.
 
 ### Tuning-offset conditions
 
@@ -306,3 +333,5 @@ Each config also gained nine tuning conditions: `tune=-32c`, `tune=-20c`, `tune=
    ```bash
    sonitra benchmark --config config/benchmark/sweeps/my_new_benchmark.yaml --dataset test --limit 2
    ```
+
+To vary transcriber settings, add one named entry per variant under `transcription.transcribers` instead of a condition; see [Transcriber-parameter sweeps](#transcriber-parameter-sweeps).
