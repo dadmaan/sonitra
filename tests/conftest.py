@@ -29,10 +29,9 @@ _GUARDED_ROOT: Path = _REPO_ROOT / "config"
 #: worth the per-event cost of the hook.
 _GUARDED_EVENTS: frozenset[str] = frozenset({"open", "os.scandir", "os.listdir"})
 
-#: Report mode: offenders are listed in the terminal summary and nothing fails,
-#: so a suite can be baselined first. Flipping this to ``True`` turns every
-#: listed path into a failure of the test that read it.
-_ENFORCE: bool = False
+#: Enforce mode: a test that reads the shipped config tree fails with the paths
+#: it read. Reads of ``config/`` belong to the preset suite, which is exempt.
+_ENFORCE: bool = True
 
 #: Audit-hook state. An audit hook is process-wide and cannot see pytest, so
 #: the run loop publishes the test it is executing through these globals.

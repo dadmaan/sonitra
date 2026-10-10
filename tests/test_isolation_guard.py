@@ -126,10 +126,11 @@ def test_guarded_root_points_at_the_shipped_config_tree() -> None:
     assert _GUARDED_EVENTS == frozenset({"open", "os.scandir", "os.listdir"})
 
 
-def test_offenders_are_reported_rather_than_failing() -> None:
-    # The guard only lists offenders in the terminal summary so a suite can be
-    # baselined before anything starts failing.
-    assert _ENFORCE is False
+def test_the_guard_fails_reads_of_the_shipped_tree() -> None:
+    # Enforce mode: a test that reads under config/ fails in teardown with the
+    # paths it read, and only the preset suite is exempt. Report mode existed
+    # only to baseline the migration that moved the other tests onto fixtures.
+    assert _ENFORCE is True
 
 
 def test_audit_channel_never_raises_for_unusual_arguments() -> None:
