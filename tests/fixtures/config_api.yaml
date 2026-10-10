@@ -1,0 +1,54 @@
+render_pipeline:
+  synth_backend: dawdreamer_faust
+  effects_chain: pedalboard
+  bpm: 120
+  sample_rate: 48000
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: false
+  resume: true
+  max_workers: 4
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}-api"
+
+dawdreamer:
+  block_size: 512
+  plugin_path: null
+  preset_path: null
+  faust_code: null
+  clear_midi_between_renders: true
+
+fluidsynth:
+  soundfont_path: null
+
+pedalboard:
+  instrument:
+    plugin_path: null
+    preset_path: null
+    reload_plugin_per_file: false
+    silence_flush_sec: 0.0
+  effects: []
+
+normalisation:
+  enabled: false
+  mode: peak
+  target_db: -1.0
+  pre_effects: false
+
+quality_gates:
+  silence_threshold_rms: 0.0
+  min_duration_sec: 0.0
+  max_duration_deviation_sec: 0.0
+  clip_threshold: 1.0
+
+observability:
+  write_manifest: false
+  manifest_path: ./renders.jsonl
+  write_failed_list: false
+  emit_sse_events: false

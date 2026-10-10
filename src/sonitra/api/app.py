@@ -9,21 +9,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from sonitra.api.job_store import JobStore
 from sonitra.api.routers import config as config_router
 from sonitra.api.routers import health, jobs, status
-from sonitra.config import default_config_path, load_config
+from sonitra.config import PipelineConfig, default_config_path, load_config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Startup resets the job store only: a config supplied by the caller must
+    # survive startup untouched.
     app.state.job_store = JobStore()
-    app.state.config = load_config(default_config_path())
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(config: PipelineConfig | None = None) -> FastAPI:
+    """Build the app; ``config`` overrides the shipped default pipeline config."""
     app = FastAPI(lifespan=lifespan)
     app.state.job_store = JobStore()
     app.state.worker_futures = set()
-    app.state.config = load_config(default_config_path())
+    app.state.config = config if config is not None else load_config(default_config_path())
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
