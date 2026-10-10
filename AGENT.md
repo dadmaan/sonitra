@@ -15,6 +15,7 @@ Guidance for coding agents working in this repository. Deeper detail lives in `A
 uv sync --extra dev --extra transkun      # install, CPU fork (GPU: --extra transkun-gpu; fallback: pip install -e ".[dev]")
 uv run pytest tests/                      # always scope to tests/ (no testpaths configured)
 uv run pytest tests/test_config.py::test_name
+uv run pytest tests/ -m "not presets"     # unit tests without the preset-data checks
 uv run pytest tests/ -m "not slow"        # skip heavy backends (basic-pitch, transkun)
 uv run --no-sync pytest tests/ -m slow    # heavy backends only
 ```
@@ -24,7 +25,7 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
 - Switching between the `transkun` (CPU) and `transkun-gpu` forks in an existing venv needs `--reinstall-package torch --reinstall-package torchaudio`; the GPU fork's specifier has no local segment, so a plain `uv sync` can audit the environment as correct and keep the old build.
 - Without `uv`: `python -m pytest tests/`.
 - Generate `uv.lock` changes with the pinned uv 0.7.8 (the devcontainer bakes it; CI installs it), review `git diff uv.lock`, and commit the lock with the `pyproject.toml` change. `uv lock` only rewrites the lockfile and never syncs, so it is safe inside the devcontainer; `uv sync` on the host would clobber the shared `.venv`.
-- Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB.
+- Markers: `skip_if_no_vst` / `integration` need a VST (`VST_PATH` / `VST3_PATH`); `slow` runs heavy backends; `requires_r` needs R with glmmTMB; `presets` marks the shipped-config checks under `tests/presets/` (deselect with `-m "not presets"`).
 - No linter or type-checker config; pytest is the quality gate.
 - CLI (Typer, also `python -m sonitra`): `sonitra init|render|transcribe|evaluate|benchmark --config FILE [--dataset NAME]`, `sonitra serve --port 8000`.
 - `scripts/ci/check.sh` is the pre-push and CI gate (lock check plus fast tests; `--full` adds the slow tests).
@@ -52,7 +53,7 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
   - `run_mixed_effects_analysis.py` fits in R via `Rscript`. Do not alter its base model spec.
   - `export_model_baselines.py` owns the generated block in `docs/model-cards.md`; never hand-edit between `<!-- BEGIN/END GENERATED: baselines -->`. `corpus/` is untracked, so `--check` cannot run in CI.
   - Scripts that write files must never overwrite their inputs.
-- **Configs**: `config/examples/` holds presets (used by `run_transcribe_eval.py` and roundtrip tests); `config/benchmark/` holds benchmark studies; test fixtures live in `tests/fixtures/`.
+- **Configs**: `config/examples/` holds presets (used by `run_transcribe_eval.py`); `config/benchmark/` holds benchmark studies; test fixtures live in `tests/fixtures/`.
 - **Models dir** (downloaded weights, not bundled): `$SONITRA_MODELS_DIR` when set and non-empty, else `~/.cache/sonitra/models`. Never resolve it repo-relative, even though the containers mount a host `models/` at `/models`; the repo's own `models/` is gitignored.
 - **GPU**: set `device: GPU:0` on a `basic_pitch` transcriber; Docker needs `--profile gpu` or `--profile cpu` (no default profile).
 
@@ -70,5 +71,6 @@ uv run --no-sync pytest tests/ -m slow    # heavy backends only
   - No usage examples, flag lists, output schemas or design history; put those in `--help`, function docstrings, comments or `docs/`.
   - Exception: `scripts/*.py` docstrings end with an `Examples:` block of 2–4 copy-paste commands (`# comment` above each, repo-root paths, raw `r"""` when a line continues with `\`). The parser prints it via `description=__doc__` + `RawDescriptionHelpFormatter`; `tests/test_script_examples.py` checks flags and `--help` output.
 - **No plan-relative references**: inline comments, docstrings, config comments and docs must be self-explanatory without the plan. Never cite "Phase N", "Step N", lane/arm labels ("2a", "3e", "P5"), tickets, or "this phase" — state the reason instead (e.g. "rendering stays at one worker: DawDreamer/JUCE global state cannot be shared", not "Phase 2 decides").
+- **Tests own their inputs.** Unit tests never read `config/`: they build configs in code or load `tests/fixtures/`, and the fingerprint goldens read frozen copies in `tests/fixtures/fingerprint/` that are never updated to follow a preset. A runtime guard in `tests/conftest.py` fails any test without the `presets` marker that opens or lists a path under `config/`; reads inside a subprocess are invisible to it. Checks on the shipped presets live in `tests/presets/` and assert rules that hold across files (twins agree, names match values, the schema is documented), never copied values.
 - **Never hard-wrap markdown prose**: keep each paragraph and list item on one line; `.prettierrc` sets `proseWrap: never` for `*.md`, so run `npx prettier@3 --write <file>` on changed markdown.
 - Keep this file concise: add only essential facts an agent cannot quickly derive from the code.
