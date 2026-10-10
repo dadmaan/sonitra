@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `tests/test_fingerprint_compat.py`: `GOLDEN_PIANO_ONLY_PRESET` re-captured on purpose, so existing work directories for the ten paper configs and both tuning smoke configs stop resuming and have to be re-run together.
 - `tests/test_config.py` now checks the tuning layout of all ten paper configs instead of six, and fails when a config in `config/benchmark/paper_experiments/` is missing from its list; `tests/test_tuning_offset.py`'s `test_offset_accuracy_guard` covers ±50 cents alongside ±40 and ±8.
 
+### Fixed
+
+- `config/benchmark/methods/synthesis_backends.yaml`: its three conditions overrode `pipeline.synth_backend`, but the section is named `render_pipeline`, so every condition raised `Override path 'pipeline.synth_backend' has unknown key 'pipeline'` and the study could not run. The study could never have produced a row, so no result directory is affected. Covered by the per-preset override-resolution check in `tests/presets/test_presets_generic.py`.
+
 ## [0.5.1] - 2026-10-08
 
 Add SMD dataset configs for paper experimentation.

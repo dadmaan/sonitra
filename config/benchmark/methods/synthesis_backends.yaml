@@ -121,14 +121,14 @@ benchmark:
   conditions:
     - name: fluidsynth
       overrides:
-        pipeline.synth_backend: fluidsynth
+        render_pipeline.synth_backend: fluidsynth
     - name: dawdreamer_faust
       overrides:
-        pipeline.synth_backend: dawdreamer_faust
+        render_pipeline.synth_backend: dawdreamer_faust
         'dawdreamer.faust_code': 'import("stdfaust.lib"); process = os.sawtooth(hslider("freq[midi:freq]",440,50,2000,1)) * hslider("gain[midi:gain]",0.5,0,1,0.01) * button("gate[midi:gate]");'
     - name: dawdreamer_vital
       overrides:
-        pipeline.synth_backend: dawdreamer_vst
+        render_pipeline.synth_backend: dawdreamer_vst
         dawdreamer.plugin_path: plugin/vital/lib/vst3/Vital.vst3
         dawdreamer.preset_path: null
   sweeps: []
