@@ -1,29 +1,33 @@
 import asyncio
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from sonitra.api.app import create_app
 from sonitra.api.job_store import JobStore
+from sonitra.config import load_config
 import shutil
+
+# Resolved from this file so the suite does not depend on the working directory.
+_API_CONFIG_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "config_api.yaml"
 
 
 @pytest.fixture(scope="session")
 def app():
-    return create_app()
+    return create_app(config=load_config(_API_CONFIG_PATH))
 
 
 @pytest.fixture
 async def client(app):
-    from sonitra.config import default_config_path, load_config
-
     app.state.job_store = JobStore()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     if app.state.worker_futures:
         await asyncio.gather(*list(app.state.worker_futures), return_exceptions=True)
         app.state.worker_futures.clear()
-    # Reset config so tests that PUT a different config do not leak state.
-    app.state.config = load_config(default_config_path())
+    # Reloaded from disk, not reused: tests PUT and mutate configs in place.
+    app.state.config = load_config(_API_CONFIG_PATH)
 
 
 @pytest.fixture

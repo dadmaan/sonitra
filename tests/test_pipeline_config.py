@@ -6,7 +6,7 @@ import pedalboard
 import pytest
 import soundfile as sf
 
-from sonitra.config import SynthBackend, default_config_path, load_config
+from sonitra.config import SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
 from sonitra.synth.dawdreamer_synth import DawDreamerSynth
 from sonitra.synth.pedalboard_synth import PedalboardSynth
@@ -127,23 +127,27 @@ def test_dawdreamer_mode_uses_single_worker(monkeypatch, tmp_path, midi_fixture,
     assert all(w == 1 for w in worker_counts)
 
 
-# ── Default config regression ─────────────────────────────────────────
+# ── Peak normalisation regression ─────────────────────────────────────
 
-def test_default_config_peak_below_clip_threshold(corpus_dir: Path, tmp_path: Path) -> None:
-    cfg = load_config(default_config_path())
-    result = run_pipeline([corpus_dir / "test_c4.mid"], tmp_path, config=cfg)
+def test_peak_normalised_config_stays_below_the_clip_threshold(
+    midi_fixture, config_fixture, tmp_path: Path
+) -> None:
+    cfg = load_config(config_fixture("config_valid.yaml"))
+    result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
     assert result.succeeded == 1
     succeeded = [entry for entry in result.log if entry["status"] == "succeeded"]
     assert len(succeeded) == 1
     flags = succeeded[0]["quality_flags"]
     assert flags["is_clipped"] is False
-    assert flags["peak"] < 1.0
+    assert flags["peak"] < cfg.quality_gates.clip_threshold
 
 
 # ── Vital VST3 end-to-end regression ──────────────────────────────────
 
-def test_run_pipeline_dawdreamer_only_with_vital(vital_vst_path, midi_fixture, tmp_path):
-    cfg = load_config("config/examples/dawdreamer_vital.yaml")
+def test_run_pipeline_dawdreamer_only_with_vital(
+    vital_vst_path, midi_fixture, config_fixture, tmp_path
+):
+    cfg = load_config(config_fixture("config_dawdreamer_vital.yaml"))
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
     assert result.succeeded == 1
@@ -151,8 +155,10 @@ def test_run_pipeline_dawdreamer_only_with_vital(vital_vst_path, midi_fixture, t
     assert len(list(tmp_path.glob("*.wav"))) == 1
 
 
-def test_run_pipeline_dawdreamer_vital_with_preset(vital_vst_path, midi_fixture, tmp_path):
-    cfg = load_config("config/examples/dawdreamer_vital_goodies.yaml")
+def test_run_pipeline_dawdreamer_vital_with_preset(
+    vital_vst_path, midi_fixture, config_fixture, tmp_path
+):
+    cfg = load_config(config_fixture("config_dawdreamer_vital_preset.yaml"))
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
     assert result.succeeded == 1
@@ -161,9 +167,11 @@ def test_run_pipeline_dawdreamer_vital_with_preset(vital_vst_path, midi_fixture,
 
 
 @pytest.mark.slow
-def test_run_pipeline_pedalboard_only_with_vital(vital_vst_path, midi_fixture, tmp_path):
+def test_run_pipeline_pedalboard_only_with_vital(
+    vital_vst_path, midi_fixture, config_fixture, tmp_path
+):
     """Prove that Pedalboard can render Vital VST3 instrument end-to-end."""
-    cfg = load_config("config/examples/pedalboard_vital.yaml")
+    cfg = load_config(config_fixture("config_pedalboard_vital.yaml"))
     cfg.observability.manifest_path = str(tmp_path / "renders.jsonl")
     result = run_pipeline([midi_fixture("test_c4.mid")], out_dir=tmp_path, config=cfg)
     assert result.succeeded == 1
@@ -177,14 +185,16 @@ def test_run_pipeline_pedalboard_only_with_vital(vital_vst_path, midi_fixture, t
 
 @pytest.mark.slow
 @pytest.mark.timeout(120)
-def test_default_config_transcribes_with_basic_pitch(corpus_dir: Path, tmp_path: Path) -> None:
+def test_fixture_config_transcribes_with_basic_pitch(
+    midi_fixture, config_fixture, tmp_path: Path
+) -> None:
     pytest.importorskip("basic_pitch")
     from sonitra.transcribe.configs import BasicPitchTranscriberConfig
     from sonitra.transcribe.protocol import make_transcriber
 
-    cfg = load_config(default_config_path())
+    cfg = load_config(config_fixture("config_valid.yaml"))
     audio_dir = tmp_path / "audio"
-    run_pipeline([corpus_dir / "test_c4.mid"], audio_dir, config=cfg)
+    run_pipeline([midi_fixture("test_c4.mid")], audio_dir, config=cfg)
     wav = next(audio_dir.glob("*.wav"))
     transcriber = make_transcriber(BasicPitchTranscriberConfig())
     transcription = transcriber.transcribe(wav)

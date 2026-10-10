@@ -239,8 +239,10 @@ def test_chain_hash_includes_tuning_offset_fields() -> None:
 def test_offset_accuracy_guard(cents: float) -> None:
     """A condition label is only true if the applied offset matches, so pin the accuracy.
 
-    ±50 ¢ is half a semitone, the largest level the benchmark claims, and both
-    tones stay inside the measurement band, so the estimate cannot wrap.
+    ``build_effects_chain`` warns once ``abs(cents) >= 50.0`` that notes may
+    score as the neighbouring pitch, and half a semitone is exactly that
+    boundary; the grid probes it from both sides. Both shifted tones stay
+    inside the measurement band, so the estimate cannot wrap.
     """
     audio = _harmonic_tone()
     measured, spread = _measured_cents(_stage(cents)(audio, SAMPLE_RATE), SAMPLE_RATE)
