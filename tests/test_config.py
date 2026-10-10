@@ -762,6 +762,12 @@ _TUNING_KNOB_DEFAULTS = {
 }
 
 # (name suffix, instrument-slot cents, return-slot cents or None when off)
+# The ±50 ¢ levels sit exactly half a semitone out, where a note is equally close
+# to two named pitches. They probe which side of that tie a model lands on — the
+# tie-break is decided by the recording's own tuning, not by the model's
+# robustness — so they are probed deliberately rather than as a further step of
+# the sweep. The round trip repeats the largest offset and returns, which exposes
+# the processing artifacts at that size.
 _TUNING_LEVELS = (
     ("-32c", -32.0, None),
     ("-20c", -20.0, None),
@@ -771,7 +777,9 @@ _TUNING_LEVELS = (
     ("20c", 20.0, None),
     ("-40c", -40.0, None),
     ("40c", 40.0, None),
-    ("rt40c", 40.0, -40.0),
+    ("-50c", -50.0, None),
+    ("50c", 50.0, None),
+    ("rt50c", 50.0, -50.0),
 )
 
 _PIANO_CONDITION_PREFIX = "inst=piano_"
@@ -869,8 +877,10 @@ def test_paper_configs_tuning_conditions() -> None:
     for name, prefix in prefixes.items():
         cfg = load_config(_PAPER_EXPERIMENTS / name)
         declared = [condition.name for condition in cfg.benchmark.conditions]
-        assert declared[-9:] == _tuning_names(prefix, _TUNING_LEVELS), name
-        assert not [n for n in declared[:-9] if "tune=" in n], name
+        # Sliced by length so the next level change cannot leave a stale count.
+        tuning_count = len(_TUNING_LEVELS)
+        assert declared[-tuning_count:] == _tuning_names(prefix, _TUNING_LEVELS), name
+        assert not [n for n in declared[:-tuning_count] if "tune=" in n], name
 
         slot_count = len(cfg.pedalboard.effects)
         enabled_paths = {f"pedalboard.effects.{i}.enabled" for i in range(slot_count)}
@@ -927,8 +937,10 @@ def test_tuning_smoke_configs() -> None:
         # MIDI input synthesises from the reference, so the run needs no recordings.
         assert cfg.render_pipeline.input_type == InputType.MIDI, path
         assert [type(e) for e in cfg.pedalboard.effects] == [type(e) for e in twin.pedalboard.effects], path
+        # One realistic negative offset, the tie point in each direction, and the
+        # round trip at that same size.
         assert [c.name for c in cfg.benchmark.conditions] == [
-            f"{prefix}tune={suffix}" for suffix in ("-32c", "40c", "rt40c")
+            f"{prefix}tune={suffix}" for suffix in ("-32c", "50c", "rt50c")
         ], path
         assert cfg.benchmark.include_baseline is True, path
         assert cfg.benchmark.save_audio is True, path

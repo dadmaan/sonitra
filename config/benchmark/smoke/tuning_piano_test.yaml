@@ -6,7 +6,7 @@
 # leading TuningOffset slots stay disabled and the baseline is the untouched
 # signal. MIDI input means the run needs the reference MIDI only, not the
 # recordings.
-# Conditions: baseline, inst=piano_tune=-32c, inst=piano_tune=40c, inst=piano_tune=rt40c
+# Conditions: baseline, inst=piano_tune=-32c, inst=piano_tune=50c, inst=piano_tune=rt50c
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/smoke/tuning_piano_test.yaml --dataset maestro-v3 --limit 2
@@ -179,20 +179,20 @@ benchmark:
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-    - name: inst=piano_tune=40c
+    - name: inst=piano_tune=50c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.0.cents: 50.0
         pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
-    - name: inst=piano_tune=rt40c
+    - name: inst=piano_tune=rt50c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.0.cents: 50.0
         pedalboard.effects.1.enabled: true
-        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.1.cents: -50.0
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false

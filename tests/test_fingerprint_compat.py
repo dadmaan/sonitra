@@ -10,10 +10,10 @@ from sonitra.benchmark.results import compute_fingerprint
 from sonitra.config import PipelineConfig, load_config
 
 GOLDEN_VALID_CONFIG = "114b31a404838203a35a46cb8dbc25548b5462b5930a0ac72667c7eb0a403721"
-# Re-captured when piano_only.yaml gained two leading tuning-offset slots and
-# nine tuning conditions, so existing work dirs for the paper configs stop
-# resuming and have to be re-run together.
-GOLDEN_PIANO_ONLY_PRESET = "8ff383745f82e281ea5ad321476bbfa56527cefa145f961bea3964968be8d26d"
+# Re-captured when piano_only.yaml's tuning sweep gained the ±50 ¢ tie-point
+# conditions and its round trip moved to ±50 ¢, so existing work dirs for the paper
+# and tuning smoke configs stop resuming and have to be re-run.
+GOLDEN_PIANO_ONLY_PRESET = "09e650f6bf12260387584e908f0e60b74089106a65b771fa80ce534bc7c285a3"
 # basic_pitch with an explicit batch_size on CUDA
 GOLDEN_BATCH8_PRESET = "62cb6d5be8506d539c1c5c51ba496aba922f8f47f46ce97e4134e20e50950fc9"
 # basic_pitch on CPU with batch_size left unset in the YAML (16 was the schema default)
