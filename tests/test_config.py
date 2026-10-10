@@ -783,8 +783,14 @@ _PAPER_PIANO_CONFIGS = (
     "piano_only_maestro_test_midi.yaml",
     "piano_only_maestro_train_probe_audio.yaml",
     "piano_only_maestro_train_probe_midi.yaml",
+    "piano_only_smd_piano_v2.yaml",
+    "piano_only_smd_synth_v1.yaml",
 )
-_PAPER_GUITAR_CONFIGS = ("guitar_only.yaml",)
+_PAPER_GUITAR_CONFIGS = (
+    "guitar_only.yaml",
+    "guitar_only_gaps_audio.yaml",
+    "guitar_only_guitarset_audio.yaml",
+)
 _PAPER_CONFIGS = _PAPER_PIANO_CONFIGS + _PAPER_GUITAR_CONFIGS
 
 _PAPER_LAYOUT = {
@@ -798,16 +804,19 @@ _PAPER_LAYOUT = {
         )
         for name in _PAPER_PIANO_CONFIGS
     },
-    "guitar_only.yaml": (
-        TuningOffsetConfig,
-        TuningOffsetConfig,
-        DistortionConfig,
-        HighpassFilterConfig,
-        LowpassFilterConfig,
-        LowpassFilterConfig,
-        DelayConfig,
-        ReverbConfig,
-    ),
+    **{
+        name: (
+            TuningOffsetConfig,
+            TuningOffsetConfig,
+            DistortionConfig,
+            HighpassFilterConfig,
+            LowpassFilterConfig,
+            LowpassFilterConfig,
+            DelayConfig,
+            ReverbConfig,
+        )
+        for name in _PAPER_GUITAR_CONFIGS
+    },
 }
 
 _SMOKE_DIR = Path(__file__).resolve().parent.parent / "config" / "benchmark" / "smoke"
@@ -819,6 +828,20 @@ _TUNING_SMOKE_CONFIGS = (
 
 def _tuning_names(prefix: str, levels: tuple[tuple[str, float, float | None], ...]) -> list[str]:
     return [f"{prefix}tune={suffix}" for suffix, _, _ in levels]
+
+
+def test_paper_config_lists_cover_directory() -> None:
+    """Every shipped paper config is claimed by one of the checks below.
+
+    A config dropped into the directory without being listed would escape both
+    the tuning contract and the transcriber-parameter studies, and nothing else
+    would notice it. The transcriber-parameter studies declare no conditions at
+    all — they measure one knob against the baseline — so the directory splits
+    into files that carry the tuning sweep and files that carry a study.
+    """
+    on_disk = {path.name for path in _PAPER_EXPERIMENTS.glob("*.yaml")}
+    claimed = set(_PAPER_CONFIGS) | {path.name for path in _PARAM_SWEEPS}
+    assert on_disk == claimed
 
 
 def test_paper_configs_lead_with_two_disabled_tuning_slots() -> None:
