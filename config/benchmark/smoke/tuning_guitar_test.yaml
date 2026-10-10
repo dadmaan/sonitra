@@ -6,7 +6,7 @@
 # exercises the same chain the paper conditions use, but every condition
 # switches off everything except the offset under test. MIDI input means the run
 # needs the reference MIDI only, not the recordings.
-# Conditions: baseline, tune=-32c, tune=40c, tune=rt40c
+# Conditions: baseline, tune=-32c, tune=50c, tune=rt50c
 # The selection keys are left at their defaults: a run is bounded by --limit,
 # and benchmark.save_audio writes the renders so the offset can be heard.
 #
@@ -182,10 +182,10 @@ benchmark:
         pedalboard.effects.5.enabled: false
         pedalboard.effects.6.enabled: false
         pedalboard.effects.7.enabled: false
-    - name: tune=40c
+    - name: tune=50c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.0.cents: 50.0
         pedalboard.effects.1.enabled: false
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
@@ -193,12 +193,12 @@ benchmark:
         pedalboard.effects.5.enabled: false
         pedalboard.effects.6.enabled: false
         pedalboard.effects.7.enabled: false
-    - name: tune=rt40c
+    - name: tune=rt50c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.0.cents: 50.0
         pedalboard.effects.1.enabled: true
-        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.1.cents: -50.0
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false

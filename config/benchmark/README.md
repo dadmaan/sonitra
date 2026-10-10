@@ -311,9 +311,29 @@ Caveats:
 
 ### Tuning-offset conditions
 
-Each of the six configs in `paper_experiments/` opens its `pedalboard.effects` list with two `TuningOffset` slots. The offset comes first in the chain because what is out of tune is the instrument itself, so the shift belongs ahead of the amp, the cabinet and the room; slot 1 provides the return shift and exists for the round-trip control alone. Both slots ship disabled with `cents: 0.0` and pass the signal through unchanged, so every condition that does not address them renders the unprocessed signal. Those two leading slots moved every pre-existing effect slot up by two, so the reverb, chorus, distortion and cabinet conditions now address different indices than they used to. Because the resume fingerprint covers the whole config, every existing work directory for those six configs can no longer resume and the runs have to be redone together.
+Ten configs in `paper_experiments/` carry the tuning sweep: the six that opened with two `TuningOffset` slots, plus four that arrived later with the same two leading slots — `piano_only_smd_piano_v2.yaml`, `piano_only_smd_synth_v1.yaml`, `guitar_only_gaps_audio.yaml` and `guitar_only_guitarset_audio.yaml`.
 
-Each config also gained nine tuning conditions: `tune=-32c`, `tune=-20c`, `tune=-8c`, `tune=8c`, `tune=12c`, `tune=20c`, `tune=-40c`, `tune=40c` and `tune=rt40c`, each name prefixed with `inst=piano_` in the five piano configs. Every one of them switches off all the other slots, so a tuning condition measures the offset and nothing else. `rt40c` is the one exception: it enables both slots, at +40 cents and then -40 cents, which brings the intended pitch back to where it started and leaves the processing artifact of two stretcher passes at that offset. Read it as an approximation of the artifact at the largest offset these conditions use, not as an upper limit for the smaller levels. The smoke configs `smoke/tuning_piano_test.yaml` and `smoke/tuning_guitar_test.yaml` reuse the same chain layout and run three of those conditions (`tune=-32c`, `tune=40c`, `tune=rt40c`) plus the baseline, as a short check before a paper run. Both take MIDI input, so they synthesise the dataset's reference MIDI with FluidSynth and need no recordings in the corpus; `save_audio` writes the renders so the offset can be heard.
+The offset comes first in the chain because what is out of tune is the instrument itself, so the shift belongs ahead of the amp, the cabinet and the room. Slot 1 provides the return shift. Only the round-trip control uses it: the one condition that shifts out and then back, to show what the processing leaves behind. Both slots ship disabled with `cents: 0.0` and pass the signal through unchanged, so any condition that does not address them renders the unprocessed signal.
+
+Those two leading slots moved every pre-existing effect slot up by two, so the reverb, chorus, distortion and cabinet conditions now address different index numbers than they used to.
+
+A benchmark run keys each work directory on a hash of the whole config, so changing any part of it stops older work directories from resuming. Adding the ±50 ¢ conditions changed that hash: every earlier work directory for these configs, the 2026-10-05 tuning smoke runs included, can no longer resume and has to be re-run.
+
+The three `transcriber_params_*` configs in the same directory also open with two `TuningOffset` slots but declare no tuning conditions. They vary one transcriber setting at a time against the single `baseline` condition, so their slots are present and switched off, never used.
+
+Each of the ten configs carries eleven tuning conditions: `tune=-32c`, `tune=-20c`, `tune=-8c`, `tune=8c`, `tune=12c`, `tune=20c`, `tune=-40c`, `tune=40c`, `tune=-50c`, `tune=50c` and `tune=rt50c`. The seven piano configs prefix each name with `inst=piano_`; the three guitar configs use the name as it stands. Every one of them switches off all the other slots, so a tuning condition measures the offset and nothing else.
+
+`rt50c` is the one exception: it switches on both slots, +50 cents and then -50 cents, which brings the intended pitch back to where it started and leaves behind whatever two passes through the pitch shifter did to the signal. Read it as an approximation of that artifact at the largest offset these conditions use, not as an upper limit for the smaller levels.
+
+At ±50 cents every note sits exactly halfway between two semitones. Scoring requires an exact pitch match (`src/sonitra/evaluation/note_metrics.py:38`), so at that offset both neighbouring pitches are equally good answers and either one scores the same.
+
+The material decides which side a note lands on. In audio mode it means each recording's own tuning, plus piano stretch tuning and guitar fret intonation, the tuning that shifts register by register, which is what `scripts/estimate_tuning.py` measures. In MIDI mode it means the fine tuning baked into the SoundFont samples, since nothing in the config pins FluidSynth to a reference pitch.
+
+So read the ±50 ¢ results as where a model breaks the tie, not as another point on a robustness slope. [Own tuning offset](../../docs/statistical-analysis.md#own-tuning-offset-optional-enrichment) covers how the per-recording tuning reaches the metadata CSV and the analysis from there.
+
+`src/sonitra/effects/chain_builder.py` logs a warning whenever an enabled slot reaches `abs(cents) >= 50.0`: `TuningOffset %.1f cents is at or beyond half a semitone: notes may score as the neighbouring pitch`. It is a notice about the tie point, not an error. It fires while the effect chain is built, and `src/sonitra/pipeline.py` builds that chain once per worker thread, so a `±50c` condition logs it once per worker thread while `rt50c` logs it twice per worker thread, because both of its slots qualify.
+
+The smoke configs `smoke/tuning_piano_test.yaml` and `smoke/tuning_guitar_test.yaml` reuse the same chain layout and run three of those conditions (`tune=-32c`, `tune=50c`, `tune=rt50c`) plus the baseline, as a short check before a paper run. Both take MIDI input, so they synthesise the dataset's reference MIDI with FluidSynth and need no recordings in the corpus; `save_audio` writes the renders so the offset can be heard.
 
 ---
 

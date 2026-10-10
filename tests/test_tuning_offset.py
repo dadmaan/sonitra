@@ -235,9 +235,13 @@ def test_chain_hash_includes_tuning_offset_fields() -> None:
 # ── Stage behaviour ──────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("cents", [-40.0, -8.0, 8.0, 40.0])
+@pytest.mark.parametrize("cents", [-50.0, -40.0, -8.0, 8.0, 40.0, 50.0])
 def test_offset_accuracy_guard(cents: float) -> None:
-    """A condition label is only true if the applied offset matches, so pin the accuracy."""
+    """A condition label is only true if the applied offset matches, so pin the accuracy.
+
+    ±50 ¢ is half a semitone, the largest level the benchmark claims, and both
+    tones stay inside the measurement band, so the estimate cannot wrap.
+    """
     audio = _harmonic_tone()
     measured, spread = _measured_cents(_stage(cents)(audio, SAMPLE_RATE), SAMPLE_RATE)
     assert measured == pytest.approx(cents, abs=0.5)

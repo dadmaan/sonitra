@@ -762,6 +762,12 @@ _TUNING_KNOB_DEFAULTS = {
 }
 
 # (name suffix, instrument-slot cents, return-slot cents or None when off)
+# The ±50 ¢ levels sit exactly half a semitone out, where a note is equally close
+# to two named pitches. They probe which side of that tie a model lands on — the
+# tie-break is decided by the recording's own tuning, not by the model's
+# robustness — so they are probed deliberately rather than as a further step of
+# the sweep. The round trip repeats the largest offset and returns, which exposes
+# the processing artifacts at that size.
 _TUNING_LEVELS = (
     ("-32c", -32.0, None),
     ("-20c", -20.0, None),
@@ -771,7 +777,9 @@ _TUNING_LEVELS = (
     ("20c", 20.0, None),
     ("-40c", -40.0, None),
     ("40c", 40.0, None),
-    ("rt40c", 40.0, -40.0),
+    ("-50c", -50.0, None),
+    ("50c", 50.0, None),
+    ("rt50c", 50.0, -50.0),
 )
 
 _PIANO_CONDITION_PREFIX = "inst=piano_"
@@ -783,8 +791,14 @@ _PAPER_PIANO_CONFIGS = (
     "piano_only_maestro_test_midi.yaml",
     "piano_only_maestro_train_probe_audio.yaml",
     "piano_only_maestro_train_probe_midi.yaml",
+    "piano_only_smd_piano_v2.yaml",
+    "piano_only_smd_synth_v1.yaml",
 )
-_PAPER_GUITAR_CONFIGS = ("guitar_only.yaml",)
+_PAPER_GUITAR_CONFIGS = (
+    "guitar_only.yaml",
+    "guitar_only_gaps_audio.yaml",
+    "guitar_only_guitarset_audio.yaml",
+)
 _PAPER_CONFIGS = _PAPER_PIANO_CONFIGS + _PAPER_GUITAR_CONFIGS
 
 _PAPER_LAYOUT = {
@@ -798,16 +812,19 @@ _PAPER_LAYOUT = {
         )
         for name in _PAPER_PIANO_CONFIGS
     },
-    "guitar_only.yaml": (
-        TuningOffsetConfig,
-        TuningOffsetConfig,
-        DistortionConfig,
-        HighpassFilterConfig,
-        LowpassFilterConfig,
-        LowpassFilterConfig,
-        DelayConfig,
-        ReverbConfig,
-    ),
+    **{
+        name: (
+            TuningOffsetConfig,
+            TuningOffsetConfig,
+            DistortionConfig,
+            HighpassFilterConfig,
+            LowpassFilterConfig,
+            LowpassFilterConfig,
+            DelayConfig,
+            ReverbConfig,
+        )
+        for name in _PAPER_GUITAR_CONFIGS
+    },
 }
 
 _SMOKE_DIR = Path(__file__).resolve().parent.parent / "config" / "benchmark" / "smoke"
@@ -819,6 +836,20 @@ _TUNING_SMOKE_CONFIGS = (
 
 def _tuning_names(prefix: str, levels: tuple[tuple[str, float, float | None], ...]) -> list[str]:
     return [f"{prefix}tune={suffix}" for suffix, _, _ in levels]
+
+
+def test_paper_config_lists_cover_directory() -> None:
+    """Every shipped paper config is claimed by one of the checks below.
+
+    A config dropped into the directory without being listed would escape both
+    the tuning contract and the transcriber-parameter studies, and nothing else
+    would notice it. The transcriber-parameter studies declare no conditions at
+    all — they measure one knob against the baseline — so the directory splits
+    into files that carry the tuning sweep and files that carry a study.
+    """
+    on_disk = {path.name for path in _PAPER_EXPERIMENTS.glob("*.yaml")}
+    claimed = set(_PAPER_CONFIGS) | {path.name for path in _PARAM_SWEEPS}
+    assert on_disk == claimed
 
 
 def test_paper_configs_lead_with_two_disabled_tuning_slots() -> None:
@@ -846,8 +877,10 @@ def test_paper_configs_tuning_conditions() -> None:
     for name, prefix in prefixes.items():
         cfg = load_config(_PAPER_EXPERIMENTS / name)
         declared = [condition.name for condition in cfg.benchmark.conditions]
-        assert declared[-9:] == _tuning_names(prefix, _TUNING_LEVELS), name
-        assert not [n for n in declared[:-9] if "tune=" in n], name
+        # Sliced by length so the next level change cannot leave a stale count.
+        tuning_count = len(_TUNING_LEVELS)
+        assert declared[-tuning_count:] == _tuning_names(prefix, _TUNING_LEVELS), name
+        assert not [n for n in declared[:-tuning_count] if "tune=" in n], name
 
         slot_count = len(cfg.pedalboard.effects)
         enabled_paths = {f"pedalboard.effects.{i}.enabled" for i in range(slot_count)}
@@ -904,8 +937,10 @@ def test_tuning_smoke_configs() -> None:
         # MIDI input synthesises from the reference, so the run needs no recordings.
         assert cfg.render_pipeline.input_type == InputType.MIDI, path
         assert [type(e) for e in cfg.pedalboard.effects] == [type(e) for e in twin.pedalboard.effects], path
+        # One realistic negative offset, the tie point in each direction, and the
+        # round trip at that same size.
         assert [c.name for c in cfg.benchmark.conditions] == [
-            f"{prefix}tune={suffix}" for suffix in ("-32c", "40c", "rt40c")
+            f"{prefix}tune={suffix}" for suffix in ("-32c", "50c", "rt50c")
         ], path
         assert cfg.benchmark.include_baseline is True, path
         assert cfg.benchmark.save_audio is True, path

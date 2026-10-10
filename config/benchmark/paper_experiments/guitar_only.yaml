@@ -721,12 +721,34 @@ benchmark:
         pedalboard.effects.5.enabled: false
         pedalboard.effects.6.enabled: false
         pedalboard.effects.7.enabled: false
-    - name: tune=rt40c
+    - name: tune=-50c
       overrides:
         pedalboard.effects.0.enabled: true
-        pedalboard.effects.0.cents: 40.0
+        pedalboard.effects.0.cents: -50.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=50c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 50.0
+        pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
+        pedalboard.effects.3.enabled: false
+        pedalboard.effects.4.enabled: false
+        pedalboard.effects.5.enabled: false
+        pedalboard.effects.6.enabled: false
+        pedalboard.effects.7.enabled: false
+    - name: tune=rt50c
+      overrides:
+        pedalboard.effects.0.enabled: true
+        pedalboard.effects.0.cents: 50.0
         pedalboard.effects.1.enabled: true
-        pedalboard.effects.1.cents: -40.0
+        pedalboard.effects.1.cents: -50.0
         pedalboard.effects.2.enabled: false
         pedalboard.effects.3.enabled: false
         pedalboard.effects.4.enabled: false
