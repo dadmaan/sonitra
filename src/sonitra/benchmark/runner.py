@@ -93,6 +93,9 @@ _WORKER_EVENTS: multiprocessing.Queue | None = None
 # workers, which live exactly as long as one run_benchmark call.
 _WORKER_TRANSCRIBERS: dict[tuple[str, tuple[str, bool]], TranscriberProtocol] = {}
 
+# Layout of the Python log records a pool worker writes to its own log file.
+_WORKER_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
 
 def _worker_transcribers(
     cfgs: Sequence[TranscriberConfig],
@@ -135,12 +138,18 @@ def _drain_events(event_queue: multiprocessing.Queue, progress: BenchmarkProgres
         progress.on_worker_event(event)
 
 
-def _worker_event_init(event_queue: multiprocessing.Queue | None, log_dir: Path) -> None:
-    """ProcessPoolExecutor worker initializer: contain output, neutralise logging.
+def _worker_event_init(
+    event_queue: multiprocessing.Queue | None,
+    log_dir: Path,
+    log_level: int = logging.WARNING,
+) -> None:
+    """ProcessPoolExecutor worker initializer: contain output, keep log records.
 
-    Redirects worker fd 1/2 to a per-worker log file under *log_dir* so neither
-    TF C++ stderr output nor Python-level print/logging can corrupt the shared
-    terminal (the rich Live display), while still surviving for debugging.
+    Redirects fd 1 and fd 2 to ``log_dir/worker-<pid>.log`` so neither native
+    output nor ``print()`` can corrupt the shared terminal (the live progress
+    display), and rebinds the Python-level streams to those redirected fds so
+    logging follows the same file. Records at or above *log_level* from any
+    logger are written there through exactly one handler.
     """
     global _WORKER_EVENTS
     _WORKER_EVENTS = event_queue
@@ -153,13 +162,18 @@ def _worker_event_init(event_queue: multiprocessing.Queue | None, log_dir: Path)
     fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
     os.dup2(fd, 2)
     os.dup2(fd, 1)
-    # Neutralize Python-level output so rich/FileProxy/print never touch the display
+    # The Python-level streams now write to the redirected fds, never to the display
     sys.stdout = sys.__stdout__   # wrapper over fd 1 -> now the log file
     sys.stderr = sys.__stderr__   # wrapper over fd 2 -> now the log file
     root = logging.getLogger()
-    for handler in list(root.handlers):
-        root.removeHandler(handler)
-    root.addHandler(logging.NullHandler())
+    # A spawned main module can configure logging at import time, and one
+    # handler means every record is written once.
+    for existing in list(root.handlers):
+        root.removeHandler(existing)
+    handler = logging.StreamHandler(sys.stderr)  # created after the rebinding above
+    handler.setFormatter(logging.Formatter(_WORKER_LOG_FORMAT))
+    root.addHandler(handler)
+    root.setLevel(log_level)
 
 
 @contextmanager
@@ -646,7 +660,8 @@ def _run_benchmark(
             max_workers=n_workers,
             mp_context=mp_context,
             initializer=_worker_event_init,
-            initargs=(event_queue, log_dir),
+            # workers follow the log level the serial path would use
+            initargs=(event_queue, log_dir, logging.getLogger().getEffectiveLevel()),
         ) as executor:
             futures: dict[Future, Condition] = {}
             for condition in conditions:

@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Fixed
 
 - `config/benchmark/methods/synthesis_backends.yaml`: its three conditions overrode `pipeline.synth_backend`, but the section is named `render_pipeline`, so every condition raised `Override path 'pipeline.synth_backend' has unknown key 'pipeline'` and the study could not run. The study could never have produced a row, so no result directory is affected. Covered by the per-preset override-resolution check in `tests/presets/test_presets_generic.py`.
+- With `benchmark.max_workers` above 1, Python log records raised inside a pool worker were dropped, including the half-semitone `TuningOffset` warning. A leftover `NullHandler` in the worker initializer counted as a handler, so Python's own fallback output never fired once the pool moved to spawned workers. The records now go to that worker's `logs/worker-<pid>.log`, formatted with time, level and logger name, at the log level the parent process uses. Covered by `test_worker_log_receives_warning_records`, `test_worker_log_honours_passed_level`, `test_worker_root_has_exactly_one_handler`, `test_worker_logging_keeps_terminal_clean`, `test_parallel_worker_log_records_tuning_offset_warning` and `test_parallel_benchmark_passes_parent_log_level` in `tests/test_benchmark_runner.py`.
 
 ## [0.5.1] - 2026-10-08
 
