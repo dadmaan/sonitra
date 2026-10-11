@@ -1,0 +1,59 @@
+render_pipeline:
+  synth_backend: fluidsynth
+  effects_chain: pedalboard
+  sample_rate: 44100
+  bit_depth: 16
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: false
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+
+fluidsynth:
+  soundfont_path: /usr/share/sounds/sf2/default-GM.sf2
+
+pedalboard:
+  effects:
+    - type: Compressor
+      threshold_db: -18.0
+      ratio: 4.0
+      attack_ms: 5.0
+      release_ms: 100.0
+      enabled: true
+    - type: Reverb
+      room_size: 0.4
+      damping: 0.5
+      wet_level: 0.15
+      dry_level: 0.85
+      width: 1.0
+      freeze_mode: false
+      enabled: true
+    - type: Limiter
+      threshold_db: -1.0
+      release_ms: 100.0
+      enabled: true
+    - type: Chorus
+      rate_hz: 1.0
+      depth: 0.25
+      centre_delay_ms: 7.0
+      feedback: 0.0
+      mix: 0.5
+      enabled: true
+    - type: Delay
+      delay_seconds: 0.5
+      feedback: 0.0
+      mix: 0.5
+      enabled: true
+    - type: Distortion
+      drive_db: 25.0
+      enabled: true
+    - type: Gain
+      gain_db: 0.0
+      enabled: true

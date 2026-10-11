@@ -10,9 +10,12 @@ from sonitra.benchmark.results import compute_fingerprint
 from sonitra.config import PipelineConfig, load_config
 
 GOLDEN_VALID_CONFIG = "114b31a404838203a35a46cb8dbc25548b5462b5930a0ac72667c7eb0a403721"
-# Re-captured when piano_only.yaml's tuning sweep gained the ±50 ¢ tie-point
-# conditions and its round trip moved to ±50 ¢, so existing work dirs for the paper
-# and tuning smoke configs stop resuming and have to be re-run.
+# The preset goldens are captured against frozen snapshots under
+# tests/fixtures/fingerprint/, byte copies from the branch cut. Those fixtures are
+# never updated to follow the presets, so the goldens detect changes to the
+# fingerprint hashing and the schema dump, not preset edits. A golden change
+# stops every existing benchmark work dir from resuming; re-capture only as a
+# deliberate, CHANGELOG'd decision.
 GOLDEN_PIANO_ONLY_PRESET = "09e650f6bf12260387584e908f0e60b74089106a65b771fa80ce534bc7c285a3"
 # basic_pitch with an explicit batch_size on CUDA
 GOLDEN_BATCH8_PRESET = "62cb6d5be8506d539c1c5c51ba496aba922f8f47f46ce97e4134e20e50950fc9"
@@ -28,27 +31,25 @@ def test_fingerprint_golden_minimal_config() -> None:
 
 
 def test_fingerprint_golden_piano_only_preset() -> None:
-    # A failure here changes every benchmark fingerprint, so every existing work
-    # dir stops resuming; re-capture only as a deliberate, CHANGELOG'd decision.
-    path = (
-        Path(__file__).resolve().parent.parent
-        / "config"
-        / "benchmark"
-        / "paper_experiments"
-        / "piano_only.yaml"
-    )
+    # The fixture is a frozen snapshot of the preset as of the branch cut and must
+    # never be updated to follow the preset: the golden detects changes to the
+    # fingerprint hashing and the schema dump. Such a change stops every existing
+    # benchmark work dir from resuming; re-capture only as a deliberate,
+    # CHANGELOG'd decision.
+    path = Path(__file__).resolve().parent / "fixtures" / "fingerprint" / "piano_only.yaml"
     assert compute_fingerprint(load_config(path)) == GOLDEN_PIANO_ONLY_PRESET
 
 
 def test_fingerprint_golden_batch8_preset() -> None:
-    # Protects an explicit batch_size on CUDA: a failure here changes every
-    # benchmark fingerprint, so every existing work dir stops resuming;
+    # Protects an explicit batch_size on CUDA. The fixture is a frozen snapshot of
+    # the preset as of the branch cut and must never be updated to follow the
+    # preset: the golden detects changes to the fingerprint hashing and the schema
+    # dump. Such a change stops every existing benchmark work dir from resuming;
     # re-capture only as a deliberate, CHANGELOG'd decision.
     path = (
-        Path(__file__).resolve().parent.parent
-        / "config"
-        / "benchmark"
-        / "transkun"
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "fingerprint"
         / "transkun_baseline_gpu_batch8_strict.yaml"
     )
     assert compute_fingerprint(load_config(path)) == GOLDEN_BATCH8_PRESET
@@ -57,16 +58,12 @@ def test_fingerprint_golden_batch8_preset() -> None:
 def test_fingerprint_golden_cpu_unset_basic_pitch() -> None:
     # Guards the unset-value normalisation: this preset leaves batch_size unset,
     # so it may only keep hashing as the old schema default while the unset value
-    # normalises to it. A failure here changes every benchmark fingerprint, so
-    # every existing work dir stops resuming; re-capture only as a deliberate,
-    # CHANGELOG'd decision.
-    path = (
-        Path(__file__).resolve().parent.parent
-        / "config"
-        / "benchmark"
-        / "transkun"
-        / "transkun_baseline.yaml"
-    )
+    # normalises to it. The fixture is a frozen snapshot of the preset as of the
+    # branch cut and must never be updated to follow the preset: the golden
+    # detects changes to the fingerprint hashing and the schema dump. Such a
+    # change stops every existing benchmark work dir from resuming; re-capture
+    # only as a deliberate, CHANGELOG'd decision.
+    path = Path(__file__).resolve().parent / "fixtures" / "fingerprint" / "transkun_baseline.yaml"
     assert compute_fingerprint(load_config(path)) == GOLDEN_CPU_UNSET_BASIC_PITCH
 
 

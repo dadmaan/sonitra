@@ -1,0 +1,27 @@
+render_pipeline:
+  synth_backend: pedalboard_instrument
+  effects_chain: pedalboard
+  sample_rate: 44100
+  bit_depth: 24
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: false
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"
+
+pedalboard:
+  instrument:
+    plugin_path: /workspace/plugin/vital/lib/vst3/Vital.vst3
+  effects: []
+
+normalisation:
+  enabled: true
+  mode: peak
+  target_db: -1.0

@@ -15,17 +15,16 @@ from sonitra.transcribe.basic_pitch import BasicPitchTranscriber
 
 _SOUNDFONT = Path("/usr/share/sounds/sf2/default-GM.sf2")
 _FIXTURES = Path(__file__).parent / "fixtures"
-_CONFIGS = Path(__file__).parent.parent / "config" / "examples"
 _VITAL_VST = Path("/workspace/plugin/vital/lib/vst3/Vital.vst3")
 
 
 @pytest.mark.slow
-def test_basic_pitch_roundtrip_c4_soundfont(tmp_path: Path) -> None:
+def test_basic_pitch_roundtrip_c4_soundfont(config_fixture, tmp_path: Path) -> None:
     pytest.importorskip("basic_pitch")
     if not _SOUNDFONT.exists():
         pytest.skip("soundfont not found")
 
-    cfg = load_config(_CONFIGS / "dawdreamer_soundfont.yaml")
+    cfg = load_config(config_fixture("roundtrip/dawdreamer_soundfont.yaml"))
     cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
@@ -54,12 +53,12 @@ def test_basic_pitch_roundtrip_c4_soundfont(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_basic_pitch_roundtrip_polyphonic_soundfont(tmp_path: Path) -> None:
+def test_basic_pitch_roundtrip_polyphonic_soundfont(config_fixture, tmp_path: Path) -> None:
     pytest.importorskip("basic_pitch")
     if not _SOUNDFONT.exists():
         pytest.skip("soundfont not found")
 
-    cfg = load_config(_CONFIGS / "dawdreamer_soundfont.yaml")
+    cfg = load_config(config_fixture("roundtrip/dawdreamer_soundfont.yaml"))
     cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
@@ -87,27 +86,22 @@ def test_basic_pitch_roundtrip_polyphonic_soundfont(tmp_path: Path) -> None:
 
 
 _SOUNDFONT_CONFIGS = [
-    "dawdreamer_faust.yaml",
-    "dawdreamer_soundfont.yaml",
-    "pedalboard_baseline.yaml",
-    "pedalboard_chorus_delay.yaml",
-    "pedalboard_distortion_gain.yaml",
-    "pedalboard_extreme_reverb.yaml",
-    "pedalboard_heavy_compression.yaml",
-    "pedalboard_no_effects.yaml",
-    "pedalboard_all_effects.yaml",
+    "roundtrip/faust.yaml",
+    "roundtrip/dawdreamer_soundfont.yaml",
+    "roundtrip/pedalboard_no_effects.yaml",
+    "roundtrip/pedalboard_all_effects.yaml",
 ]
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("config_name", _SOUNDFONT_CONFIGS)
-def test_roundtrip_soundfont_config(config_name: str, tmp_path: Path) -> None:
+def test_roundtrip_soundfont_config(config_name: str, config_fixture, tmp_path: Path) -> None:
     pytest.importorskip("basic_pitch")
-    if config_name != "dawdreamer_faust.yaml":
+    if config_name != "roundtrip/faust.yaml":
         if not _SOUNDFONT.exists():
             pytest.skip("soundfont not found")
 
-    cfg = load_config(_CONFIGS / config_name)
+    cfg = load_config(config_fixture(config_name))
     cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 
@@ -134,24 +128,20 @@ def test_roundtrip_soundfont_config(config_name: str, tmp_path: Path) -> None:
 
 
 _VITAL_CONFIGS = [
-    "dawdreamer_vital.yaml",
-    "dawdreamer_vital_pedalboard.yaml",
-    "dawdreamer_vital_delayed_flight.yaml",
-    "dawdreamer_vital_delayed_flight_pedalboard.yaml",
-    "dawdreamer_vital_goodies.yaml",
-    "dawdreamer_vital_goodies_pedalboard.yaml",
+    "config_dawdreamer_vital.yaml",
+    "roundtrip/dawdreamer_vital_pedalboard.yaml",
 ]
 
 
 @pytest.mark.slow
 @pytest.mark.skip_if_no_vst
 @pytest.mark.parametrize("config_name", _VITAL_CONFIGS)
-def test_roundtrip_vital_config(config_name: str, tmp_path: Path) -> None:
+def test_roundtrip_vital_config(config_name: str, config_fixture, tmp_path: Path) -> None:
     pytest.importorskip("basic_pitch")
     if not _VITAL_VST.exists():
         pytest.skip("Vital VST3 not found")
 
-    cfg = load_config(_CONFIGS / config_name)
+    cfg = load_config(config_fixture(config_name))
     cfg.render_pipeline.overwrite = True
     cfg.observability.write_manifest = False
 

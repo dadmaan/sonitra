@@ -22,7 +22,7 @@ from tests.helpers import assert_notes_satisfy_contract
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "render_benchmark_examples.py"
-SMOKE_CONFIG = REPO / "config" / "benchmark" / "smoke" / "benchmark_test.yaml"
+SMOKE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "config_benchmark_render.yaml"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 SONDFONT = Path("/usr/share/sounds/sf2/default-GM.sf2")
 

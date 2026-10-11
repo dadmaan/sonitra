@@ -1,0 +1,17 @@
+render_pipeline:
+  synth_backend: dawdreamer_faust
+  effects_chain: none
+  sample_rate: 44100
+  bit_depth: 16
+  channels: 2
+  duration_padding_sec: 2.0
+  overwrite: false
+  resume: false
+  max_workers: 1
+  log_level: INFO
+
+io:
+  corpus_root: ./corpus
+  output_format: wav
+  mp3_bitrate_kbps: 192
+  file_naming: "{stem}"

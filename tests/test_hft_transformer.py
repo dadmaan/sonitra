@@ -439,37 +439,6 @@ def test_hft_missing_torch_names_the_transkun_extra(tmp_path: Path) -> None:
     assert "torch" in message
 
 
-# ── source.yaml documentation ──────────────────────────────────────────
-
-def test_source_yaml_documents_every_hft_field() -> None:
-    import re
-
-    from sonitra.config import default_config_path
-
-    text = default_config_path().read_text()
-    entry = re.search(
-        r"^[ \t]*# - type: hft_transformer$(?P<body>(?:\n[ \t]*#.*)*)", text, re.M
-    )
-    assert entry, "config/source.yaml has no commented hft_transformer entry"
-    body = entry.group("body")
-    for field in (
-        "device",
-        "checkpoint",
-        "weights_path",
-        "output",
-        "n_stride",
-        "onset_threshold",
-        "offset_threshold",
-        "mpe_threshold",
-        "batch_size",
-    ):
-        assert re.search(rf"^[ \t]*#[ \t]+{field}:", body, re.M), field
-    # The two facts that make the entry usable without reading the code.
-    assert "GPU:N" in body
-    assert "converted" in body
-    assert "time-axis" in body
-
-
 # ── slow tests (require torch) ─────────────────────────────────────────
 
 

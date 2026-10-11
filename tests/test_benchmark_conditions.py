@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from sonitra.benchmark.conditions import Condition, apply_overrides, expand_conditions
-from sonitra.config import BenchmarkSection, PipelineConfig, SynthBackend, load_config
+from sonitra.config import BenchmarkSection, PipelineConfig, SynthBackend
 from sonitra.effects.builtin_effects import (
     CompressorConfig,
     DistortionConfig,
@@ -13,8 +11,6 @@ from sonitra.effects.builtin_effects import (
     LowpassFilterConfig,
     PeakFilterConfig,
 )
-
-_CONFIGS = Path(__file__).parent.parent / "config"
 
 
 def _config(**overrides) -> PipelineConfig:
@@ -148,72 +144,70 @@ def test_apply_overrides_triggers_cross_field_validator_on_vst_without_plugin() 
         apply_overrides(_config(), {"render_pipeline.synth_backend": "dawdreamer_vst"})
 
 
-def test_vintage_scenarios_config_expands_and_resolves_all_overrides() -> None:
-    cfg = load_config(_CONFIGS / "benchmark" / "old_recording" / "vintage_scenarios.yaml")
-
-    conditions = expand_conditions(cfg.benchmark)
-    assert [condition.name for condition in conditions] == [
-        "baseline",
-        "shellac_bandlimit_mild",
-        "shellac_bandlimit_pronounced",
-        "tape_bandlimit_mild",
-        "tape_bandlimit_pronounced",
-        "am_bandlimit_mild",
-        "am_bandlimit_pronounced",
+def test_condition_overrides_resolve_dotted_paths_to_their_effect_type() -> None:
+    effects = [
+        {"type": "HighpassFilter", "cutoff_frequency_hz": 80.0},
+        {"type": "HighpassFilter", "cutoff_frequency_hz": 120.0},
+        {"type": "LowpassFilter", "cutoff_frequency_hz": 9000.0},
+        {"type": "LowpassFilter", "cutoff_frequency_hz": 12000.0},
+        {"type": "PeakFilter", "cutoff_frequency_hz": 2500.0, "gain_db": 3.0, "q": 1.0},
+        {"type": "PeakFilter", "cutoff_frequency_hz": 4000.0, "gain_db": -2.0, "q": 0.7},
+        {"type": "Distortion", "drive_db": 6.0},
+        {
+            "type": "Compressor",
+            "threshold_db": -12.0,
+            "ratio": 2.0,
+            "attack_ms": 5.0,
+            "release_ms": 50.0,
+        },
     ]
+    cfg = _config(pedalboard={"effects": effects})
 
-    for condition in conditions:
-        apply_overrides(cfg, condition.overrides)
+    section = BenchmarkSection.model_validate(
+        {
+            "conditions": [
+                {
+                    "name": "mixed",
+                    "overrides": {
+                        "pedalboard.effects.0.enabled": False,
+                        "pedalboard.effects.2.cutoff_frequency_hz": 6500.0,
+                        "pedalboard.effects.4.gain_db": 8.0,
+                        "pedalboard.effects.5.q": 2.5,
+                        "pedalboard.effects.6.drive_db": 18.0,
+                        "pedalboard.effects.7.threshold_db": -24.0,
+                    },
+                }
+            ],
+        }
+    )
+    conditions = expand_conditions(section)
+    assert conditions[0].name == cfg.benchmark.baseline_name
 
-    effects = cfg.pedalboard.effects
-    assert isinstance(effects[0], HighpassFilterConfig)
-    assert isinstance(effects[2], LowpassFilterConfig)
-    assert isinstance(effects[4], PeakFilterConfig)
-    assert isinstance(effects[5], PeakFilterConfig)
-    assert isinstance(effects[6], DistortionConfig)
-    assert isinstance(effects[7], CompressorConfig)
+    updated = apply_overrides(cfg, conditions[1].overrides)
+    resolved = updated.pedalboard.effects
 
+    assert isinstance(resolved[0], HighpassFilterConfig)
+    assert isinstance(resolved[1], HighpassFilterConfig)
+    assert isinstance(resolved[2], LowpassFilterConfig)
+    assert isinstance(resolved[3], LowpassFilterConfig)
+    assert isinstance(resolved[4], PeakFilterConfig)
+    assert isinstance(resolved[5], PeakFilterConfig)
+    assert isinstance(resolved[6], DistortionConfig)
+    assert isinstance(resolved[7], CompressorConfig)
 
-def test_telephone_scenarios_config_expands_and_resolves_all_overrides() -> None:
-    cfg = load_config(_CONFIGS / "benchmark" / "telephone_channel" / "telephone_scenarios.yaml")
+    assert resolved[0].enabled is False
+    assert resolved[2].cutoff_frequency_hz == 6500.0
+    assert resolved[4].gain_db == 8.0
+    assert resolved[5].q == 2.5
+    assert resolved[6].drive_db == 18.0
+    assert resolved[7].threshold_db == -24.0
 
-    conditions = expand_conditions(cfg.benchmark)
-    assert [condition.name for condition in conditions] == [
-        "baseline",
-        "voip_wideband",
-        "pstn_narrowband",
-        "intercom_lofi",
-    ]
-
-    for condition in conditions:
-        apply_overrides(cfg, condition.overrides)
-
-
-def test_venue_scenarios_config_expands_and_resolves_all_overrides() -> None:
-    cfg = load_config(_CONFIGS / "benchmark" / "venue_acoustics" / "venue_scenarios.yaml")
-
-    conditions = expand_conditions(cfg.benchmark)
-    assert [condition.name for condition in conditions] == [
-        "baseline",
-        "studio_dry",
-        "recital_hall",
-        "symphony_hall",
-        "cathedral",
-    ]
-
-    for condition in conditions:
-        apply_overrides(cfg, condition.overrides)
-
-
-def test_rotary_scenarios_config_expands_and_resolves_all_overrides() -> None:
-    cfg = load_config(_CONFIGS / "benchmark" / "rotary_speaker" / "rotary_scenarios.yaml")
-
-    conditions = expand_conditions(cfg.benchmark)
-    assert [condition.name for condition in conditions] == [
-        "baseline",
-        "leslie_chorale",
-        "leslie_tremolo",
-    ]
-
-    for condition in conditions:
-        apply_overrides(cfg, condition.overrides)
+    # Siblings the condition did not name keep their baseline values.
+    assert resolved[0].cutoff_frequency_hz == 80.0
+    assert resolved[1].cutoff_frequency_hz == 120.0
+    assert resolved[2].enabled is True
+    assert resolved[4].cutoff_frequency_hz == 2500.0
+    assert resolved[4].q == 1.0
+    assert resolved[5].gain_db == -2.0
+    assert resolved[6].enabled is True
+    assert resolved[7].ratio == 2.0

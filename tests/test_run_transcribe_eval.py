@@ -24,7 +24,7 @@ def _flag_value(command: list[str], flag: str) -> str | None:
 def test_render_command_omits_seed_without_limit() -> None:
     module = _load_module()
     command = module._build_render_command(
-        Path("config/examples/pedalboard_baseline.yaml"), None, None, 123
+        Path("presets/example.yaml"), None, None, 123
     )
 
     assert command[: len(module._PYTHON)] == module._PYTHON
@@ -33,7 +33,7 @@ def test_render_command_omits_seed_without_limit() -> None:
         "sonitra",
         "render",
     ]
-    assert _flag_value(command, "--config") == "config/examples/pedalboard_baseline.yaml"
+    assert _flag_value(command, "--config") == "presets/example.yaml"
     assert "--dataset" not in command
     assert "--limit" not in command
     assert "--seed" not in command
@@ -42,7 +42,7 @@ def test_render_command_omits_seed_without_limit() -> None:
 def test_render_command_forwards_seed_with_limit() -> None:
     module = _load_module()
     command = module._build_render_command(
-        Path("config/examples/pedalboard_baseline.yaml"), "maestro-v3", 5, 123
+        Path("presets/example.yaml"), "maestro-v3", 5, 123
     )
 
     assert _flag_value(command, "--dataset") == "maestro-v3"
