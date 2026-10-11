@@ -140,7 +140,7 @@ After `sonitra benchmark --config <file> --dataset <name>`:
 ```
 corpus/<name>/benchmark/<config stem>/
   config.yaml               # the resolved config this run used
-  logs/                     # captured worker and console output (runs with a progress display)
+  logs/                     # worker and console output, including worker log records (runs with a progress display)
   benchmark_results.jsonl   # one JSON record per (condition × transcriber × file)
   summary.json              # aggregate means + degradation-vs-baseline table
   audio/<condition>/        # rendered WAV per condition
@@ -331,7 +331,7 @@ The material decides which side a note lands on. In audio mode it means each rec
 
 So read the ±50 ¢ results as where a model breaks the tie, not as another point on a robustness slope. [Own tuning offset](../../docs/statistical-analysis.md#own-tuning-offset-optional-enrichment) covers how the per-recording tuning reaches the metadata CSV and the analysis from there.
 
-`src/sonitra/effects/chain_builder.py` logs a warning whenever an enabled slot reaches `abs(cents) >= 50.0`: `TuningOffset %.1f cents is at or beyond half a semitone: notes may score as the neighbouring pitch`. It is a notice about the tie point, not an error. It fires while the effect chain is built, and `src/sonitra/pipeline.py` builds that chain once per worker thread, so a `±50c` condition logs it once per worker thread while `rt50c` logs it twice per worker thread, because both of its slots qualify.
+`src/sonitra/effects/chain_builder.py` logs a warning whenever an enabled slot reaches `abs(cents) >= 50.0`: `TuningOffset %.1f cents is at or beyond half a semitone: notes may score as the neighbouring pitch`. It is a notice about the tie point, not an error. It fires while the effect chain is built, and `src/sonitra/pipeline.py` builds that chain once per worker thread, so a `±50c` condition logs it once per worker thread while `rt50c` logs it twice per worker thread, because both of its slots qualify. It prints on the terminal when the run is serial, and goes to `logs/worker-<pid>.log` when it uses more than one worker.
 
 The smoke configs `smoke/tuning_piano_test.yaml` and `smoke/tuning_guitar_test.yaml` reuse the same chain layout and run three of those conditions (`tune=-32c`, `tune=50c`, `tune=rt50c`) plus the baseline, as a short check before a paper run. Both take MIDI input, so they synthesise the dataset's reference MIDI with FluidSynth and need no recordings in the corpus; `save_audio` writes the renders so the offset can be heard.
 
