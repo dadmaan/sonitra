@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
 import math
 import multiprocessing
 import os
+import re
 import shutil
 import sys
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Callable, Iterator
 
 import numpy as np
 import pytest
@@ -19,6 +24,7 @@ from sonitra.benchmark.host_info import collect_host_info
 from sonitra.benchmark.results import BenchmarkRecord
 from sonitra.benchmark.runner import run_benchmark
 from sonitra.config import ConditionSection, PipelineConfig, SweepSection
+from sonitra.effects.builtin_effects import TuningOffsetConfig
 from sonitra.midi_reader import parse_midi
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
@@ -1140,6 +1146,211 @@ def test_parallel_benchmark_runs_end_to_end_under_spawn(
     assert len(result.records) == 4
     assert all(record.status == "succeeded" for record in result.records)
     assert any(e.status == "done" for e in progress.worker_events)
+
+
+# ── pool workers keep their log records ──
+
+
+def _log_probe(marker: str) -> list[str]:
+    """Worker probe: one record per level, then the worker's root handlers.
+
+    The ERROR record gives every threshold a line that has to be written, so no
+    assertion can pass just because a handler wrote nothing.
+    """
+    probe = logging.getLogger("sonitra.probe")
+    probe.debug(f"{marker} at debug")
+    probe.info(f"{marker} at info")
+    probe.warning(f"{marker} at warning")
+    probe.error(f"{marker} at error")
+    return [type(handler).__name__ for handler in logging.getLogger().handlers]
+
+
+def _init_with_preexisting_handler(
+    event_queue: multiprocessing.Queue | None, log_dir: Path, log_level: int
+) -> None:
+    """Initializer stand-in for a spawned main module that configured logging.
+
+    A user script calling ``logging.basicConfig()`` at top level is re-run under
+    ``__mp_main__``, so a worker can start with handlers already attached.
+    """
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stderr))
+    runner_module._worker_event_init(event_queue, log_dir, log_level)
+
+
+def _worker_log_text(log_dir: Path) -> str:
+    """Concatenated text of every worker log under *log_dir*."""
+    return "".join(path.read_text() for path in sorted(log_dir.glob("worker-*.log")))
+
+
+def _probe_lines(text: str, marker: str) -> dict[str, list[str]]:
+    """Lines carrying *marker*, keyed by the level named in them."""
+    return {
+        level: [line for line in text.splitlines() if f"{marker} at {level}" in line]
+        for level in ("debug", "info", "warning", "error")
+    }
+
+
+@contextlib.contextmanager
+def _spawn_pool(
+    initializer: Callable[..., None], initargs: tuple[object, ...]
+) -> Iterator[ProcessPoolExecutor]:
+    """Run a single spawned worker, so an assertion reads one log file."""
+    with ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=initializer,
+        initargs=initargs,
+    ) as executor:
+        yield executor
+
+
+@contextlib.contextmanager
+def _root_level(level: int) -> Iterator[None]:
+    """Pin the root level for the duration of the block, then restore it.
+
+    The CLI tests call ``setup_logging``, which leaves the root level changed for
+    the rest of the session, so a test reaching ``run_benchmark`` states the
+    level it expects instead of inheriting whatever ran before it.
+    """
+    root = logging.getLogger()
+    previous = root.level
+    root.setLevel(level)
+    try:
+        yield
+    finally:
+        root.setLevel(previous)
+
+
+def test_worker_log_receives_warning_records(tmp_path: Path) -> None:
+    # No level argument: whatever threshold the worker falls back to, a warning
+    # and an error raised inside it must reach its own log file, once each.
+    marker = uuid.uuid4().hex
+    log_dir = tmp_path / "default"
+
+    with _spawn_pool(runner_module._worker_event_init, (None, log_dir)) as pool:
+        pool.submit(_log_probe, marker).result(timeout=120)
+
+    lines = _probe_lines(_worker_log_text(log_dir), marker)
+    warning_lines = lines["warning"]
+    assert len(warning_lines) == 1
+    assert "WARNING" in warning_lines[0]
+    assert "sonitra.probe" in warning_lines[0]
+    assert len(lines["error"]) == 1
+    assert lines["info"] == []
+    assert lines["debug"] == []
+
+
+def test_worker_log_honours_passed_level(tmp_path: Path) -> None:
+    # One log directory per pool, so the second pool can never be checked
+    # against the first pool's records.
+    marker = uuid.uuid4().hex
+    info_dir = tmp_path / "info"
+    error_dir = tmp_path / "error"
+
+    with _spawn_pool(
+        runner_module._worker_event_init, (None, info_dir, logging.INFO)
+    ) as pool:
+        pool.submit(_log_probe, marker).result(timeout=120)
+
+    with _spawn_pool(
+        runner_module._worker_event_init, (None, error_dir, logging.ERROR)
+    ) as pool:
+        pool.submit(_log_probe, marker).result(timeout=120)
+
+    info_lines = _probe_lines(_worker_log_text(info_dir), marker)
+    assert len(info_lines["info"]) == 1
+    assert len(info_lines["warning"]) == 1
+    assert len(info_lines["error"]) == 1
+    assert info_lines["debug"] == []
+
+    error_lines = _probe_lines(_worker_log_text(error_dir), marker)
+    assert len(error_lines["error"]) == 1
+    assert error_lines["debug"] == []
+    assert error_lines["info"] == []
+    assert error_lines["warning"] == []
+
+
+def test_worker_root_has_exactly_one_handler(tmp_path: Path) -> None:
+    # Two handlers on root would write every record to the worker log twice.
+    marker = uuid.uuid4().hex
+    log_dir = tmp_path / "handlers"
+
+    with _spawn_pool(
+        _init_with_preexisting_handler, (None, log_dir, logging.INFO)
+    ) as pool:
+        handlers = pool.submit(_log_probe, marker).result(timeout=120)
+
+    assert handlers == ["StreamHandler"]
+    assert len(_probe_lines(_worker_log_text(log_dir), marker)["warning"]) == 1
+
+
+def test_worker_logging_keeps_terminal_clean(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    # Worker records belong in the worker log; the terminal keeps only what the
+    # live display shows.
+    marker = uuid.uuid4().hex
+    log_dir = tmp_path / "clean"
+
+    with _spawn_pool(runner_module._worker_event_init, (None, log_dir)) as pool:
+        pool.submit(_log_probe, marker).result(timeout=120)
+
+    captured = capfd.readouterr()
+    assert captured.out.count(marker) + captured.err.count(marker) == 0
+
+
+def test_parallel_worker_log_records_tuning_offset_warning(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.pedalboard.effects = [
+        TuningOffsetConfig(cents=0.0, enabled=False)
+    ]
+    benchmark_config.benchmark.conditions.append(
+        ConditionSection(
+            name="tune=50c",
+            overrides={
+                "pedalboard.effects.0.enabled": True,
+                "pedalboard.effects.0.cents": 50.0,
+            },
+        )
+    )
+
+    with _root_level(logging.WARNING):
+        result = run_benchmark(
+            [midi_fixture("test_c4.mid")], tmp_path, benchmark_config
+        )
+
+    # The chain is built once per condition, so only tune=50c logs this, and a
+    # count above one means the worker writes each record more than once.
+    warning_text = "TuningOffset 50.0 cents is at or beyond half a semitone"
+    matching = [
+        line
+        for line in _worker_log_text(tmp_path / "logs").splitlines()
+        if warning_text in line
+    ]
+    assert len(matching) == 1
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} "
+        r"WARNING sonitra\.effects\.chain_builder: ",
+        matching[0],
+    )
+    assert all(record.status == "succeeded" for record in result.records)
+
+
+def test_parallel_benchmark_passes_parent_log_level(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path, recording_pool
+) -> None:
+    # ERROR, not the WARNING a worker would get on its own and not DEBUG, which
+    # would make every real spawned worker write its libraries' debug output.
+    benchmark_config.benchmark.max_workers = 2
+
+    with _root_level(logging.ERROR):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    initargs = recording_pool.instances[0].init_kwargs["initargs"]
+    assert initargs[2] == logging.ERROR
 
 
 # ── the run publishes the config's transcription numeric settings ───────
