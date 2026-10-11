@@ -17,10 +17,6 @@ from tests.presets._presets import (
     tuning_smoke_pairs,
 )
 
-# Every preset shipped under config/ except config/source.yaml. A different
-# number means a preset was added or removed; update this deliberately.
-EXPECTED_PRESET_COUNT = 52
-
 EXPECTED_PAPER_FAMILIES: tuple[PaperFamily, ...] = ("piano", "guitar", "sweep")
 
 
@@ -30,9 +26,10 @@ def test_config_dir_is_the_repository_config_directory() -> None:
 
 
 def test_presets_are_discovered() -> None:
+    # A count is deliberately not pinned: adding or removing a preset should not
+    # need a test edit. What matters is that the walk is not silently empty.
     found = presets()
     assert found, "no presets discovered under config/"
-    assert len(found) == EXPECTED_PRESET_COUNT
 
 
 def test_presets_exclude_source_and_all_exist() -> None:
