@@ -1,4 +1,4 @@
-"""Tests that ``MidiSource`` passes each MIDI file's program to the synthesiser."""
+"""Tests for the ``MidiSource``/``AudioSource`` load behaviour and duration plan."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
-from sonitra.source import MidiSource
+from sonitra.config import SynthBackend
+from sonitra.source import AudioSource, MidiSource
 
 
 def _make_cfg() -> MagicMock:
@@ -17,6 +19,10 @@ def _make_cfg() -> MagicMock:
     cfg.render_pipeline.bpm = 120.0
     cfg.render_pipeline.duration_padding_sec = 2.0
     cfg.render_pipeline.sample_rate = 44100
+    cfg.render_pipeline.synth_backend = SynthBackend.FLUIDSYNTH
+    cfg.pedalboard.instrument.plugin_path = None
+    cfg.pedalboard.instrument.silence_flush_sec = 0.0
+    cfg.fluidsynth.soundfont_path = None
     return cfg
 
 
@@ -110,3 +116,81 @@ def test_render_call_uses_keyword_only_program(tmp_path: Path) -> None:
     assert mock_synth.render.call_args.args[0] == notes
     assert len(mock_synth.render.call_args.args) == 1
     assert mock_synth.render.call_args.kwargs["program"] == 24
+
+
+# ── Expected (planned) duration ───────────────────────────────────────
+
+
+def _make_duration_cfg(
+    *,
+    backend: SynthBackend = SynthBackend.FLUIDSYNTH,
+    plugin_path: Path | None = None,
+    soundfont_path: Path | None = Path("/soundfont.sf2"),
+    silence_flush_sec: float = 0.0,
+) -> MagicMock:
+    cfg = _make_cfg()
+    cfg.render_pipeline.synth_backend = backend
+    cfg.pedalboard.instrument.plugin_path = plugin_path
+    cfg.pedalboard.instrument.silence_flush_sec = silence_flush_sec
+    cfg.fluidsynth.soundfont_path = soundfont_path
+    return cfg
+
+
+def _duration_source(cfg: MagicMock, tmp_path: Path) -> tuple[MidiSource, Path]:
+    with patch("sonitra.source.make_synth", return_value=MagicMock()):
+        source = MidiSource(cfg)
+    path = tmp_path / "planned.mid"
+    path.touch()
+    return source, path
+
+
+def test_expected_duration_is_last_note_end_plus_padding(tmp_path: Path) -> None:
+    cfg = _make_duration_cfg()
+    notes = [
+        {"pitch": 60, "velocity": 80, "start_sec": 1.0, "duration_sec": 0.5},
+        {"pitch": 62, "velocity": 80, "start_sec": 2.0, "duration_sec": 1.25},
+    ]
+    source, path = _duration_source(cfg, tmp_path)
+    with patch("sonitra.source.parse_midi", return_value={"notes": notes, "bpm": 120.0}):
+        assert source.expected_duration_sec(path) == pytest.approx(2.0 + 2.0 + 1.25)
+
+
+def test_expected_duration_adds_silence_flush_for_pedalboard_instrument(
+    tmp_path: Path,
+) -> None:
+    cfg = _make_duration_cfg(
+        backend=SynthBackend.PEDALBOARD_INSTRUMENT,
+        plugin_path=Path("/instrument.vst3"),
+        soundfont_path=None,
+        silence_flush_sec=0.75,
+    )
+    notes = [{"pitch": 60, "velocity": 80, "start_sec": 0.0, "duration_sec": 0.5}]
+    source, path = _duration_source(cfg, tmp_path)
+    with patch("sonitra.source.parse_midi", return_value={"notes": notes, "bpm": 120.0}):
+        assert source.expected_duration_sec(path) == pytest.approx(2.0 + 0.5 + 0.75)
+
+
+def test_expected_duration_ignores_flush_when_pedalboard_falls_back_to_fluidsynth(
+    tmp_path: Path,
+) -> None:
+    cfg = _make_duration_cfg(
+        backend=SynthBackend.PEDALBOARD_INSTRUMENT,
+        plugin_path=None,
+        soundfont_path=Path("/soundfont.sf2"),
+        silence_flush_sec=0.75,
+    )
+    notes = [{"pitch": 60, "velocity": 80, "start_sec": 0.0, "duration_sec": 0.5}]
+    source, path = _duration_source(cfg, tmp_path)
+    with patch("sonitra.source.parse_midi", return_value={"notes": notes, "bpm": 120.0}):
+        assert source.expected_duration_sec(path) == pytest.approx(2.0 + 0.5)
+
+
+def test_expected_duration_of_empty_midi_is_padding_only(tmp_path: Path) -> None:
+    cfg = _make_duration_cfg()
+    source, path = _duration_source(cfg, tmp_path)
+    with patch("sonitra.source.parse_midi", return_value={"notes": [], "bpm": 120.0}):
+        assert source.expected_duration_sec(path) == pytest.approx(2.0)
+
+
+def test_audio_source_has_no_planned_duration(tmp_path: Path) -> None:
+    assert AudioSource().expected_duration_sec(tmp_path / "recording.wav") is None

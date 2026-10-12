@@ -9,9 +9,11 @@ import soundfile as sf
 from sonitra.config import (
     NormalisationSection,
     NormalisationStage,
+    QualityGatesSection,
     SynthBackend,
     load_config,
 )
+from sonitra.effects.builtin_effects import TuningOffsetConfig
 from sonitra.pipeline import run_pipeline
 from sonitra.synth.dawdreamer_synth import DawDreamerSynth
 from sonitra.synth.pedalboard_synth import PedalboardSynth
@@ -98,6 +100,47 @@ def test_silent_render_marked_failed_in_result(monkeypatch, tmp_path, midi_fixtu
     result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
     assert result.failed == 1
     assert result.log[0]["quality_flags"]["is_silent"] is True
+
+
+# ── Planned-duration gate ─────────────────────────────────────────────
+
+_DEFAULT_SOUNDFONT = Path("/usr/share/sounds/sf2/default-GM.sf2")
+
+
+@pytest.mark.skipif(
+    not _DEFAULT_SOUNDFONT.is_file(),
+    reason="Default system SoundFont is not installed",
+)
+def test_duration_gate_accepts_real_fluidsynth_output(
+    midi_fixture, config_fixture, tmp_path: Path
+) -> None:
+    cfg = load_config(config_fixture("config_soundfont.yaml"))
+    cfg.quality_gates = QualityGatesSection()
+    result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
+    assert result.succeeded == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["duration_expected_sec"] == pytest.approx(2.5, abs=0.01)
+    assert flags["duration_mismatch"] is False
+
+
+@pytest.mark.skipif(
+    not _DEFAULT_SOUNDFONT.is_file(),
+    reason="Default system SoundFont is not installed",
+)
+def test_duration_gate_survives_a_tuning_round_trip(
+    midi_fixture, config_fixture, tmp_path: Path
+) -> None:
+    cfg = load_config(config_fixture("config_soundfont.yaml"))
+    cfg.quality_gates = QualityGatesSection()
+    cfg.pedalboard.effects = [
+        TuningOffsetConfig(cents=25.0),
+        TuningOffsetConfig(cents=-25.0),
+    ]
+    result = run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
+    assert result.succeeded == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["duration_expected_sec"] == pytest.approx(2.5, abs=0.01)
+    assert flags["duration_mismatch"] is False
 
 
 # ── Manifest output ───────────────────────────────────────────────────

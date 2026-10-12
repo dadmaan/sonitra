@@ -106,6 +106,7 @@ def _render_file(
 
     try:
         audio, sample_rate = source.load(source_path)
+        expected_duration_sec = source.expected_duration_sec(source_path)
         audio, pre_report = normalise_from_config(audio, cfg, stage="pre")
         if cfg.render_pipeline.effects_chain == EffectsChain.PEDALBOARD and len(chain) > 0:
             audio = chain(audio, sample_rate)
@@ -124,13 +125,13 @@ def _render_file(
             guard_engaged=guard_gain_db is not None and guard_gain_db < 0.0,
         )
 
-        quality = check_quality(audio, sample_rate, cfg.quality_gates)
-        quality_flags = {
-            **quality.to_dict(),
-            **report.to_dict(),
-            "duration_expected_sec": None,
-            "duration_mismatch": False,
-        }
+        quality = check_quality(
+            audio,
+            sample_rate,
+            cfg.quality_gates,
+            expected_duration_sec=expected_duration_sec,
+        )
+        quality_flags = {**quality.to_dict(), **report.to_dict()}
         if not quality.passed:
             elapsed = time.perf_counter() - file_start
             entry = ManifestEntry(

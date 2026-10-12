@@ -287,7 +287,7 @@ class QualityGatesSection(BaseModel):
 
     silence_threshold_rms: float = 0.0
     min_duration_sec: float = 0.0
-    max_duration_deviation_sec: float = 0.0
+    max_duration_deviation_sec: float | None = 1.0
     clip_threshold: float = 1.0
 
 

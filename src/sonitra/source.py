@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Protocol, runtime_checkable
 
 import numpy as np
 
-from sonitra.config import InputType, PipelineConfig
+from sonitra.config import InputType, PipelineConfig, SynthBackend
 from sonitra.midi_reader import parse_midi
 from sonitra.storage import read_audio
 from sonitra.synth.protocol import make_synth
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 @runtime_checkable
 class SourceProtocol(Protocol):
     def load(self, path: Path) -> tuple[np.ndarray, int]: ...
+
+    def expected_duration_sec(self, path: Path) -> float | None: ...
 
 
 def _compute_duration(notes: List[Dict[str, Any]], padding_sec: float) -> float:
@@ -45,6 +47,36 @@ class MidiSource:
         self._cfg = cfg
         self._synth = make_synth(cfg)
         self._warned_multi_program = False
+
+    def _uses_pedalboard_synth(self) -> bool:
+        """Whether ``make_synth`` would build ``PedalboardSynth`` for this config.
+
+        Mirrors the fallback in ``make_synth``: the pedalboard backend falls
+        back to FluidSynth when no plugin path is set but a SoundFont is.
+        """
+        cfg = self._cfg
+        if cfg.render_pipeline.synth_backend != SynthBackend.PEDALBOARD_INSTRUMENT:
+            return False
+        instrument = cfg.pedalboard.instrument
+        return not (
+            instrument.plugin_path is None and cfg.fluidsynth.soundfont_path is not None
+        )
+
+    def expected_duration_sec(self, path: Path) -> float | None:
+        """Return the audio duration this render is planned to produce.
+
+        The synth trims or pads its output to the requested duration, so the
+        planned duration is the last note end plus ``duration_padding_sec``.
+        A pedalboard instrument also receives ``silence_flush_sec`` of extra
+        render time (see ``PedalboardSynth.render``).
+        """
+        cfg = self._cfg
+        meta = parse_midi(path, return_meta=True)
+        notes: List[Dict[str, Any]] = meta["notes"]
+        duration = _compute_duration(notes, cfg.render_pipeline.duration_padding_sec)
+        if self._uses_pedalboard_synth():
+            duration += max(0.0, float(cfg.pedalboard.instrument.silence_flush_sec))
+        return duration
 
     def load(self, path: Path) -> tuple[np.ndarray, int]:
         cfg = self._cfg
@@ -82,6 +114,10 @@ class AudioSource:
 
     def load(self, path: Path) -> tuple[np.ndarray, int]:
         return read_audio(path)
+
+    def expected_duration_sec(self, path: Path) -> float | None:
+        """Audio recordings have no planned duration; the duration gate is skipped."""
+        return None
 
 
 def make_source(cfg: PipelineConfig) -> SourceProtocol:
