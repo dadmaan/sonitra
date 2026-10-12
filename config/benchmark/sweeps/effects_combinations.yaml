@@ -1,8 +1,8 @@
 # Effects combinations: compare discrete acoustic scenarios against a common baseline.
 # All six effect types are declared; conditions selectively enable them via overrides.
 # Base state: Compressor (0) + Reverb (1) enabled; Chorus (2), Delay (3),
-#             Distortion (4), Gain (5) disabled.
-# Conditions (named only, no sweeps): 7 total
+#             Distortion (4), Clipping (5) disabled.
+# Conditions (named only, no sweeps): 9 total
 #
 # Usage:
 #   sonitra benchmark --config config/benchmark/sweeps/effects_combinations.yaml --dataset <name>
@@ -73,8 +73,8 @@ pedalboard:
     - type: Distortion        # index 4
       drive_db: 25.0
       enabled: false
-    - type: Gain              # index 5
-      gain_db: 6.0
+    - type: Clipping          # index 5
+      threshold_db: -6.0
       enabled: false
 
 normalisation:
@@ -168,10 +168,15 @@ benchmark:
       overrides:
         pedalboard.effects.2.enabled: true
         pedalboard.effects.3.enabled: true
-    - name: distortion_gain
+    - name: distortion
       overrides:
         pedalboard.effects.4.enabled: true
+    - name: overload_clip
+      overrides:
         pedalboard.effects.5.enabled: true
+    - name: quiet_minus_20db
+      overrides:
+        normalisation.post.target_db: -53.0
     - name: all_effects
       overrides:
         pedalboard.effects.2.enabled: true
