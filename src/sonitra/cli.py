@@ -1361,12 +1361,7 @@ def init(
             file_naming="{stem}",
         ),
         dawdreamer=DawDreamerSection(),
-        normalisation=NormalisationSection(
-            enabled=True,
-            mode="peak",
-            target_db=-1.0,
-            pre_effects=False,
-        ),
+        normalisation=NormalisationSection(enabled=True),
         quality_gates=QualityGatesSection(
             silence_threshold_rms=0.001,
             min_duration_sec=0.1,

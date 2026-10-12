@@ -40,9 +40,16 @@ def normalise_from_config(
     if not cfg.normalisation.enabled:
         return audio
     stage = stage.lower()
-    should_apply = cfg.normalisation.pre_effects if stage == "pre" else not cfg.normalisation.pre_effects
+    if stage == "pre":
+        should_apply = cfg.normalisation.placement in ("pre", "both")
+        stage_cfg = cfg.normalisation.pre
+    elif stage == "post":
+        should_apply = cfg.normalisation.placement in ("post", "both")
+        stage_cfg = cfg.normalisation.post
+    else:
+        raise ValueError(f"Unsupported normalisation stage: {stage}")
     if not should_apply:
         return audio
     if call_log is not None:
         call_log.append("normalise")
-    return normalise(audio, mode=cfg.normalisation.mode, target_db=cfg.normalisation.target_db)
+    return normalise(audio, mode=stage_cfg.mode, target_db=stage_cfg.target_db)

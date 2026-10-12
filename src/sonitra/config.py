@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer, model_validator
 
 from sonitra.effects.builtin_effects import EffectConfig
 from sonitra.transcribe.configs import TranscriberConfig
@@ -194,13 +194,92 @@ class PedalboardSection(BaseModel):
     effects: list[EffectConfig] = Field(default_factory=list)
 
 
+class NormalisationStage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["peak", "rms"] = "peak"
+    target_db: float | None = None
+
+    @model_validator(mode="after")
+    def _fill_target_db(self) -> "NormalisationStage":
+        if self.target_db is None:
+            self.target_db = -33.0 if self.mode == "rms" else -1.0
+        return self
+
+
 class NormalisationSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    mode: str = "peak"
-    target_db: float = -1.0
-    pre_effects: bool = False
+    placement: Literal["pre", "post", "both"] = "post"
+    pre: NormalisationStage = Field(default_factory=NormalisationStage)
+    post: NormalisationStage = Field(default_factory=NormalisationStage)
+    peak_ceiling_db: float | None = -1.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        messages: list[str] = []
+        if "pre_effects" in data:
+            messages.append(
+                "normalisation.pre_effects was replaced by normalisation.placement "
+                "(false → post, true → pre)"
+            )
+        if "mode" in data:
+            messages.append(
+                "normalisation.mode moved under normalisation.<stage> "
+                "(normalisation.pre.mode or normalisation.post.mode)"
+            )
+        if "target_db" in data:
+            messages.append(
+                "normalisation.target_db moved under normalisation.<stage> "
+                "(normalisation.pre.target_db or normalisation.post.target_db)"
+            )
+        if messages:
+            raise ValueError("; ".join(messages))
+        return data
+
+    @field_validator("peak_ceiling_db")
+    @classmethod
+    def _validate_peak_ceiling_db(cls, value: float | None) -> float | None:
+        if value is not None and value > 0.0:
+            raise ValueError(
+                "normalisation.peak_ceiling_db must be <= 0 dB; a ceiling above "
+                "full scale cannot prevent overflow"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _validate_placement_matches_stages(self) -> "NormalisationSection":
+        if self.placement == "post" and "pre" in self.model_fields_set:
+            raise ValueError(
+                "normalisation.pre has no effect when normalisation.placement is "
+                "'post'; set placement to 'pre' or 'both'"
+            )
+        if self.placement == "pre" and "post" in self.model_fields_set:
+            raise ValueError(
+                "normalisation.post has no effect when normalisation.placement is "
+                "'pre'; set placement to 'post' or 'both'"
+            )
+        return self
+
+    @model_serializer
+    def _serialize(self) -> dict[str, Any]:
+        # Dump only the stages the placement runs, so a dumped section always
+        # validates again: an explicitly set stage that the placement does not
+        # run is rejected on load.
+        data: dict[str, Any] = {
+            "enabled": self.enabled,
+            "placement": self.placement,
+        }
+        if self.placement in ("pre", "both"):
+            data["pre"] = self.pre.model_dump(mode="json")
+        if self.placement in ("post", "both"):
+            data["post"] = self.post.model_dump(mode="json")
+        data["peak_ceiling_db"] = self.peak_ceiling_db
+        return data
 
 
 class QualityGatesSection(BaseModel):
