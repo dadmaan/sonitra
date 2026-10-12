@@ -6,7 +6,12 @@ import pedalboard
 import pytest
 import soundfile as sf
 
-from sonitra.config import SynthBackend, load_config
+from sonitra.config import (
+    NormalisationSection,
+    NormalisationStage,
+    SynthBackend,
+    load_config,
+)
 from sonitra.pipeline import run_pipeline
 from sonitra.synth.dawdreamer_synth import DawDreamerSynth
 from sonitra.synth.pedalboard_synth import PedalboardSynth
@@ -52,21 +57,34 @@ def test_hybrid_mode_applies_effects_chain(monkeypatch, tmp_path, midi_fixture, 
 
 # ── Normalisation ordering ────────────────────────────────────────────
 
-def test_pre_effects_normalisation_applied_before_chain(
+def test_placement_stages_run_around_the_chain(
     monkeypatch, tmp_path, midi_fixture, config_fixture
 ):
     cfg = load_config(config_fixture("config_valid.yaml"))
-    cfg.normalisation.pre_effects = True
+    cfg.normalisation = NormalisationSection(
+        enabled=True,
+        placement="both",
+        pre=NormalisationStage(mode="rms", target_db=-18.0),
+        post=NormalisationStage(mode="rms", target_db=-33.0),
+    )
     call_order = []
-    monkeypatch.setattr("sonitra.normaliser.normalise", lambda a, **kw: call_order.append("norm") or a)
+
+    import sonitra.pipeline as pipeline_module
+
+    original_normalise = pipeline_module.normalise_from_config
+
+    def _spy_normalise(audio, cfg_arg, *, stage, call_log=None):
+        call_order.append(stage)
+        return original_normalise(audio, cfg_arg, stage=stage, call_log=call_log)
+
+    monkeypatch.setattr(pipeline_module, "normalise_from_config", _spy_normalise)
     monkeypatch.setattr(
         "pedalboard.Pedalboard.__call__",
         lambda self, a, sr: call_order.append("fx") or a,
     )
     run_pipeline([midi_fixture("test_c4.mid")], tmp_path, config=cfg)
-    norm_idx = call_order.index("norm")
-    fx_idx = call_order.index("fx")
-    assert norm_idx < fx_idx
+
+    assert call_order == ["pre", "fx", "post"]
 
 
 # ── Quality gate integration ──────────────────────────────────────────
@@ -140,6 +158,11 @@ def test_peak_normalised_config_stays_below_the_clip_threshold(
     flags = succeeded[0]["quality_flags"]
     assert flags["is_clipped"] is False
     assert flags["peak"] < cfg.quality_gates.clip_threshold
+    assert flags["peak_before_guard"] == pytest.approx(
+        10 ** (cfg.normalisation.peak_ceiling_db / 20.0), abs=1e-4
+    )
+    assert flags["guard_gain_db"] == 0.0
+    assert flags["guard_engaged"] is False
 
 
 # ── Vital VST3 end-to-end regression ──────────────────────────────────

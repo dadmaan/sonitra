@@ -25,6 +25,27 @@ def _write_tone_wav(path: Path, *, sample_rate: int = 44100) -> Path:
     return write_wav(_tone(sample_rate=sample_rate), path, sample_rate=sample_rate, normalize=False)
 
 
+def _write_crest_wav(
+    path: Path, *, crest_db: float = 25.0, sample_rate: int = 44100
+) -> Path:
+    """A quiet two-channel tone whose peak sits *crest_db* above its RMS."""
+    t = np.linspace(0.0, 1.0, sample_rate, endpoint=False)
+    sine = 0.05 * np.sin(2 * np.pi * 220.0 * t)
+    audio = np.stack([sine, sine]).astype(np.float64)
+    rms = float(np.sqrt(np.mean(audio**2)))
+    peak = rms * 10.0 ** (crest_db / 20.0)
+    audio[0, 0] = peak
+    audio[1, 0] = -peak
+    return write_wav(
+        audio.astype(np.float32), path, sample_rate=sample_rate, normalize=False
+    )
+
+
+def _rms_db(audio: np.ndarray) -> float:
+    arr = np.asarray(audio, dtype=np.float64)
+    return 20.0 * np.log10(float(np.sqrt(np.mean(arr**2))))
+
+
 def _audio_config(
     tmp_path: Path,
     *,
@@ -169,7 +190,11 @@ def test_audio_input_applies_normalisation(tmp_path):
     quiet_path = write_wav(quiet, tmp_path / "quiet.wav", sample_rate=44100, normalize=False)
     cfg = _audio_config(
         tmp_path,
-        normalisation={"enabled": True, "mode": "peak", "target_db": -1.0, "pre_effects": False},
+        normalisation={
+            "enabled": True,
+            "placement": "post",
+            "post": {"mode": "peak", "target_db": -1.0},
+        },
     )
 
     out_dir = tmp_path / "out"
@@ -180,6 +205,183 @@ def test_audio_input_applies_normalisation(tmp_path):
     audio, _sr = read_audio(output_path)
     target_linear = 10 ** (-1.0 / 20.0)
     assert np.max(np.abs(audio)) == pytest.approx(target_linear, rel=0.05)
+    assert result.log[0]["quality_flags"]["guard_engaged"] is False
+
+
+def test_audio_input_pre_stage_guard_records_diagnostics(tmp_path):
+    wav = _write_crest_wav(tmp_path / "crest.wav")
+    cfg = _audio_config(
+        tmp_path,
+        normalisation={
+            "enabled": True,
+            "placement": "pre",
+            "pre": {"mode": "rms", "target_db": -18.0},
+        },
+        manifest=True,
+    )
+
+    out_dir = tmp_path / "out"
+    result = run_pipeline([wav], out_dir, config=cfg)
+
+    assert result.succeeded == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["guard_engaged"] is True
+    assert flags["guard_gain_db"] < 0.0
+    assert flags["peak_before_guard"] > 1.0
+    assert flags["pre_gain_db"] is not None
+    assert flags["post_gain_db"] is None
+    written, _sr = read_audio(Path(result.log[0]["output"]))
+    ceiling = 10 ** (-1.0 / 20.0)
+    assert np.max(np.abs(written)) <= ceiling * (1.0 + 1e-4)
+
+    manifest_line = json.loads((tmp_path / "renders.jsonl").read_text().strip())
+    assert manifest_line["quality_flags"]["guard_engaged"] is True
+
+
+def test_audio_input_post_stage_guard_replaces_hard_clip(tmp_path):
+    wav = _write_crest_wav(tmp_path / "crest.wav")
+    cfg = _audio_config(
+        tmp_path,
+        normalisation={
+            "enabled": True,
+            "placement": "post",
+            "post": {"mode": "rms", "target_db": -18.0},
+        },
+    )
+
+    out_dir = tmp_path / "out"
+    result = run_pipeline([wav], out_dir, config=cfg)
+
+    assert result.succeeded == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["guard_engaged"] is True
+    assert flags["peak_before_guard"] > 1.0
+    written, _sr = read_audio(Path(result.log[0]["output"]))
+    assert not np.any(np.abs(written) >= 1.0)
+    assert np.max(np.abs(written)) == pytest.approx(10 ** (-1.0 / 20.0), abs=1e-4)
+
+
+def test_audio_input_gain_cut_kept_with_pre_placement(tmp_path):
+    wav = _write_crest_wav(tmp_path / "crest.wav")
+    effects = [{"type": "Gain", "gain_db": -20.0, "enabled": True}]
+
+    pre_cfg = _audio_config(
+        tmp_path,
+        effects_chain="pedalboard",
+        pedalboard_effects=effects,
+        normalisation={
+            "enabled": True,
+            "placement": "pre",
+            "pre": {"mode": "rms", "target_db": -18.0},
+        },
+    )
+    result_pre = run_pipeline([wav], tmp_path / "pre_out", config=pre_cfg)
+
+    assert result_pre.succeeded == 1
+    audio_pre, _sr = read_audio(Path(result_pre.log[0]["output"]))
+    assert _rms_db(audio_pre) == pytest.approx(-38.0, abs=0.1)
+
+    both_cfg = _audio_config(
+        tmp_path,
+        effects_chain="pedalboard",
+        pedalboard_effects=effects,
+        normalisation={
+            "enabled": True,
+            "placement": "both",
+            "pre": {"mode": "rms", "target_db": -18.0},
+            "post": {"mode": "rms", "target_db": -33.0},
+        },
+    )
+    result_both = run_pipeline([wav], tmp_path / "both_out", config=both_cfg)
+
+    assert result_both.succeeded == 1
+    audio_both, _sr = read_audio(Path(result_both.log[0]["output"]))
+    assert _rms_db(audio_both) == pytest.approx(-33.0, abs=0.1)
+    assert _rms_db(audio_both) == pytest.approx(_rms_db(audio_pre) + 5.0, abs=0.1)
+
+
+def test_quality_flags_carry_normalisation_keys_on_success_and_gate_failure(
+    tmp_path, silent_wav
+):
+    wav = _write_tone_wav(tmp_path / "in.wav")
+    cfg = _audio_config(
+        tmp_path,
+        normalisation={"enabled": True, "placement": "both"},
+    )
+
+    result = run_pipeline([wav, silent_wav], tmp_path / "out", config=cfg)
+
+    assert result.succeeded == 1
+    assert result.failed == 1
+    flags_by_status = {entry["status"]: entry["quality_flags"] for entry in result.log}
+    expected_keys = {
+        "pre_gain_db",
+        "post_gain_db",
+        "peak_before_guard",
+        "guard_gain_db",
+        "guard_engaged",
+        "duration_expected_sec",
+        "duration_mismatch",
+    }
+    for flags in flags_by_status.values():
+        assert expected_keys <= set(flags)
+    assert flags_by_status["succeeded"]["duration_expected_sec"] is None
+    assert flags_by_status["succeeded"]["duration_mismatch"] is False
+    assert flags_by_status["failed"]["duration_expected_sec"] is None
+    assert flags_by_status["failed"]["duration_mismatch"] is False
+
+
+def test_tuning_offset_and_distortion_accept_samples_above_full_scale(
+    tmp_path, monkeypatch
+):
+    from sonitra.effects.chain_builder import TuningOffsetStage
+
+    wav = _write_tone_wav(tmp_path / "in.wav")
+    cfg = _audio_config(
+        tmp_path,
+        effects_chain="pedalboard",
+        pedalboard_effects=[
+            {"type": "TuningOffset", "cents": 10.0, "enabled": True},
+            {"type": "Distortion", "drive_db": 10.0, "enabled": True},
+        ],
+        normalisation={
+            "enabled": True,
+            "placement": "pre",
+            "pre": {"mode": "peak", "target_db": 20.0 * np.log10(3.0)},
+            "peak_ceiling_db": None,
+        },
+        quality_gates={
+            "silence_threshold_rms": 0.001,
+            "min_duration_sec": 0.05,
+            "max_duration_deviation_sec": 5.0,
+            "clip_threshold": 100.0,
+        },
+    )
+
+    tuning_peaks: list[float] = []
+    original_tuning_call = TuningOffsetStage.__call__
+
+    def _spy_tuning(self, audio, sample_rate):
+        tuning_peaks.append(float(np.max(np.abs(audio))))
+        return original_tuning_call(self, audio, sample_rate)
+
+    pedalboard_peaks: list[float] = []
+    original_pedalboard_call = pedalboard.Pedalboard.__call__
+
+    def _spy_pedalboard(self, audio, sample_rate):
+        pedalboard_peaks.append(float(np.max(np.abs(audio))))
+        return original_pedalboard_call(self, audio, sample_rate)
+
+    monkeypatch.setattr(TuningOffsetStage, "__call__", _spy_tuning)
+    monkeypatch.setattr(pedalboard.Pedalboard, "__call__", _spy_pedalboard)
+
+    result = run_pipeline([wav], tmp_path / "out", config=cfg)
+
+    assert result.succeeded == 1
+    assert tuning_peaks and tuning_peaks[0] > 1.0
+    assert pedalboard_peaks and pedalboard_peaks[0] > 1.0
+    written, _sr = read_audio(Path(result.log[0]["output"]))
+    assert np.all(np.isfinite(written))
 
 
 # ── Quality gate ────────────────────────────────────────────────────────

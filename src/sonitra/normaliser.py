@@ -32,7 +32,7 @@ def apply_stage(
     level = _level(audio_arr, mode)
     if level <= 0.0:
         return audio_arr, None
-    gain_db = float(target_db) - 20.0 * np.log10(level)
+    gain_db = float(target_db) - float(20.0 * np.log10(level))
     scale = 10.0 ** (gain_db / 20.0)
     return audio_arr * scale, gain_db
 
@@ -56,7 +56,7 @@ def apply_guard(
     ceiling_linear = 10.0 ** (float(ceiling_db) / 20.0)
     if peak <= ceiling_linear * (1.0 + 1e-6):
         return audio_arr, 0.0
-    gain_db = float(ceiling_db) - 20.0 * np.log10(peak)
+    gain_db = float(ceiling_db) - float(20.0 * np.log10(peak))
     scale = 10.0 ** (gain_db / 20.0)
     return audio_arr * scale, gain_db
 
