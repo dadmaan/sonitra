@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sonitra.config import ConfigError, PipelineConfig, SynthBackend, load_config
+from sonitra.config import ConfigError, PipelineConfig, QualityGatesSection, SynthBackend, load_config
 from sonitra.pipeline import run_pipeline
 
 
@@ -217,6 +217,24 @@ def test_fixture_config_renders_corpus(config_fixture, corpus_dir: Path, tmp_pat
     cfg = load_config(config_fixture("config_valid.yaml"))
     result = run_pipeline(sorted(corpus_dir.glob("*.mid")), tmp_path, config=cfg)
     assert result.succeeded >= 2
+
+
+# ── Quality gate defaults ─────────────────────────────────────────────
+
+def test_quality_gate_defaults_match_the_shipped_values() -> None:
+    gates = QualityGatesSection()
+    assert gates.silence_threshold_rms == 0.001
+    assert gates.min_duration_sec == 0.1
+    assert gates.max_duration_deviation_sec == 1.0
+    assert gates.clip_threshold == 1.0
+
+
+def test_init_writes_the_default_quality_gates(tmp_path: Path) -> None:
+    from sonitra.cli import init
+
+    path = tmp_path / "init.yaml"
+    init(path)
+    assert load_config(path).quality_gates == QualityGatesSection()
 
 
 # ── Basic Pitch config knobs ─────────────────────────────────────────

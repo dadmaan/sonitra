@@ -1362,12 +1362,7 @@ def init(
         ),
         dawdreamer=DawDreamerSection(),
         normalisation=NormalisationSection(enabled=True),
-        quality_gates=QualityGatesSection(
-            silence_threshold_rms=0.001,
-            min_duration_sec=0.1,
-            max_duration_deviation_sec=1.0,
-            clip_threshold=1.0,
-        ),
+        quality_gates=QualityGatesSection(),
         observability=ObservabilitySection(
             write_manifest=True,
             manifest_path="renders.jsonl",
