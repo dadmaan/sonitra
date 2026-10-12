@@ -9,18 +9,19 @@ import yaml
 from sonitra.benchmark.results import compute_fingerprint
 from sonitra.config import PipelineConfig, load_config
 
-GOLDEN_VALID_CONFIG = "114b31a404838203a35a46cb8dbc25548b5462b5930a0ac72667c7eb0a403721"
+GOLDEN_VALID_CONFIG = "990237c4c9cffd9f3e9094940a740aa38afd5155ce8a7cf5ad70b8db65e2ae7f"
+# Re-captured 2026-10-12 following the normalisation schema migration.
 # The preset goldens are captured against frozen snapshots under
 # tests/fixtures/fingerprint/, byte copies from the branch cut. Those fixtures are
 # never updated to follow the presets, so the goldens detect changes to the
 # fingerprint hashing and the schema dump, not preset edits. A golden change
 # stops every existing benchmark work dir from resuming; re-capture only as a
 # deliberate, CHANGELOG'd decision.
-GOLDEN_PIANO_ONLY_PRESET = "09e650f6bf12260387584e908f0e60b74089106a65b771fa80ce534bc7c285a3"
+GOLDEN_PIANO_ONLY_PRESET = "8062a87533123f7e55e1656dda922b147cc3e3b7cd1183433fe4b154d7b361fd"
 # basic_pitch with an explicit batch_size on CUDA
-GOLDEN_BATCH8_PRESET = "62cb6d5be8506d539c1c5c51ba496aba922f8f47f46ce97e4134e20e50950fc9"
+GOLDEN_BATCH8_PRESET = "a90c497e740e9a9733b58bc0e98748e990defa03ce5b5f45af7e51abdc157da7"
 # basic_pitch on CPU with batch_size left unset in the YAML (16 was the schema default)
-GOLDEN_CPU_UNSET_BASIC_PITCH = "5ee1bd2c4672273f8608ae922597214e11bfc95f2103e0366494cd2e4e1bcb95"
+GOLDEN_CPU_UNSET_BASIC_PITCH = "09cccdd392380e6aa11031cf9b12ac2fd7b94ba1c5e9b6b13ccf9890437ebde9"
 
 
 def test_fingerprint_golden_minimal_config() -> None:

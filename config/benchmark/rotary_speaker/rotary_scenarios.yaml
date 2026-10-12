@@ -82,17 +82,18 @@ pedalboard:
 
 normalisation:
   enabled: true
-  mode: peak
-  target_db: -1.0
+  placement: post
   # Unlike old_recording/telephone_channel/venue_acoustics, Chorus has no
   # level-dependent parameter (no drive/threshold that changes character
   # with input level) -- rate_hz, depth, centre_delay_ms, feedback, and mix
   # are all level-independent LFO/delay-line settings, so pre-normalising
   # buys no determinism benefit here the way it does for Distortion drive or
-  # Compressor threshold. Left false (matching effects_combinations.yaml's
-  # default) rather than true-by-habit. See ./README.md Section 5 for the
-  # full reasoning.
-  pre_effects: false
+  # Compressor threshold. Left at post (the default) rather than pre by
+  # habit. See ./README.md Section 5 for the full reasoning.
+  post:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0
 
 quality_gates:
   silence_threshold_rms: 0.001

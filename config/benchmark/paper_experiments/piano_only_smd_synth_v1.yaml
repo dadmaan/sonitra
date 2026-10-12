@@ -86,9 +86,11 @@ pedalboard:
 
 normalisation:
   enabled: true
-  mode: rms
-  target_db: -18.0
-  pre_effects: false
+  placement: post
+  post:
+    mode: rms
+    target_db: -18.0
+  peak_ceiling_db: -1.0
 
 quality_gates:
   silence_threshold_rms: 0.001

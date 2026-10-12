@@ -97,9 +97,11 @@ pedalboard:
   effects: []
 normalisation:
   enabled: false
-  mode: peak
-  target_db: -1.0
-  pre_effects: false
+  placement: post
+  post:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0
 quality_gates:
   silence_threshold_rms: 0.0
   min_duration_sec: 0.0
@@ -280,9 +282,11 @@ pedalboard:
   effects: []
 normalisation:
   enabled: false
-  mode: peak
-  target_db: -1.0
-  pre_effects: false
+  placement: post
+  post:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0
 quality_gates:
   silence_threshold_rms: 0.0
   min_duration_sec: 0.0

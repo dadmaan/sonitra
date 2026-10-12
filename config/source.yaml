@@ -194,13 +194,21 @@ pedalboard:
         # shifts. cents: 0.0 never reaches the stretcher, so an enabled zero-cent slot
         # stays a passthrough; a +c / -c pair round-trips through it to show its artifacts.
 
-# Post-effects peak normalisation ensures the rendered audio stays below the clip
-# threshold. In peak mode the signal is scaled so its peak == 10^(target_db/20).
+# Output levelling (an optional stage before the effects chain, one after it, or
+# both) plus an output peak guard that runs last. Stage settings and the guard
+# ceiling:
+# enabled: true              # run the placement's stages and the peak guard
+# placement: post            # pre | post | both -- which levelling stages run
+# pre:                       # stage before the effects chain (placement pre | both)
+#     mode: peak             # peak | rms
+#     target_db: -1.0        # target level in dBFS; defaults to -1 (peak) or -33 (rms)
+# post:                      # stage after the effects chain (placement post | both)
+#     mode: peak             # peak | rms
+#     target_db: -1.0        # target level in dBFS; defaults to -1 (peak) or -33 (rms)
+# peak_ceiling_db: -1.0      # guard ceiling in dBFS; null disables the guard
 normalisation:
     enabled: true
-    mode: peak # peak | rms
-    target_db: -1.0 # target level in dBFS
-    pre_effects: false # true = normalise before effects chain; false = after
+    placement: post
 
 quality_gates:
     silence_threshold_rms: 0.001 # files with RMS below this are flagged as silent
