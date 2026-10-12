@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
 import pedalboard
 import pytest
+import soundfile as sf
 
 from sonitra.config import PipelineConfig, load_config
 from sonitra.pipeline import run_pipeline
@@ -44,6 +46,18 @@ def _write_crest_wav(
 def _rms_db(audio: np.ndarray) -> float:
     arr = np.asarray(audio, dtype=np.float64)
     return 20.0 * np.log10(float(np.sqrt(np.mean(arr**2))))
+
+
+def _write_hot_wav(path: Path, *, peak: float = 1.5, sample_rate: int = 44100) -> Path:
+    """A tone whose peak exceeds full scale.
+
+    Written as a float WAV: ``write_wav``'s int16 format cannot hold values
+    above 1.0.
+    """
+    t = np.linspace(0.0, 1.0, sample_rate, endpoint=False)
+    sine = peak * np.sin(2 * np.pi * 440.0 * t)
+    sf.write(path, np.stack([sine, sine]).T, sample_rate, subtype="FLOAT")
+    return path
 
 
 def _audio_config(
@@ -259,6 +273,68 @@ def test_audio_input_post_stage_guard_replaces_hard_clip(tmp_path):
     written, _sr = read_audio(Path(result.log[0]["output"]))
     assert not np.any(np.abs(written) >= 1.0)
     assert np.max(np.abs(written)) == pytest.approx(10 ** (-1.0 / 20.0), abs=1e-4)
+
+
+def test_engaged_guard_passes_the_file_and_warns_once(tmp_path, caplog):
+    wav = _write_hot_wav(tmp_path / "guarded.wav")
+    cfg = _audio_config(
+        tmp_path,
+        normalisation={
+            "enabled": True,
+            "placement": "post",
+            "post": {"mode": "peak", "target_db": 3.5},
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="sonitra.pipeline"):
+        result = run_pipeline([wav], tmp_path / "out", config=cfg)
+
+    assert result.succeeded == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["guard_engaged"] is True
+    assert flags["is_clipped"] is False
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and record.name == "sonitra.pipeline"
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "guarded.wav" in message
+    assert f"{flags['guard_gain_db']:.2f} dB" in message
+
+
+def test_unguarded_overflow_is_flagged_and_fails(tmp_path):
+    path = _write_hot_wav(tmp_path / "hot.wav")
+    cfg = _audio_config(tmp_path)  # normalisation disabled, so no guard
+
+    result = run_pipeline([path], tmp_path / "out", config=cfg)
+
+    assert result.failed == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["guard_engaged"] is False
+    assert flags["is_clipped"] is True
+
+
+def test_disabled_guard_lets_an_overshoot_be_flagged(tmp_path):
+    wav = _write_hot_wav(tmp_path / "hot.wav")
+    cfg = _audio_config(
+        tmp_path,
+        normalisation={
+            "enabled": True,
+            "placement": "post",
+            "post": {"mode": "peak", "target_db": 3.5},
+            "peak_ceiling_db": None,
+        },
+    )
+
+    result = run_pipeline([wav], tmp_path / "out", config=cfg)
+
+    assert result.failed == 1
+    flags = result.log[0]["quality_flags"]
+    assert flags["guard_engaged"] is False
+    assert flags["peak_before_guard"] > 1.0
+    assert flags["is_clipped"] is True
 
 
 def test_audio_input_gain_cut_kept_with_pre_placement(tmp_path):

@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from sonitra.config import QualityGatesSection
 from sonitra.quality_gate import check_quality
@@ -118,3 +119,31 @@ def test_missing_tolerance_disables_the_duration_gate():
     )
     assert result.duration_mismatch is False
     assert result.passed is True
+
+
+# ── Clip gate and the output guard ────────────────────────────────────
+
+
+def test_pre_guard_peak_drives_the_clip_gate():
+    written = np.full((1, 44100), 0.9, dtype=np.float32)
+    result = check_quality(
+        written, 44100, QualityGatesSection(clip_threshold=1.0), peak_before_guard=1.5
+    )
+    assert result.is_clipped is True
+    assert result.passed is False
+    # ``peak`` keeps describing the written signal, not the gate's input.
+    assert result.peak == pytest.approx(0.9)
+
+
+def test_engaged_guard_suppresses_the_clip_flag():
+    written = np.full((1, 44100), 0.89, dtype=np.float32)
+    result = check_quality(
+        written,
+        44100,
+        QualityGatesSection(clip_threshold=1.0),
+        peak_before_guard=1.5,
+        guard_engaged=True,
+    )
+    assert result.is_clipped is False
+    assert result.passed is True
+    assert result.peak == pytest.approx(0.89)

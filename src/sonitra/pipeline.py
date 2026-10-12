@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import threading
 from typing import Any, Callable, Dict, Iterable, List
@@ -9,6 +10,8 @@ import time
 
 import numpy as np
 import pedalboard
+
+logger = logging.getLogger(__name__)
 
 _thread_local: threading.local = threading.local()
 
@@ -124,12 +127,23 @@ def _render_file(
             guard_gain_db=guard_gain_db,
             guard_engaged=guard_gain_db is not None and guard_gain_db < 0.0,
         )
+        if report.guard_engaged:
+            logger.warning(
+                "Output guard engaged for %s: applied %.2f dB, peak %.3f "
+                "reduced to ceiling %.2f dBFS",
+                source_path,
+                report.guard_gain_db,
+                peak_before_guard,
+                cfg.normalisation.peak_ceiling_db,
+            )
 
         quality = check_quality(
             audio,
             sample_rate,
             cfg.quality_gates,
             expected_duration_sec=expected_duration_sec,
+            peak_before_guard=peak_before_guard,
+            guard_engaged=report.guard_engaged,
         )
         quality_flags = {**quality.to_dict(), **report.to_dict()}
         if not quality.passed:

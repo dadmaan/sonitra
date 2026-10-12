@@ -38,6 +38,9 @@ def check_quality(
     sample_rate: int,
     cfg: QualityGatesSection,
     expected_duration_sec: float | None = None,
+    *,
+    peak_before_guard: float | None = None,
+    guard_engaged: bool = False,
 ) -> QualityResult:
     audio_arr = np.asarray(audio, dtype=np.float32)
     if audio_arr.ndim == 1:
@@ -48,7 +51,8 @@ def check_quality(
     peak = float(np.max(np.abs(audio_arr))) if audio_arr.size else 0.0
 
     is_silent = rms < cfg.silence_threshold_rms
-    is_clipped = peak > cfg.clip_threshold
+    for_clip = peak_before_guard if peak_before_guard is not None else peak
+    is_clipped = for_clip > cfg.clip_threshold and not guard_engaged
     too_short = duration_sec < cfg.min_duration_sec
     duration_mismatch = (
         expected_duration_sec is not None
