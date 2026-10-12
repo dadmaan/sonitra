@@ -59,10 +59,13 @@ pedalboard:
 
 normalisation:
   enabled: true
-  placement: post
-  post:
+  placement: both
+  pre:
     mode: peak
     target_db: -1.0
+  post:
+    mode: rms
+    target_db: -33.0
   peak_ceiling_db: -1.0
 
 quality_gates:
