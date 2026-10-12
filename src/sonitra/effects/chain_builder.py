@@ -20,6 +20,7 @@ import pedalboard
 from sonitra.config import PipelineConfig
 from sonitra.effects.builtin_effects import (
     ChorusConfig,
+    ClippingConfig,
     CompressorConfig,
     DelayConfig,
     DistortionConfig,
@@ -215,6 +216,10 @@ def _build_effect(effect_cfg: EffectConfig):
     if isinstance(effect_cfg, DistortionConfig):
         plugin = pedalboard.Distortion()
         plugin.drive_db = effect_cfg.drive_db
+        return plugin
+    if isinstance(effect_cfg, ClippingConfig):
+        plugin = pedalboard.Clipping()
+        plugin.threshold_db = effect_cfg.threshold_db
         return plugin
     if isinstance(effect_cfg, GainConfig):
         plugin = pedalboard.Gain()

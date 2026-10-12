@@ -152,6 +152,9 @@ pedalboard:
         # - type: Gain
         #   gain_db: 0.0
         #   enabled: false
+        # - type: Clipping
+        #   threshold_db: -6.0  # hard-clip ceiling in dBFS; must be at most 0 (0 = full scale)
+        #   enabled: false
         # - type: VST3Plugin
         #   plugin_path: plugin/my_effect.vst3
         #   enabled: false
