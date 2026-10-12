@@ -17,8 +17,8 @@ These are the main sections and what each one does:
 | `dawdreamer` | Faust script path, VST3 plugin path, preset path — required when `synth_backend: dawdreamer_vst`; `plugin_path` must NOT be set for `synth_backend: dawdreamer_faust` |
 | `fluidsynth` | `soundfont_path` — path to the `.sf2` SoundFont file; required when `synth_backend: fluidsynth` — plus optional `program` (0–127 GM program; `null` inherits the source MIDI's program when unambiguous) |
 | `pedalboard` | Pedalboard effects chain (`pedalboard.effects`); `pedalboard.instrument` sub-section configures the VST3 instrument plugin for the `pedalboard_instrument` backend |
-| `normalisation` | Peak or RMS normalisation, target dB, pre/post effects |
-| `quality_gates` | Silence, clipping, and minimum duration checks |
+| `normalisation` | Loudness stages before and/or after the effects chain (`placement`), each stage's mode and target level, and the output peak guard (`peak_ceiling_db`) |
+| `quality_gates` | Silence, clipping, minimum duration, and expected-duration checks |
 | `transcription` | Transcriber backends, output directory, per-backend thresholds |
 | `evaluation` | Metric families to enable, tolerance values |
 | `benchmark` | Conditions, parameter sweeps, baseline name |
@@ -78,9 +78,26 @@ Inside the containers the host `models/` folder is bind-mounted at `/models` and
 
 You can add these effects under `pedalboard.effects`. Each effect has an `enabled` flag to turn it on or off. Pedalboard is the audio-effects library Sonitra uses.
 
-Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter, TuningOffset. VST3 plugins start with their factory default sound. You cannot set their controls from YAML.
+Compressor, Reverb, Limiter, Chorus, Delay, Distortion, Clipping, Gain, VST3 plugin, HighpassFilter, LowpassFilter, HighShelfFilter, LowShelfFilter, PeakFilter, TuningOffset. `Clipping` cuts off samples above a required `threshold_db` ceiling, which must be at or below full scale (the loudest level a sample can hold); samples below the ceiling pass through unchanged. VST3 plugins start with their factory default sound. You cannot set their controls from YAML.
 
 `TuningOffset` shifts the whole signal by a fixed number of cents, where a cent is a hundredth of a semitone. It takes a required `cents` value; `config/source.yaml` lists every other setting it accepts, with its default and the reason for it. A slot with `cents: 0` never reaches the stretcher, so it leaves the audio untouched. Enabling one slot at `+c` and a second at `-c` sends the signal through the stretcher twice and back to its original pitch, so the processing artifact of that offset shows on its own. The shift runs through `pedalboard.time_stretch`, Rubber Band's offline stretcher, because the `PitchShift` plugin does not apply shifts measured in cents reliably: a small shift comes out as no shift at all.
+
+## Normalisation and quality gates
+
+Normalisation changes the loudness of the whole file with a single gain (one volume change). `normalisation.enabled` (default `false`) turns it on. While it is on, the output peak guard described below always runs. `normalisation.placement` chooses which stages run: `pre` before the effects chain, `post` after it, or `both` one on each side. The default is `post`.
+
+Each stage the placement runs has its own block of settings, `normalisation.pre` or `normalisation.post`:
+
+| Key | Controls | Default |
+| --- | --- | --- |
+| `mode` | `peak` sets the file's loudest sample to the target; `rms` sets the file's average level (RMS) to the target | `peak` |
+| `target_db` | the target level, in dBFS (decibels relative to full scale) | `-1.0` for `peak`, `-33.0` for `rms` |
+
+A stage applies one gain to the whole file and never cuts off samples. An RMS target can push the loudest samples above full scale; the effects chain and the guard deal with that later. Silent input leaves the stage unchanged. Setting a stage block that the placement does not run is an error: `pre:` with `placement: post` stops the config from loading instead of being ignored.
+
+`normalisation.peak_ceiling_db` sets the output peak guard's ceiling, the highest level the guard allows (default `-1.0`; `null` turns the guard off). The guard runs last whenever normalisation is enabled, in every placement. If the file's loudest sample is above the ceiling, the guard applies one gain to scale the whole file down to it. It never scales up and never cuts off samples. The quality gate's clipping check reads the loudest sample from before the guard, so a file the guard corrected passes with a warning log instead of failing as clipped.
+
+`quality_gates.max_duration_deviation_sec` (default `1.0`, `null` turns the check off) fails a render whose duration differs from the expected duration by more than that many seconds. The expected duration comes from the source MIDI: the end of its last note plus `render_pipeline.duration_padding_sec`, plus `pedalboard.instrument.silence_flush_sec` when the render goes through a pedalboard instrument. Recordings in audio mode have no expected duration, so the check is skipped there.
 
 ## File selection
 
