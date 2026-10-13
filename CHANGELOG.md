@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.0-dev.2] - 2026-10-13
+
 ### Breaking
 
 - The `normalisation` config section no longer accepts the section-level keys `pre_effects`, `mode` and `target_db`. `pre_effects` is replaced by `placement` (`false` → `post`, `true` → `pre`), and `mode`/`target_db` move under the stage block they apply to (`normalisation.pre` or `normalisation.post`). A config that still sets any of the three fails to load with a `ConfigError` naming the replacement (`src/sonitra/config.py`). Every config shipped under `config/` and every test fixture was migrated to the new schema; covered by `tests/test_normalisation_config.py`.
@@ -448,7 +450,8 @@ Add SMD dataset configs for paper experimentation.
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
 - Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve the relative subpath from the corpus root in all output paths. Two files in different subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no longer overwrite each other on disk or silently cross-pair during evaluation. (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.1...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.2...HEAD
+[0.6.0-dev.2]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.1...v0.6.0-dev.2
 [0.6.0-dev.1]: https://github.com/dadmaan/sonitra/compare/v0.5.1...v0.6.0-dev.1
 [0.5.1]: https://github.com/dadmaan/sonitra/releases/tag/v0.5.1
 [0.5.0]: https://github.com/dadmaan/sonitra/releases/tag/v0.5.0
