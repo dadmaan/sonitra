@@ -631,6 +631,153 @@ def test_unrelated_overrides_still_allowed(
     }
 
 
+# ── every condition's overrides are validated before the run starts ───────
+
+
+def _make_third_condition_invalid(config: PipelineConfig) -> None:
+    """Add two explicit conditions, the second of them with a bad override.
+
+    With the baseline first, the invalid condition is the third and last one.
+    """
+    config.benchmark.sweeps = []
+    config.benchmark.conditions = [
+        ConditionSection(
+            name="longer-padding",
+            overrides={"render_pipeline.duration_padding_sec": 1.5},
+        ),
+        ConditionSection(
+            name="bad-key",
+            overrides={"normalisation.post.nonexistent": 1.0},
+        ),
+    ]
+
+
+def test_invalid_condition_override_aborts_before_any_render(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_third_condition_invalid(benchmark_config)
+
+    built: list = []
+    rendered: list = []
+
+    def factory(cfg):
+        built.append(cfg)
+        return _CountingStubTranscriber(cfg.name or cfg.type)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+    monkeypatch.setattr(
+        runner_module, "run_pipeline", lambda *args, **kwargs: rendered.append(args)
+    )
+
+    with pytest.raises(ValueError, match="bad-key"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert built == []
+    assert rendered == []
+    assert not (tmp_path / "audio").exists()
+
+
+def test_invalid_condition_override_preserves_previous_results(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    results_file = tmp_path / benchmark_config.benchmark.results_path
+    fingerprint_file = results_file.with_name(results_file.name + ".fingerprint")
+    assert benchmark_config.benchmark.resume is False
+    before = (results_file.read_bytes(), fingerprint_file.read_bytes())
+
+    _make_third_condition_invalid(benchmark_config)
+    with pytest.raises(ValueError, match="bad-key"):
+        run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    assert results_file.exists()
+    assert fingerprint_file.exists()
+    assert (results_file.read_bytes(), fingerprint_file.read_bytes()) == before
+
+
+def test_invalid_condition_overrides_report_every_condition(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.benchmark.conditions = [
+        ConditionSection(name="unknown-path", overrides={"normalisation.post.nope": 1.0}),
+        ConditionSection(name="bad-value", overrides={"normalisation.post.target_db": "loud"}),
+    ]
+
+    with pytest.raises(ValueError) as excinfo:
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    message = str(excinfo.value)
+    assert (
+        "unknown-path: Override path 'normalisation.post.nope' has unknown key 'nope'"
+        in message
+    )
+    assert "bad-value" in message
+    assert "target_db" in message
+    assert "loud" in message
+
+
+def test_parallel_run_rejects_invalid_condition_before_submitting(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.max_workers = 2
+    _make_third_condition_invalid(benchmark_config)
+
+    calls: list = []
+
+    def recording_worker(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("_condition_worker must not run")
+
+    monkeypatch.setattr(runner_module, "_condition_worker", recording_worker)
+
+    with pytest.raises(ValueError, match="bad-key"):
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert calls == []
+    assert not (tmp_path / "audio").exists()
+
+
+def test_sweep_value_failing_validation_is_rejected_before_any_render(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = [
+        SweepSection(parameter="normalisation.post.target_db", values=["loud"])
+    ]
+
+    built: list = []
+
+    def factory(cfg):
+        built.append(cfg)
+        return _CountingStubTranscriber(cfg.name or cfg.type)
+
+    monkeypatch.setattr(runner_module, "make_transcriber", factory)
+    monkeypatch.setattr(
+        runner_module,
+        "run_pipeline",
+        lambda *args, **kwargs: pytest.fail("render started before validation"),
+    )
+
+    with pytest.raises(ValueError, match=r"target_db=loud") as excinfo:
+        run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    assert "loud" in str(excinfo.value)
+    assert built == []
+    assert not (tmp_path / "audio").exists()
+
+
 def test_save_audio_true_keeps_condition_audio_dir(
     benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
 ) -> None:

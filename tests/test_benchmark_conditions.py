@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sonitra.benchmark.conditions import Condition, apply_overrides, expand_conditions
+from sonitra.benchmark.results import compute_fingerprint
 from sonitra.config import BenchmarkSection, PipelineConfig, SynthBackend
 from sonitra.effects.builtin_effects import (
     CompressorConfig,
@@ -60,6 +61,23 @@ def _config(**overrides) -> PipelineConfig:
         },
         **overrides,
     })
+
+
+def _normalisation_config(
+    *,
+    post_mode: str = "rms",
+    post_target_db: float = -33.0,
+) -> PipelineConfig:
+    """Base config with both normalisation stages enabled, built in code."""
+    return _config(
+        normalisation={
+            "enabled": True,
+            "placement": "both",
+            "pre": {"mode": "peak", "target_db": -1.0},
+            "post": {"mode": post_mode, "target_db": post_target_db},
+            "peak_ceiling_db": -1.0,
+        }
+    )
 
 
 def test_expand_includes_baseline_conditions_and_sweeps() -> None:
@@ -211,3 +229,60 @@ def test_condition_overrides_resolve_dotted_paths_to_their_effect_type() -> None
     assert resolved[5].gain_db == -2.0
     assert resolved[6].enabled is True
     assert resolved[7].ratio == 2.0
+
+
+def test_mode_switch_gives_post_stage_its_mode_default_target() -> None:
+    updated = apply_overrides(_normalisation_config(), {"normalisation.post.mode": "peak"})
+    assert updated.normalisation.post.mode == "peak"
+    assert updated.normalisation.post.target_db == pytest.approx(-1.0)
+
+
+def test_mode_switch_gives_pre_stage_its_mode_default_target() -> None:
+    updated = apply_overrides(_normalisation_config(), {"normalisation.pre.mode": "rms"})
+    assert updated.normalisation.pre.mode == "rms"
+    assert updated.normalisation.pre.target_db == pytest.approx(-33.0)
+
+
+def test_mode_switch_keeps_explicitly_overridden_target_in_either_order() -> None:
+    overrides = {"normalisation.post.mode": "peak", "normalisation.post.target_db": -6.0}
+    updated = apply_overrides(_normalisation_config(), overrides)
+    assert updated.normalisation.post.mode == "peak"
+    assert updated.normalisation.post.target_db == pytest.approx(-6.0)
+
+    reversed_overrides = {
+        "normalisation.post.target_db": -6.0,
+        "normalisation.post.mode": "peak",
+    }
+    reloaded = apply_overrides(_normalisation_config(), reversed_overrides)
+    assert reloaded.normalisation.post.mode == "peak"
+    assert reloaded.normalisation.post.target_db == pytest.approx(-6.0)
+
+
+def test_mode_override_with_unchanged_mode_keeps_target() -> None:
+    base = _normalisation_config(post_target_db=-40.0)
+    updated = apply_overrides(base, {"normalisation.post.mode": "rms"})
+    assert updated.normalisation.post.mode == "rms"
+    assert updated.normalisation.post.target_db == pytest.approx(-40.0)
+
+
+def test_target_override_alone_keeps_mode_and_target() -> None:
+    updated = apply_overrides(_normalisation_config(), {"normalisation.post.target_db": -53.0})
+    assert updated.normalisation.post.mode == "rms"
+    assert updated.normalisation.post.target_db == pytest.approx(-53.0)
+
+
+def test_whole_stage_replacement_uses_new_mode_default_target() -> None:
+    updated = apply_overrides(_normalisation_config(), {"normalisation.post": {"mode": "peak"}})
+    assert updated.normalisation.post.mode == "peak"
+    assert updated.normalisation.post.target_db == pytest.approx(-1.0)
+
+
+def test_apply_overrides_leaves_base_config_and_fingerprint_untouched() -> None:
+    base = _normalisation_config()
+    fingerprint = compute_fingerprint(base)
+
+    apply_overrides(base, {"normalisation.post.mode": "peak"})
+
+    assert base.normalisation.post.mode == "rms"
+    assert base.normalisation.post.target_db == pytest.approx(-33.0)
+    assert compute_fingerprint(base) == fingerprint

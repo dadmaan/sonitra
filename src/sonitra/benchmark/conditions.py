@@ -50,10 +50,26 @@ def apply_overrides(config: PipelineConfig, overrides: dict[str, Any]) -> Pipeli
 
     Paths address nested sections and list elements by index, e.g.
     'pedalboard.effects.1.wet_level' or 'render_pipeline.sample_rate'.
+
+    Switching a stage's ``mode`` without naming its ``target_db`` gives the
+    new mode's default target; name both keys to pin an explicit level.
     """
     data = config.model_dump(mode="python")
     for path, value in overrides.items():
         _set_path(data, path, value)
+    for stage in ("pre", "post"):
+        if f"normalisation.{stage}.mode" not in overrides:
+            continue
+        if f"normalisation.{stage}.target_db" in overrides:
+            continue
+        stage_data = data.get("normalisation", {}).get(stage)
+        if not isinstance(stage_data, dict):
+            continue
+        if stage_data.get("mode") != getattr(config.normalisation, stage).mode:
+            # The dump carries the old mode's concrete target, so a mode switch
+            # alone would keep a level meant for the other mode. Clearing it
+            # lets NormalisationStage._fill_target_db fill the default.
+            stage_data["target_db"] = None
     return PipelineConfig.model_validate(data)
 
 

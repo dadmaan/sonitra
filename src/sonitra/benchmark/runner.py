@@ -29,7 +29,7 @@ from sonitra.benchmark.results import (
     summarise,
     timing_block,
 )
-from sonitra.config import InputType, PipelineConfig
+from sonitra.config import ConfigError, InputType, PipelineConfig
 from sonitra.corpus import pair_audio_to_reference
 from sonitra.evaluation.protocol import (
     AudioMetric,
@@ -323,6 +323,44 @@ def _validate_no_run_level_override(config: PipelineConfig) -> None:
             )
 
 
+def _validate_condition_overrides(config: PipelineConfig) -> None:
+    """Apply every condition's overrides once, before the run touches disk.
+
+    The condition loops only call :func:`apply_overrides` when they reach a
+    condition, so an unknown path or a value the model rejects otherwise
+    surfaces mid-run: in parallel mode the conditions already submitted finish
+    and their records are discarded, and with ``benchmark.resume: false`` the
+    previous results file and its fingerprint are already deleted before the
+    error can surface. Applying every condition here, against the same base
+    config the loops use, turns both into one fail-fast error. The loops still
+    call :func:`apply_overrides` themselves: it is deterministic, so a config
+    that passes here cannot fail there.
+
+    Raises:
+        ValueError: If any condition's overrides cannot be applied. The message
+            names every failing condition and its reason.
+    """
+    failures: list[tuple[str, str]] = []
+    for condition in expand_conditions(config.benchmark):
+        if not condition.overrides:
+            # Nothing to apply, and the dump/validate round-trip would
+            # re-validate the whole base config, so unrelated in-memory state
+            # could surface as if this condition's overrides were the cause.
+            continue
+        try:
+            apply_overrides(config, condition.overrides)
+        except (KeyError, ValueError, ConfigError) as exc:
+            # KeyError stringifies with added quotes; report its raw message.
+            reason = str(exc.args[0]) if isinstance(exc, KeyError) and exc.args else str(exc)
+            failures.append((condition.name, reason))
+    if not failures:
+        return
+    details = "\n".join(f"  - {name}: {reason}" for name, reason in failures)
+    raise ValueError(
+        "invalid overrides in benchmark conditions (nothing was run):\n" + details
+    )
+
+
 def _validate_resume_batches(
     records: Sequence[BenchmarkRecord],
     transcriber_configs: Sequence[TranscriberConfig],
@@ -464,6 +502,7 @@ def run_benchmark(
     """
     _validate_no_input_type_sweep(config)
     _validate_no_run_level_override(config)
+    _validate_condition_overrides(config)
 
     # The builders read the numeric settings from the environment, and the
     # spawned pool workers inherit it, so the config's values are published for
