@@ -82,7 +82,7 @@ To use the graphics card instead, replace `--profile cpu run --rm sonitra` with 
 The table below shows which folders on your machine link to which folders in the container. A bind mount means a shared folder between the two.
 
 | Mount | Host path | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `/app/corpus` | `./corpus` | Dataset-first corpus root: `{dataset}/midi/`, `{dataset}/audio/`, `{dataset}/transcription/`, `{dataset}/eval_results/` |
 | `/app/config` | `./config` | Pipeline YAML configs |
 | `/app/output` | `./output` | Transcriptions, evaluation results, benchmarks |
@@ -92,14 +92,14 @@ Set `SONITRA_CONFIG` in `.env` to use a different config path inside the contain
 
 ## R (statistical analysis)
 
-Both images include R with the `glmmTMB` and `jsonlite` packages. R is the stats tool Sonitra uses for the mixed-effects model. So `scripts/run_mixed_effects_analysis.py` works with no extra setup (see [Statistical analysis](statistical-analysis.md)). R adds about 400 MB. If you never run that analysis, you can skip it. Set `INSTALL_R=0` in `.env` to leave it out:
+Both images include R with the `glmmTMB` and `jsonlite` packages. R adds about 400 MB. If you never use R, you can skip it. Set `INSTALL_R=0` in `.env` to leave it out:
 
 ```bash
 echo "INSTALL_R=0" >> .env
 docker compose -f docker/docker-compose.yml --profile cpu build   # or --profile gpu
 ```
 
-The two images carry different R versions because they build on different base systems. The CPU image (Debian) has R 4.5 with glmmTMB 1.1.10. The GPU image (Ubuntu 22.04) has R 4.1.2 with glmmTMB 1.1.2.3. Both fit the same model, but small digits may differ between versions. So do not mix results from the two images in one study. Each run saves the exact versions it used in `model_meta.json`.
+The two images carry different R versions because they build on different base systems. The CPU image (Debian) has R 4.5 with glmmTMB 1.1.10. The GPU image (Ubuntu 22.04) has R 4.1.2 with glmmTMB 1.1.2.3.
 
 ## TransKun (piano transcription)
 
@@ -137,4 +137,5 @@ python scripts/setup_hft_transformer.py --models-dir ./models
 ```
 
 ---
+
 [← Back to README](../README.md)

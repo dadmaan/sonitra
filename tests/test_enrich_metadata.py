@@ -3,9 +3,6 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
-import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -547,84 +544,3 @@ def test_main_duplicate_output_column_is_nonzero_and_names_column(
 
     assert code != 0
     assert "Year" in capsys.readouterr().err
-
-
-@pytest.mark.requires_r
-def test_enriched_csv_round_trips_through_r(
-    em: ModuleType, tmp_path: Path
-) -> None:
-    rscript = shutil.which("Rscript")
-    if rscript is None:
-        pytest.skip("Rscript not available")
-    meta_path = tmp_path / "meta.csv"
-    with meta_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(
-            handle, fieldnames=["canonical_composer", "canonical_title"]
-        )
-        writer.writeheader()
-        writer.writerow(
-            {
-                "canonical_composer": "Frédéric Chopin",
-                "canonical_title": 'Variations and Fugue in E-flat Major, Op. 35, "Eroica"',
-            }
-        )
-        writer.writerow(
-            {"canonical_composer": "Leoš Janáček", "canonical_title": "Sonata 1.X.1905"}
-        )
-    ann_path = _write_annotations(
-        tmp_path / "ann.txt",
-        "Composer|Piece|Year\n"
-        'Frédéric Chopin|Variations and Fugue in E-flat Major, Op. 35, "Eroica"|1802\n'
-        "Leoš Janáček|Sonata 1.X.1905|1905\n",
-    )
-    out_path = tmp_path / "enriched.csv"
-    code = em.main(
-        [
-            "--metadata",
-            str(meta_path),
-            "--annotations",
-            str(ann_path),
-            "--annotations-delimiter",
-            "|",
-            "--on",
-            "canonical_composer=Composer",
-            "--on",
-            "canonical_title=Piece",
-            "--add",
-            "Year=composition_year",
-            "--output",
-            str(out_path),
-        ]
-    )
-    assert code == 0
-
-    composers_path = tmp_path / "composers.txt"
-    titles_path = tmp_path / "titles.txt"
-    # Pin a UTF-8 C locale so R parses decimals as C numerics yet keeps
-    # non-ASCII composer names intact (same rationale as r_locale_env in
-    # scripts/run_mixed_effects_analysis.py).
-    r_env = dict(os.environ)
-    r_env["LC_ALL"] = "C.UTF-8"
-    r_env["LANG"] = "C.UTF-8"
-    r_code = (
-        f"d <- read.csv('{out_path}', stringsAsFactors = FALSE, fileEncoding = 'UTF-8');"
-        f"writeLines(d$canonical_composer, '{composers_path}', useBytes = TRUE);"
-        f"writeLines(as.character(d$composition_year), '{titles_path}', useBytes = TRUE);"
-        f"writeLines(d$canonical_title, '{tmp_path / 'rtitles.txt'}', useBytes = TRUE)"
-    )
-    result = subprocess.run(
-        [rscript, "--vanilla", "-e", r_code],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=r_env,
-    )
-    assert result.returncode == 0, result.stderr
-    assert composers_path.read_text(encoding="utf-8").splitlines() == [
-        "Frédéric Chopin",
-        "Leoš Janáček",
-    ]
-    assert (tmp_path / "rtitles.txt").read_text(encoding="utf-8").splitlines() == [
-        'Variations and Fugue in E-flat Major, Op. 35, "Eroica"',
-        "Sonata 1.X.1905",
-    ]

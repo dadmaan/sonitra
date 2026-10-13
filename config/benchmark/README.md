@@ -329,7 +329,7 @@ At ±50 cents every note sits exactly halfway between two semitones. Scoring req
 
 The material decides which side a note lands on. In audio mode it means each recording's own tuning, plus piano stretch tuning and guitar fret intonation, the tuning that shifts register by register, which is what `scripts/estimate_tuning.py` measures. In MIDI mode it means the fine tuning baked into the SoundFont samples, since nothing in the config pins FluidSynth to a reference pitch.
 
-So read the ±50 ¢ results as where a model breaks the tie, not as another point on a robustness slope. [Own tuning offset](../../docs/statistical-analysis.md#own-tuning-offset-optional-enrichment) covers how the per-recording tuning reaches the metadata CSV and the analysis from there.
+So read the ±50 ¢ results as where a model breaks the tie, not as another point on a robustness slope. The per-recording tuning reaches the metadata CSV through `scripts/estimate_tuning.py` and `scripts/enrich_metadata.py`.
 
 `src/sonitra/effects/chain_builder.py` logs a warning whenever an enabled slot reaches `abs(cents) >= 50.0`: `TuningOffset %.1f cents is at or beyond half a semitone: notes may score as the neighbouring pitch`. It is a notice about the tie point, not an error. It fires while the effect chain is built, and `src/sonitra/pipeline.py` builds that chain once per worker thread, so a `±50c` condition logs it once per worker thread while `rt50c` logs it twice per worker thread, because both of its slots qualify. It prints on the terminal when the run is serial, and goes to `logs/worker-<pid>.log` when it uses more than one worker.
 

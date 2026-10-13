@@ -212,7 +212,7 @@ python scripts/export_regression_table.py \
   --metadata-join-column midi_filename
 ```
 
-The joined table is the input that `scripts/run_mixed_effects_analysis.py` expects (see [Statistical analysis](statistical-analysis.md)).
+The result is a plain CSV table.
 
 The join works for any dataset. `--metadata-join-column` names the CSV column that holds a filename. MAESTRO's column is `midi_filename`; MusicNet's score metadata uses `id`, while the converter's `metadata/musicnet.csv` uses `midi_filename`. Both SMD metadata CSVs (`metadata/smd-piano-v2.csv` and `metadata/smd-synth-v1.csv`) use the default `midi_filename` column. By default Sonitra matches by exact file stem (`--metadata-match exact`); use `--metadata-match token-prefix` when the reference stem carries extra tokens beyond the metadata id (e.g. MusicNet score MIDI `1727_schubert_op114_2` → `1727`) — it tries an exact match first, then a unique token-prefix match using the same logic as audio-to-MIDI pairing (see `sonitra.corpus.match_token_prefix`). Every other column from a matched row is added as `meta.<column>`. Sonitra makes no demand that sets share the same columns, because they do not. For example, MusicNet's metadata has `movement` and `ensemble`, while MAESTRO's does not.
 

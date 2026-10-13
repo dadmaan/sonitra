@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Removed
+
+- The R mixed-effects analysis: `scripts/run_mixed_effects_analysis.py`, both `.R` models (`scripts/mixed_effects_analysis.R`, `scripts/mixed_effects_analysis_LEGACY.R`), `tests/test_mixed_effects_analysis.py`, the `requires_r` pytest marker and `docs/statistical-analysis.md`. `scripts/export_regression_table.py` and `scripts/enrich_metadata.py` stay as language-neutral CSV tools.
+
 ## [0.6.0-dev.2] - 2026-10-13
 
 ### Breaking
