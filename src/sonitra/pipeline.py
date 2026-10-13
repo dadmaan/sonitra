@@ -109,6 +109,11 @@ def _render_file(
 
     try:
         audio, sample_rate = source.load(source_path)
+        # Level of the loaded source, before any stage or effect runs; the
+        # gate uses it to tell a broken input from a quiet configured target.
+        input_arr = np.asarray(audio, dtype=np.float64)
+        input_rms = float(np.sqrt(np.mean(input_arr**2))) if input_arr.size else 0.0
+        input_peak = float(np.max(np.abs(input_arr))) if input_arr.size else 0.0
         expected_duration_sec = source.expected_duration_sec(source_path)
         audio, pre_report = normalise_from_config(audio, cfg, stage="pre")
         if cfg.render_pipeline.effects_chain == EffectsChain.PEDALBOARD and len(chain) > 0:
@@ -144,6 +149,9 @@ def _render_file(
             expected_duration_sec=expected_duration_sec,
             peak_before_guard=peak_before_guard,
             guard_engaged=report.guard_engaged,
+            input_rms=input_rms,
+            input_peak=input_peak,
+            output_level_set=post_report.post_gain_db is not None,
         )
         quality_flags = {**quality.to_dict(), **report.to_dict()}
         if not quality.passed:

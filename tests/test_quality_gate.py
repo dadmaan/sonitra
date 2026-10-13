@@ -147,3 +147,74 @@ def test_engaged_guard_suppresses_the_clip_flag():
     assert result.is_clipped is False
     assert result.passed is True
     assert result.peak == pytest.approx(0.89)
+
+
+# ── Silence judged on the input ───────────────────────────────────────
+
+
+def test_input_below_threshold_is_silent_despite_output_level():
+    # A post stage lifted this to the configured target, but the source
+    # itself was inaudible, so the render may not be scored.
+    audio = np.full((1, 44100), 10 ** (-33 / 20), dtype=np.float32)
+    result = check_quality(
+        audio,
+        44100,
+        QualityGatesSection(silence_threshold_rms=0.001),
+        input_rms=3.0e-5,
+        output_level_set=True,
+    )
+    assert result.is_silent is True
+    assert result.passed is False
+
+
+def test_input_above_threshold_with_low_post_target_is_not_silent():
+    # The final level is the quiet configured target, not a dead signal.
+    audio = np.full((1, 44100), 10 ** (-63 / 20), dtype=np.float32)
+    result = check_quality(
+        audio,
+        44100,
+        QualityGatesSection(silence_threshold_rms=0.001),
+        input_rms=0.05,
+        output_level_set=True,
+    )
+    assert result.is_silent is False
+    assert result.passed is True
+
+
+def test_input_above_threshold_with_killed_output_is_silent(dummy_silent_audio):
+    # No post stage set the level, so a stage that zeroed the signal is caught.
+    result = check_quality(
+        dummy_silent_audio,
+        44100,
+        QualityGatesSection(silence_threshold_rms=0.001),
+        input_rms=0.05,
+        output_level_set=False,
+    )
+    assert result.is_silent is True
+    assert result.passed is False
+
+
+def test_input_absent_falls_back_to_the_output_rms(dummy_silent_audio, dummy_audio):
+    cfg = QualityGatesSection(silence_threshold_rms=0.001)
+    silent = check_quality(dummy_silent_audio, 44100, cfg, input_rms=None)
+    assert silent.is_silent is True
+    loud = check_quality(dummy_audio, 44100, cfg, input_rms=None)
+    assert loud.is_silent is False
+
+def test_input_levels_in_to_dict_default_to_none(dummy_audio):
+    data = check_quality(dummy_audio, 44100, QualityGatesSection()).to_dict()
+    assert data["input_rms"] is None
+    assert data["input_peak"] is None
+
+
+def test_input_levels_in_to_dict_are_recorded(dummy_audio):
+    data = check_quality(
+        dummy_audio,
+        44100,
+        QualityGatesSection(),
+        input_rms=0.05,
+        input_peak=0.2,
+    ).to_dict()
+    assert data["input_rms"] == pytest.approx(0.05)
+    assert data["input_peak"] == pytest.approx(0.2)
+    json.dumps(data)
