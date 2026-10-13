@@ -31,8 +31,9 @@ FROM python:3.11-slim AS builder-base
 # apt runs unattended during a build. Without a non-interactive frontend,
 # any package whose postinst calls debconf will open a prompt that BuildKit
 # gives no stdin to answer, and the build hangs indefinitely rather than
-# failing — tzdata, pulled in transitively by r-base-core in the runtime
-# stages below, asks for a geographic area and does exactly this.
+# failing — tzdata, which ships with the Debian base image itself (nothing
+# installed below depends on it), asks for a geographic area and does
+# exactly this.
 #
 # Declared as ARG, not ENV, so it applies only while building and never
 # leaks into the shipped image, where `docker exec` + apt should still get
@@ -69,7 +70,7 @@ COPY pyproject.toml uv.lock README.md ./
 FROM builder-base AS builder-cpu
 
 # 1/0 switch for the transkun backend, threaded through from
-# docker-compose.yml exactly like INSTALL_R (default 1). With 0 the venv
+# docker-compose.yml (default 1). With 0 the venv
 # builds without transkun and CPU torch at all.
 ARG INSTALL_TRANSKUN=1
 
@@ -132,9 +133,9 @@ FROM python:3.11-slim AS runtime
 # Build-only non-interactive apt frontend — see the builder-base stage above.
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Fix the container timezone explicitly. This gives tzdata (installed as a
-# dependency of r-base-core below) an already-answered configuration to find,
-# and pins container-local timestamps to Oslo wall-clock time regardless of
+# Fix the container timezone explicitly. This gives tzdata (shipped with the
+# Debian base image) an already-answered configuration to find, and pins
+# container-local timestamps to Oslo wall-clock time regardless of
 # the host's own timezone. glibc reads TZ directly, so overriding it at run
 # time (`-e TZ=...`, or `environment:` in docker-compose.yml) is enough to
 # shift a single container without rebuilding.
@@ -175,31 +176,6 @@ RUN ln -snf /usr/share/zoneinfo/Europe/Oslo /etc/localtime \
         gosu \
         tmux \
     && rm -rf /var/lib/apt/lists/*
-
-# R + glmmTMB for scripts/run_mixed_effects_analysis.py, which fits the
-# benchmark condition-effect model. That model is a beta GLMM with crossed
-# random effects, which has no equivalent in the Python statistics stack, so
-# the fit happens in R (scripts/mixed_effects_analysis.R) and Python drives it.
-#
-# Debian's r-cran-* packages are prebuilt and ABI-matched to r-base-core, so
-# nothing compiles here. Installing glmmTMB via install.packages() instead
-# would pull TMB + RcppEigen from source plus a full toolchain, and is the
-# usual source of the "glmmTMB was built with TMB version X" mismatch.
-#
-# Gated because it adds roughly 400 MB to an image whose main job is audio
-# rendering and transcription, not statistics: build with
-# `--build-arg INSTALL_R=0` to leave it out. The library() check fails the
-# build loudly rather than leaving an R that only breaks at analysis time.
-ARG INSTALL_R=1
-RUN if [ "$INSTALL_R" = "1" ]; then \
-        apt-get update \
-        && apt-get install -y --no-install-recommends \
-            r-base-core \
-            r-cran-glmmtmb \
-            r-cran-jsonlite \
-        && Rscript -e 'library(glmmTMB); library(jsonlite)' \
-        && rm -rf /var/lib/apt/lists/*; \
-    fi
 
 # Bring uv into the runtime image — it is used by the default CMD.
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
@@ -293,8 +269,9 @@ CMD ["sonitra", "serve", "--port", "8000"]
 FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS runtime-gpu
 
 # Build-only non-interactive apt frontend + fixed timezone — see the builder-base
-# and runtime stages above. This stage is where the tzdata prompt actually
-# bit: jammy's r-base-core drags tzdata in unconfigured.
+# and runtime stages above. No package installed below currently pulls in
+# tzdata, but any debconf-prompting package installed unconfigured hangs
+# the build the same way, so the settings stay.
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Oslo
 
@@ -344,29 +321,6 @@ RUN ln -snf /usr/share/zoneinfo/Europe/Oslo /etc/localtime \
 # and the ones below it. The copy also provides /usr/local/bin/python3 and
 # `python`; no symlinks are created here.
 COPY --from=python:3.11-slim-bookworm /usr/local /usr/local
-
-# R + glmmTMB for scripts/run_mixed_effects_analysis.py — same rationale as the
-# CPU runtime stage above, but sourced from jammy's universe repo (already in
-# use here for python3.11) rather than Debian's. Ubuntu builds r-base-core,
-# r-cran-glmmtmb, and r-cran-tmb together in one archive, so they are
-# ABI-matched to each other and nothing compiles.
-#
-# NOTE: jammy pins an older stack than the Debian-based CPU image — R 4.1.2 /
-# glmmTMB 1.1.2.3 / TMB 1.7.22, against R 4.5 / glmmTMB 1.1.10 there. The model
-# fits the same on both, but estimates need not agree to the last digit across
-# glmmTMB versions, so do not mix results from the two images in one analysis.
-# Every run records its exact versions in model_meta.json; check there first if
-# two runs disagree.
-ARG INSTALL_R=1
-RUN if [ "$INSTALL_R" = "1" ]; then \
-        apt-get update \
-        && apt-get install -y --no-install-recommends \
-            r-base-core \
-            r-cran-glmmtmb \
-            r-cran-jsonlite \
-        && Rscript -e 'library(glmmTMB); library(jsonlite)' \
-        && rm -rf /var/lib/apt/lists/*; \
-    fi
 
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /usr/local/bin/uv
 

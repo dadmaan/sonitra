@@ -69,9 +69,6 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
-        # R + glmmTMB for scripts/run_mixed_effects_analysis.py. Set
-        # INSTALL_R=0 in .env to drop ~400 MB if you never fit the model.
-        INSTALL_R: ${INSTALL_R:-1}
         # transkun backend + its torch build (CPU torch in `sonitra`,
         # CUDA torch in `sonitra-gpu`). Set INSTALL_TRANSKUN=0 in .env
         # to leave it out of the image.
@@ -100,9 +97,6 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
-        # R + glmmTMB for scripts/run_mixed_effects_analysis.py. Set
-        # INSTALL_R=0 in .env to drop ~400 MB if you never fit the model.
-        INSTALL_R: ${INSTALL_R:-1}
         # transkun backend + its torch build (CPU torch in `sonitra`,
         # CUDA torch in `sonitra-gpu`). Set INSTALL_TRANSKUN=0 in .env
         # to leave it out of the image.
