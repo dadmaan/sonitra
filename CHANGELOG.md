@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.0-dev.3] - 2026-10-13
+
 ### Removed
 
 - The R mixed-effects analysis: `scripts/run_mixed_effects_analysis.py`, both `.R` models (`scripts/mixed_effects_analysis.R`, `scripts/mixed_effects_analysis_LEGACY.R`), `tests/test_mixed_effects_analysis.py`, the `requires_r` pytest marker and `docs/statistical-analysis.md`. `scripts/export_regression_table.py` and `scripts/enrich_metadata.py` stay as language-neutral CSV tools.
+- R, `glmmTMB` and `jsonlite` from the CPU and GPU images and the devcontainer, and the `INSTALL_R` build arg. Nothing in the repository used R after the mixed-effects analysis was removed; this only drops dead weight (measured roughly 200 MB on the CPU image and 100–150 MB on the GPU image). The `INSTALL_TRANSKUN` switch stays.
 
 ### Changed
 
@@ -473,7 +476,8 @@ Add SMD dataset configs for paper experimentation.
 - Docker entrypoint symlink: `SONITRA_CONFIG` is now linked to `/app/config/source.yaml` instead of the non-existent `/app/config.yaml`, matching the internal config resolution path used by `default_config_path()`
 - Stem collision in nested corpora: `render`, `transcribe`, and `evaluate` now preserve the relative subpath from the corpus root in all output paths. Two files in different subdirectories with the same stem (e.g. `violin/opus.mid` and `piano/opus.mid`) no longer overwrite each other on disk or silently cross-pair during evaluation. (`corpus_root` is threaded through `run_pipeline` and `run_benchmark`; defaults to `None` so all existing flat-corpus workflows are unaffected.)
 
-[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.2...HEAD
+[Unreleased]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.3...HEAD
+[0.6.0-dev.3]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.2...v0.6.0-dev.3
 [0.6.0-dev.2]: https://github.com/dadmaan/sonitra/compare/v0.6.0-dev.1...v0.6.0-dev.2
 [0.6.0-dev.1]: https://github.com/dadmaan/sonitra/compare/v0.5.1...v0.6.0-dev.1
 [0.5.1]: https://github.com/dadmaan/sonitra/releases/tag/v0.5.1
