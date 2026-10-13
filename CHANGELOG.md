@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - The R mixed-effects analysis: `scripts/run_mixed_effects_analysis.py`, both `.R` models (`scripts/mixed_effects_analysis.R`, `scripts/mixed_effects_analysis_LEGACY.R`), `tests/test_mixed_effects_analysis.py`, the `requires_r` pytest marker and `docs/statistical-analysis.md`. `scripts/export_regression_table.py` and `scripts/enrich_metadata.py` stay as language-neutral CSV tools.
 
+### Changed
+
+- The quality gate now judges silence on the input audio: `is_silent` is true when the loaded audio's RMS is below `quality_gates.silence_threshold_rms`, even when a post stage lifted the render to the configured target. The final RMS is checked only when no post stage set the output level (the `post` stage did not run, or ran and returned exact zeros), so a stage that killed the signal is still caught while a deliberately quiet target no longer fails every file. The resume fingerprint does not change, so a work directory started before this change would resume silently and mix the two rules; start a new one (`src/sonitra/pipeline.py`, `src/sonitra/quality_gate.py`).
+- `config/benchmark/sweeps/effects_combinations.yaml` moves `Clipping` to the front of the chain, ahead of the `Compressor`: a compressor in front lowers the transients a clipper is meant to cut, so the `-6 dBFS` clipping treatment behind it would clip almost nothing. The condition overrides were remapped to the new indices. Chain order is part of the fingerprint, so earlier work directories for this study stop resuming, and the `all_effects` condition now clips before it distorts, so its rows are not comparable with earlier runs.
+- A benchmark condition that overrides a normalisation stage's `mode` without also naming its `target_db` now gets the new mode's default target instead of keeping the old mode's level; name both keys in the same condition to pin an explicit target (`src/sonitra/benchmark/conditions.py`).
+
+### Added
+
+- Benchmark records carry `render_diagnostics`, the file's render levels and gate flags copied from the render log: `input_rms`, `input_peak`, `pre_gain_db`, `post_gain_db`, `peak_before_guard`, `guard_gain_db`, `guard_engaged`, `rms`, `peak`, `is_silent`, `is_clipped`, `too_short` and `duration_mismatch`. Every transcriber row of one file carries the same dict, a key missing from the render log stays absent, and records written before this change load with an empty dict (`src/sonitra/benchmark/results.py`, `src/sonitra/benchmark/runner.py`).
+- In a benchmark, each condition's manifest is written to `<work_dir>/manifests/<condition>/<configured name>` instead of one shared relative `renders.jsonl` that mixed every condition's rows; an absolute configured path gets the condition slug appended to its file name (`src/sonitra/benchmark/runner.py`).
+- `scripts/export_regression_table.py` adds five `render_*` columns for records that carry `render_diagnostics`: `render_input_peak_dbfs`, `render_input_rms_dbfs`, `render_pre_gain_db`, `render_post_gain_db` and `render_guard_gain_db`, converting the linear input levels to dBFS and leaving a missing level or gain empty (`scripts/export_regression_table.py`).
+- A benchmark row whose render the quality gate rejected now records the failing checks in `error`, for example `quality gate failed: is_silent`, instead of only the generic message (`src/sonitra/benchmark/runner.py`).
+- Every condition's overrides are validated when a benchmark starts, before the first render, before the fingerprint write and before a `resume: false` run deletes the previous results; one error names every failing condition and its reason (`src/sonitra/benchmark/runner.py`).
+
+### Fixed
+
+- The `[0.6.0-dev.2]` clip-gate entry claimed the gate reports genuine overflow while normalisation is on; the amended entry below now states that the flag stays false while the guard is on and that overflow is recorded by `guard_engaged`, `guard_gain_db` and `peak_before_guard` (`CHANGELOG.md`).
+- Invalid condition overrides used to surface only when the run reached that condition. In a parallel run the conditions already submitted finished and their records were discarded, and with `benchmark.resume: false` the previous results and fingerprint had already been deleted; they now stop the run at start-up, before anything runs or is deleted (`src/sonitra/benchmark/runner.py`).
+
 ## [0.6.0-dev.2] - 2026-10-13
 
 ### Breaking
@@ -31,7 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
-- The clip quality gate could never fire while normalisation was enabled: `normalise()` ended in `np.clip(audio, -1.0, 1.0)`, so the peak the gate compared against `clip_threshold` (default `1.0`) was always at or below full scale. Normalisation now applies gain only, and the guard scales overshoot down, so the gate evaluates the peak from before the guard and reports genuine overflow (`src/sonitra/normaliser.py`, `src/sonitra/quality_gate.py`).
+- The clip quality gate could never fire while normalisation was enabled: `normalise()` ended in `np.clip(audio, -1.0, 1.0)`, so the peak the gate compared against `clip_threshold` (default `1.0`) was always at or below full scale. Normalisation now applies gain only and the guard scales overshoot down instead of cutting it off; the clip check reads the peak from before the guard, which keeps the flag's "would the written file clip" meaning. With the guard on the flag stays false: the gate suppresses it when the guard engaged, and an unengaged guard leaves the peak at or below the ceiling, below the default `clip_threshold`. Overflow is recorded by `guard_engaged`, `guard_gain_db` and `peak_before_guard` instead (`src/sonitra/normaliser.py`, `src/sonitra/quality_gate.py`).
 - `quality_gates.max_duration_deviation_sec` was documented in `config/source.yaml` and set in every preset, but nothing in `src/` read it, so a render with the wrong length was never rejected. The gate now compares the written duration against the source MIDI's planned duration (`src/sonitra/quality_gate.py`, `src/sonitra/source.py`).
 
 ## [0.6.0-dev.1] - 2026-10-11

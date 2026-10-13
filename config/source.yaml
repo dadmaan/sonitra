@@ -211,14 +211,14 @@ normalisation:
     placement: post
 
 quality_gates:
-    silence_threshold_rms: 0.001 # files with RMS below this are flagged as silent
+    silence_threshold_rms: 0.001 # loaded input audio below this RMS is flagged as silent
     min_duration_sec: 0.1 # files shorter than this are rejected
     max_duration_deviation_sec: 1.0 # allowed deviation from the expected MIDI duration
-    clip_threshold: 1.0 # peak above this is flagged as clipped
+    clip_threshold: 1.0 # written peak above this is flagged as clipped; with the guard on, guard_engaged/guard_gain_db/peak_before_guard record overflow
 
 observability:
     write_manifest: false # write per-file outcomes to a JSONL manifest
-    manifest_path: ./renders.jsonl
+    manifest_path: ./renders.jsonl # per-file outcome manifest; a benchmark writes one per condition under <work_dir>/manifests/
     write_failed_list: false # append failed filenames to renders.failed.txt
     emit_sse_events: false # push status events to connected API clients
     log_level: null # optional root log level override; DEBUG | INFO | WARNING | ERROR | CRITICAL; overrides pipeline.log_level when set

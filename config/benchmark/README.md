@@ -255,7 +255,7 @@ The fingerprint does cover which files the run uses: `io.where`, `io.metadata_cs
 | `sweeps/reverb_sweep.yaml` | Reverberation (wet level, room size) | 11 |
 | `sweeps/compression_sweep.yaml` | Dynamic-range compression (ratio, threshold) | 13 |
 | `sweeps/distortion_sweep.yaml` | Signal distortion (drive) | 9 |
-| `sweeps/effects_combinations.yaml` | Combinations of effects | 7 |
+| `sweeps/effects_combinations.yaml` | Combinations of effects | 9 |
 | `transkun/transkun_baseline.yaml` | TransKun vs Basic Pitch baseline (CPU) | 1 |
 | `transkun/transkun_baseline_gpu.yaml` | TransKun vs Basic Pitch baseline (CUDA; requires GPU host) | 1 |
 | `transkun/transkun_baseline_batch16_strict.yaml` | TransKun vs Basic Pitch baseline (CPU; strict numerics, Basic Pitch batch size 16) | 1 |
