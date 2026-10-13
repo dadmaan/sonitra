@@ -1,5 +1,8 @@
 import json
 
+import numpy as np
+import pytest
+
 from sonitra.config import QualityGatesSection
 from sonitra.quality_gate import check_quality
 
@@ -56,4 +59,91 @@ def test_all_checks_pass_for_good_audio(dummy_audio):
 
 def test_quality_result_serialises_to_dict(dummy_audio):
     result = check_quality(dummy_audio, 44100, QualityGatesSection())
-    json.dumps(result.to_dict())
+    data = result.to_dict()
+    assert data["duration_expected_sec"] is None
+    assert data["duration_mismatch"] is False
+    json.dumps(data)
+
+
+# ── Planned-duration gate ─────────────────────────────────────────────
+
+
+def _audio_of_duration(duration_sec: float, sample_rate: int = 100) -> np.ndarray:
+    return np.ones((1, int(duration_sec * sample_rate)), dtype=np.float32)
+
+
+def _duration_cfg(*, tolerance: float | None = 1.0) -> QualityGatesSection:
+    return QualityGatesSection(max_duration_deviation_sec=tolerance)
+
+
+def test_duration_within_tolerance_passes():
+    result = check_quality(
+        _audio_of_duration(10.9), 100, _duration_cfg(), expected_duration_sec=10.0
+    )
+    assert result.duration_expected_sec == 10.0
+    assert result.duration_mismatch is False
+    assert result.passed is True
+
+
+def test_duration_too_long_fails():
+    result = check_quality(
+        _audio_of_duration(11.1), 100, _duration_cfg(), expected_duration_sec=10.0
+    )
+    assert result.duration_mismatch is True
+    assert result.passed is False
+
+
+def test_duration_too_short_fails():
+    result = check_quality(
+        _audio_of_duration(8.9), 100, _duration_cfg(), expected_duration_sec=10.0
+    )
+    assert result.duration_mismatch is True
+    assert result.passed is False
+
+
+def test_missing_expected_duration_is_never_a_mismatch():
+    result = check_quality(
+        _audio_of_duration(100.0), 100, _duration_cfg(), expected_duration_sec=None
+    )
+    assert result.duration_expected_sec is None
+    assert result.duration_mismatch is False
+    assert result.passed is True
+
+
+def test_missing_tolerance_disables_the_duration_gate():
+    result = check_quality(
+        _audio_of_duration(100.0),
+        100,
+        _duration_cfg(tolerance=None),
+        expected_duration_sec=10.0,
+    )
+    assert result.duration_mismatch is False
+    assert result.passed is True
+
+
+# ── Clip gate and the output guard ────────────────────────────────────
+
+
+def test_pre_guard_peak_drives_the_clip_gate():
+    written = np.full((1, 44100), 0.9, dtype=np.float32)
+    result = check_quality(
+        written, 44100, QualityGatesSection(clip_threshold=1.0), peak_before_guard=1.5
+    )
+    assert result.is_clipped is True
+    assert result.passed is False
+    # ``peak`` keeps describing the written signal, not the gate's input.
+    assert result.peak == pytest.approx(0.9)
+
+
+def test_engaged_guard_suppresses_the_clip_flag():
+    written = np.full((1, 44100), 0.89, dtype=np.float32)
+    result = check_quality(
+        written,
+        44100,
+        QualityGatesSection(clip_threshold=1.0),
+        peak_before_guard=1.5,
+        guard_engaged=True,
+    )
+    assert result.is_clipped is False
+    assert result.passed is True
+    assert result.peak == pytest.approx(0.89)

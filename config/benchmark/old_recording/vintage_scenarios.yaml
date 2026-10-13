@@ -99,13 +99,14 @@ pedalboard:
 
 normalisation:
   enabled: true
-  mode: peak
-  target_db: -1.0
+  placement: pre
   # Pre-normalise so Distortion drive and Compressor thresholds are
-  # deterministic instead of per-file-level-dependent. Departure from
-  # effects_combinations.yaml (false there). See ./README.md Section 4
-  # (confound disclosure) for why post-effects normalisation stays on too.
-  pre_effects: true
+  # deterministic instead of per-file-level-dependent. See ./README.md
+  # Section 4 (confound disclosure).
+  pre:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0
 
 quality_gates:
   silence_threshold_rms: 0.001

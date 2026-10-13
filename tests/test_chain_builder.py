@@ -1,10 +1,14 @@
+import numpy as np
 import pytest
 import pedalboard
+from pydantic import ValidationError
 
-from sonitra.config import load_config
+from sonitra.benchmark.conditions import apply_overrides
+from sonitra.config import PedalboardSection, load_config
 from sonitra.effects import EffectsChain
 from sonitra.effects.builtin_effects import (
     ChorusConfig,
+    ClippingConfig,
     CompressorConfig,
     DelayConfig,
     DistortionConfig,
@@ -24,6 +28,7 @@ from sonitra.effects.chain_builder import (
     build_effects_chain,
     build_effects_chain_from_config,
 )
+from tests.test_pipeline_audio import _audio_config
 
 
 # ── Basic construction ───────────────────────────────────────────────
@@ -196,6 +201,7 @@ def test_all_effects_disabled_returns_empty_chain():
         ),
         (DelayConfig(delay_seconds=0.5, feedback=0.0, mix=0.5, enabled=True), pedalboard.Delay),
         (DistortionConfig(drive_db=25.0, enabled=True), pedalboard.Distortion),
+        (ClippingConfig(threshold_db=-6.0, enabled=True), pedalboard.Clipping),
         (GainConfig(gain_db=0.0, enabled=True), pedalboard.Gain),
         (
             HighpassFilterConfig(cutoff_frequency_hz=80.0, enabled=True),
@@ -255,3 +261,70 @@ def test_build_from_pipeline_config(config_fixture):
     board = build_effects_chain_from_config(cfg)
     assert isinstance(board, EffectsChain)
     assert len(board) == 3
+
+
+# ── Clipping ─────────────────────────────────────────────────────────
+
+def test_clipping_config_accepts_a_ceiling_at_or_below_full_scale():
+    """A ceiling above full scale can never engage, so it must not validate."""
+    section = PedalboardSection.model_validate(
+        {"effects": [{"type": "Clipping", "threshold_db": -6.0}]}
+    )
+    assert isinstance(section.effects[0], ClippingConfig)
+    assert section.effects[0].threshold_db == pytest.approx(-6.0)
+
+    at_full_scale = PedalboardSection.model_validate(
+        {"effects": [{"type": "Clipping", "threshold_db": 0.0}]}
+    )
+    assert at_full_scale.effects[0].threshold_db == pytest.approx(0.0)
+
+    for above_full_scale in (0.5, 6.0):
+        with pytest.raises(ValidationError):
+            PedalboardSection.model_validate(
+                {"effects": [{"type": "Clipping", "threshold_db": above_full_scale}]}
+            )
+
+
+def test_clipping_config_rejects_unknown_keys():
+    """A misspelled knob would otherwise be dropped silently."""
+    with pytest.raises(ValidationError):
+        PedalboardSection.model_validate(
+            {"effects": [{"type": "Clipping", "threshold_db": -6.0, "drive_db": 10.0}]}
+        )
+
+
+def test_build_clipping_from_config():
+    board = build_effects_chain([ClippingConfig(threshold_db=-6.0, enabled=True)])
+    assert len(board) == 1
+    assert isinstance(board[0], pedalboard.Clipping)
+    assert board[0].threshold_db == pytest.approx(-6.0)
+
+
+def test_clipping_clamps_at_the_threshold_and_leaves_quieter_samples_alone():
+    sample_rate = 44100
+    samples = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    sine = np.sin(2.0 * np.pi * 440.0 * samples).astype(np.float32)[None, :]
+    ceiling = 10.0 ** (-6.0 / 20.0)
+
+    board = build_effects_chain([ClippingConfig(threshold_db=-6.0)])
+    clipped = board(sine, sample_rate)
+
+    assert float(np.max(np.abs(clipped))) == pytest.approx(ceiling, abs=1e-6)
+    quiet = np.abs(sine) < ceiling
+    np.testing.assert_allclose(clipped[quiet], sine[quiet], atol=1e-7)
+
+
+def test_disabled_clipping_is_excluded_from_the_chain():
+    board = build_effects_chain([ClippingConfig(threshold_db=-6.0, enabled=False)])
+    assert len(board) == 0
+
+
+def test_apply_overrides_sets_a_clipping_threshold(tmp_path):
+    """The dotted-path benchmark override path resolves for a Clipping slot."""
+    cfg = _audio_config(
+        tmp_path,
+        effects_chain="pedalboard",
+        pedalboard_effects=[{"type": "Clipping", "threshold_db": -6.0}],
+    )
+    updated = apply_overrides(cfg, {"pedalboard.effects.0.threshold_db": -12.0})
+    assert updated.pedalboard.effects[0].threshold_db == pytest.approx(-12.0)

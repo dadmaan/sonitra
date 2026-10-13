@@ -49,10 +49,11 @@ flowchart LR
     parse["parse_midi (notes in file-tempo seconds · programs)"]
     synth["synth.render(notes, program) (per-thread backend)"]
     read["read_audio (native sample rate)"]
-    pre["Pre-normalise (if enabled and pre_effects)"]
+    pre["Pre stage, before effects (if enabled and placement includes pre)"]
     fx["Effects chain (if effects_chain: pedalboard)"]
-    post["Post-normalise (if enabled and not pre_effects)"]
-    gate{"Quality gate (silence · clip · too short)"}
+    post["Post stage, after effects (if enabled and placement includes post)"]
+    guard["Output peak guard (if enabled)"]
+    gate{"Quality gate (silence · clipping · too short · duration)"}
     write["write_audio (wav / flac / mp3)"]
     manifest[("Manifest (renders.jsonl · .failed.txt)")]
     err["Exception at any stage"]
@@ -61,7 +62,7 @@ flowchart LR
     skip -- yes --> skipped
     skip -- "no, MIDI" --> parse --> synth --> pre
     skip -- "no, audio" --> read --> pre
-    pre --> fx --> post --> gate
+    pre --> fx --> post --> guard --> gate
     gate -- pass --> write --> manifest
     gate -- fail --> manifest
     err -.-> manifest
@@ -69,7 +70,7 @@ flowchart LR
 
 - **Tempo**: notes follow the MIDI file's own tempo map; `render_pipeline.bpm` is host tempo only (DawDreamer `set_bpm`, FluidSynth tick grid).
 - **Program**: a file with exactly one program passes it to the synth; several programs pass none (warned once). FluidSynth uses `fluidsynth.program` if set, else the file program, else the SoundFont default; DawDreamer and Pedalboard ignore it.
-- **Normalisation** runs at most once per file: before effects if `pre_effects`, otherwise after.
+- **Normalisation** changes a file's loudness with up to two stages plus a final output guard. `normalisation.placement` chooses which stages run: `pre` (before the effects chain), `post` (after it), or `both`. Each stage applies one gain (one volume change) to the whole file, and never cuts off loud samples. The output guard runs last whenever normalisation is enabled, in every placement. When the loudest sample goes above the level in `peak_ceiling_db`, the guard scales the whole file down to it. It does not scale up, and it does not cut off samples. The quality gate's clipping check reads the loudest sample from before the guard, so a file the guard rescaled passes with a warning log instead of failing as clipped.
 - **Fail-soft**: gate failures and exceptions are recorded and the batch continues. The effects chain is built before the loop, so a chain that fails to load aborts the batch.
 - **Manifest** is opt-in (`observability.write_manifest`, `write_failed_list`). Audio-mode entries record `source_path` (the recording) alongside the usual fields.
 
@@ -108,8 +109,8 @@ flowchart TB
     dd["dawdreamer (plugin_path · faust_code)"]
     fs["fluidsynth (soundfont_path · program)"]
     pb["pedalboard (instrument · effects[])"]
-    norm["normalisation (enabled · pre_effects)"]
-    qg["quality_gates (silence · clip · min_duration)"]
+    norm["normalisation (enabled · placement · pre/post stages · peak_ceiling_db)"]
+    qg["quality_gates (silence · clipping · min_duration · max_duration_deviation)"]
     obs["observability (write_manifest · write_failed_list)"]
     sep["separation (enabled · backend · stem)"]
     tx["transcription (transcribers[] · max_workers)"]

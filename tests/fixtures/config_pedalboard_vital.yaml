@@ -23,5 +23,8 @@ pedalboard:
 
 normalisation:
   enabled: true
-  mode: peak
-  target_db: -1.0
+  placement: post
+  post:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0

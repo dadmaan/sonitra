@@ -57,6 +57,22 @@ class DistortionConfig(_EffectBase):
     drive_db: float
 
 
+class ClippingConfig(_EffectBase):
+    type: Literal["Clipping"] = "Clipping"
+    threshold_db: float
+
+    @field_validator("threshold_db")
+    @classmethod
+    def validate_threshold_db(cls, value: float) -> float:
+        # At or above full scale the plugin can never engage, so it is always a config error.
+        if value > 0:
+            raise ValueError(
+                "threshold_db must be at most 0 dBFS; a ceiling above full scale "
+                f"never clips (got {value})"
+            )
+        return value
+
+
 class GainConfig(_EffectBase):
     type: Literal["Gain"] = "Gain"
     gain_db: float
@@ -130,6 +146,7 @@ EffectConfig = Annotated[
         ChorusConfig,
         DelayConfig,
         DistortionConfig,
+        ClippingConfig,
         GainConfig,
         VST3PluginConfig,
         HighpassFilterConfig,

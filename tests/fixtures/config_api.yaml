@@ -37,14 +37,17 @@ pedalboard:
 
 normalisation:
   enabled: false
-  mode: peak
-  target_db: -1.0
-  pre_effects: false
+  placement: post
+  post:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0
 
 quality_gates:
   silence_threshold_rms: 0.0
   min_duration_sec: 0.0
-  max_duration_deviation_sec: 0.0
+  # exact-match 0.0 trips on sub-sample render rounding; use the shipped tolerance
+  max_duration_deviation_sec: 1.0
   clip_threshold: 1.0
 
 observability:

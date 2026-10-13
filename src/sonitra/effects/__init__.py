@@ -1,6 +1,7 @@
 from sonitra.effects.base import EffectsChain
 from sonitra.effects.builtin_effects import (
     ChorusConfig,
+    ClippingConfig,
     CompressorConfig,
     DelayConfig,
     DistortionConfig,
@@ -19,6 +20,7 @@ from sonitra.effects.builtin_effects import (
 
 __all__ = [
     "ChorusConfig",
+    "ClippingConfig",
     "CompressorConfig",
     "DelayConfig",
     "DistortionConfig",

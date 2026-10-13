@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import threading
 from typing import Any, Callable, Dict, Iterable, List
@@ -10,6 +11,8 @@ import time
 import numpy as np
 import pedalboard
 
+logger = logging.getLogger(__name__)
+
 _thread_local: threading.local = threading.local()
 
 from sonitra.config import EffectsChain, InputType, PipelineConfig, SynthBackend
@@ -17,7 +20,11 @@ from sonitra.engine import RendererEngine
 from sonitra.effects.chain_builder import build_effects_chain_from_config, compute_chain_hash
 from sonitra.manifest import ManifestEntry, ManifestWriter
 from sonitra.midi_reader import parse_midi
-from sonitra.normaliser import normalise_from_config
+from sonitra.normaliser import (
+    NormalisationReport,
+    apply_guard,
+    normalise_from_config,
+)
 from sonitra.quality_gate import check_quality
 from sonitra.renderer import render_notes_faust, render_notes_vst
 from sonitra.source import (  # noqa: F401 - re-exported for backward-compat imports
@@ -102,12 +109,43 @@ def _render_file(
 
     try:
         audio, sample_rate = source.load(source_path)
-        audio = normalise_from_config(audio, cfg, stage="pre")
+        expected_duration_sec = source.expected_duration_sec(source_path)
+        audio, pre_report = normalise_from_config(audio, cfg, stage="pre")
         if cfg.render_pipeline.effects_chain == EffectsChain.PEDALBOARD and len(chain) > 0:
             audio = chain(audio, sample_rate)
-        audio = normalise_from_config(audio, cfg, stage="post")
+        audio, post_report = normalise_from_config(audio, cfg, stage="post")
 
-        quality = check_quality(audio, sample_rate, cfg.quality_gates)
+        peak_before_guard = float(np.max(np.abs(audio))) if audio.size else 0.0
+        guard_ceiling_db = (
+            cfg.normalisation.peak_ceiling_db if cfg.normalisation.enabled else None
+        )
+        audio, guard_gain_db = apply_guard(audio, ceiling_db=guard_ceiling_db)
+        report = NormalisationReport(
+            pre_gain_db=pre_report.pre_gain_db,
+            post_gain_db=post_report.post_gain_db,
+            peak_before_guard=peak_before_guard,
+            guard_gain_db=guard_gain_db,
+            guard_engaged=guard_gain_db is not None and guard_gain_db < 0.0,
+        )
+        if report.guard_engaged:
+            logger.warning(
+                "Output guard engaged for %s: applied %.2f dB, peak %.3f "
+                "reduced to ceiling %.2f dBFS",
+                source_path,
+                report.guard_gain_db,
+                peak_before_guard,
+                cfg.normalisation.peak_ceiling_db,
+            )
+
+        quality = check_quality(
+            audio,
+            sample_rate,
+            cfg.quality_gates,
+            expected_duration_sec=expected_duration_sec,
+            peak_before_guard=peak_before_guard,
+            guard_engaged=report.guard_engaged,
+        )
+        quality_flags = {**quality.to_dict(), **report.to_dict()}
         if not quality.passed:
             elapsed = time.perf_counter() - file_start
             entry = ManifestEntry(
@@ -119,7 +157,7 @@ def _render_file(
                 rms=quality.rms,
                 peak=quality.peak,
                 elapsed_seconds=elapsed,
-                quality_flags=quality.to_dict(),
+                quality_flags=quality_flags,
                 **_manifest_path_kwargs(source_path, cfg),
             )
             if manifest:
@@ -128,7 +166,7 @@ def _render_file(
                 "midi": str(source_path),
                 "output": str(output_path),
                 "status": "failed",
-                "quality_flags": quality.to_dict(),
+                "quality_flags": quality_flags,
                 "elapsed_seconds": elapsed,
             }
 
@@ -151,7 +189,7 @@ def _render_file(
             rms=quality.rms,
             peak=quality.peak,
             elapsed_seconds=elapsed,
-            quality_flags=quality.to_dict(),
+            quality_flags=quality_flags,
             **_manifest_path_kwargs(source_path, cfg),
         )
         if manifest:
@@ -160,7 +198,7 @@ def _render_file(
             "midi": str(source_path),
             "output": str(output_path),
             "status": "succeeded",
-            "quality_flags": quality.to_dict(),
+            "quality_flags": quality_flags,
             "elapsed_seconds": elapsed,
         }
     except Exception as exc:  # noqa: BLE001 - pipeline logs and continues

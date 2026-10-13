@@ -89,14 +89,16 @@ pedalboard:
 
 normalisation:
   enabled: true
-  mode: peak
-  target_db: -1.0
-  # normalisation.pre_effects is a single-stage switch, not additive: true
-  # normalises ONLY before the effects chain, false normalises ONLY after
-  # (src/sonitra/normaliser.py normalise_from_config). Kept false (the
+  placement: post
+  # normalisation.placement selects which levelling stage runs: post runs
+  # ONLY after the effects chain, pre ONLY before, both runs both
+  # (src/sonitra/normaliser.py normalise_from_config). Kept at post (the
   # default) so post-effects normalisation stays on -- see ./README.md
   # Section 4 (confound disclosure) for why that matters here.
-  pre_effects: false
+  post:
+    mode: peak
+    target_db: -1.0
+  peak_ceiling_db: -1.0
 
 quality_gates:
   silence_threshold_rms: 0.001
