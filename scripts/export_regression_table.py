@@ -41,6 +41,33 @@ _EFFECT_PATH_RE = re.compile(r"^pedalboard\.effects\.(\d+)\.(.+)$")
 
 _IDENTITY_COLUMNS = ["condition", "transcriber", "song", "recording", "midi_path", "source_path", "status"]
 
+_RENDER_COLUMNS = [
+    "render_input_peak_dbfs",
+    "render_input_rms_dbfs",
+    "render_pre_gain_db",
+    "render_post_gain_db",
+    "render_guard_gain_db",
+]
+
+
+def _dbfs(value: Any) -> float | str:
+    """``20*log10(value)`` for a positive finite linear amplitude, else ``""``.
+
+    A zero, negative or non-finite level has no dBFS value; an empty cell
+    keeps the CSV free of ``-inf``/``nan`` tokens that would parse as strings
+    in most stats tools.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return ""
+    if not math.isfinite(value) or value <= 0.0:
+        return ""
+    return 20.0 * math.log10(value)
+
+
+def _gain_or_empty(value: Any) -> Any:
+    """Return a stage gain as-is; ``None`` (the stage did not run) is empty."""
+    return "" if value is None else value
+
 
 def load_effect_types(config_path: Path) -> dict[int, str]:
     """Map pedalboard effect slot index -> effect type, from a saved config.yaml.
@@ -181,6 +208,13 @@ def build_rows(
         if record.source_path is not None:
             row["recording"] = Path(record.source_path).stem
             row["source_path"] = record.source_path
+        if record.render_diagnostics:
+            diagnostics = record.render_diagnostics
+            row["render_input_peak_dbfs"] = _dbfs(diagnostics.get("input_peak"))
+            row["render_input_rms_dbfs"] = _dbfs(diagnostics.get("input_rms"))
+            row["render_pre_gain_db"] = _gain_or_empty(diagnostics.get("pre_gain_db"))
+            row["render_post_gain_db"] = _gain_or_empty(diagnostics.get("post_gain_db"))
+            row["render_guard_gain_db"] = _gain_or_empty(diagnostics.get("guard_gain_db"))
         for metric_name, value in record.metrics.items():
             row[metric_name] = "" if isinstance(value, float) and math.isnan(value) else value
         for override_key, override_value in record.overrides.items():
@@ -240,6 +274,9 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
         present.update(row.keys())
 
     fieldnames = [column for column in _IDENTITY_COLUMNS if column in present]
+    # Render diagnostics sit between the identity columns and the metrics when
+    # any record carries them; results without the field keep the old layout.
+    fieldnames.extend(column for column in _RENDER_COLUMNS if column in present)
     seen: set[str] = set(fieldnames)
     metric_columns: list[str] = []
     override_columns: list[str] = []

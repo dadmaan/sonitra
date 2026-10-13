@@ -55,6 +55,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Per-file render diagnostics copied into every BenchmarkRecord from the
+#: file's render-log ``quality_flags``, in the order consumers see them.
+_RENDER_DIAGNOSTIC_KEYS = (
+    "input_rms",
+    "input_peak",
+    "pre_gain_db",
+    "post_gain_db",
+    "peak_before_guard",
+    "guard_gain_db",
+    "guard_engaged",
+    "rms",
+    "peak",
+    "is_silent",
+    "is_clipped",
+    "too_short",
+    "duration_mismatch",
+)
+
+#: Quality-gate flags that reject a render, in the order they are named in a
+#: rejection message.
+_GATE_FLAG_KEYS = ("is_silent", "is_clipped", "too_short", "duration_mismatch")
+
 
 def _preflight_transcribers(transcribers: Sequence[TranscriberProtocol]) -> None:
     """Resolve every transcriber's device and numeric settings before anything is written.
@@ -875,6 +897,33 @@ def _condition_worker(
     return condition.name, wall_seconds, records
 
 
+def _condition_manifest_config(
+    condition_config: PipelineConfig, work_dir: Path, condition: Condition
+) -> PipelineConfig:
+    """Return a copy of *condition_config* pointing at the condition's manifest.
+
+    Every condition of a benchmark renders with the same base config, so a
+    relative ``observability.manifest_path`` would otherwise be one file in
+    the process working directory shared by every condition and study. Each
+    condition gets its own path under the work dir instead; an absolute path
+    is kept where it was given, suffixed with the condition slug, so one
+    central location still receives one file per condition. The copy is local
+    to this condition -- the base config, its saved dump and the fingerprint
+    are untouched.
+    """
+    manifest_path = Path(condition_config.observability.manifest_path)
+    if manifest_path.is_absolute():
+        replaced = manifest_path.with_name(
+            f"{manifest_path.stem}.{condition.slug}{manifest_path.suffix}"
+        )
+    else:
+        replaced = work_dir / "manifests" / condition.slug / manifest_path
+    observability = condition_config.observability.model_copy(
+        update={"manifest_path": replaced}
+    )
+    return condition_config.model_copy(update={"observability": observability})
+
+
 def _run_condition(
     condition: Condition,
     condition_config: PipelineConfig,
@@ -914,6 +963,7 @@ def _run_condition(
             ok=True,
         ),
     )
+    condition_config = _condition_manifest_config(condition_config, work_dir, condition)
     render_result = run_pipeline(source_paths, audio_dir, config=condition_config, corpus_root=corpus_root)
     render_log = {entry["midi"]: entry for entry in render_result.log}
     separator = (
@@ -934,13 +984,31 @@ def _run_condition(
 
         entry = render_log.get(str(source_path), {})
         audio_path = Path(entry["output"]) if "output" in entry else None
+        quality_flags = entry.get("quality_flags") or {}
+        # The same dict goes to every transcriber row of this file, so all rows
+        # of one render agree on its levels; a key missing from the source
+        # (a raised render has no diagnostics) simply stays absent.
+        render_diagnostics = {
+            key: quality_flags[key]
+            for key in _RENDER_DIAGNOSTIC_KEYS
+            if key in quality_flags
+        }
         if (
             audio_path is None
             or entry.get("status") == "failed"
             or not audio_path.exists()
             or references.get(reference) is None
         ):
-            reason = entry.get("error", "render failed or produced no output")
+            failed_gates = (
+                [key for key in _GATE_FLAG_KEYS if quality_flags.get(key)]
+                if entry.get("status") == "failed"
+                else []
+            )
+            reason = (
+                "quality gate failed: " + ", ".join(failed_gates)
+                if failed_gates
+                else entry.get("error", "render failed or produced no output")
+            )
             for transcriber in pending_transcribers:
                 record = BenchmarkRecord(
                     condition=condition.name,
@@ -953,6 +1021,7 @@ def _run_condition(
                     source_path=str(source_path) if audio_paths is not None else None,
                     render_seconds=entry.get("elapsed_seconds", float("nan")),
                     transcriber_metadata={},
+                    render_diagnostics=render_diagnostics,
                 )
                 if writer is not None:
                     writer.write(record)
@@ -1028,6 +1097,7 @@ def _run_condition(
                 corpus_root=corpus_root,
                 render_seconds=render_seconds,
                 separate_seconds=separate_seconds,
+                render_diagnostics=render_diagnostics,
             )
             records.append(record)
             _emit_worker_event(
@@ -1081,6 +1151,7 @@ def _evaluate_one(
     *,
     render_seconds: float = float("nan"),
     separate_seconds: float = float("nan"),
+    render_diagnostics: dict[str, Any] | None = None,
 ) -> BenchmarkRecord:
     """Transcribe + score one (recording, transcriber) cell.
 
@@ -1095,10 +1166,14 @@ def _evaluate_one(
 
     *render_seconds*/*separate_seconds* are measured by the caller
     (_run_condition) per file and shared across that file's transcriber
-    cells. Transcription and evaluation wall-clocks are measured here with
-    ``time.perf_counter()``; on failure the partial times measured before
-    the raise are still recorded (NaN when the stage never started).
+    cells. *render_diagnostics* is likewise built once per file and copied
+    onto both the succeeded and the failed record. Transcription and
+    evaluation wall-clocks are measured here with ``time.perf_counter()``; on
+    failure the partial times measured before the raise are still recorded
+    (NaN when the stage never started).
     """
+    if render_diagnostics is None:
+        render_diagnostics = {}
     # Defaults: NaN unless a stage actually ran. Reassigned as each stage
     # completes so a mid-cell exception still carries the measured times.
     transcribe_seconds = float("nan")
@@ -1148,6 +1223,7 @@ def _evaluate_one(
             transcribe_seconds=transcribe_seconds,
             evaluate_seconds=evaluate_seconds,
             transcriber_metadata=dict(getattr(result, "metadata", {}) or {}),
+            render_diagnostics=render_diagnostics,
         )
     except NumericSettingsError:
         # A strict numeric failure is fatal for the whole run: recording it as one
@@ -1170,6 +1246,7 @@ def _evaluate_one(
             transcribe_seconds=transcribe_seconds,
             evaluate_seconds=evaluate_seconds,
             transcriber_metadata={},
+            render_diagnostics=render_diagnostics,
         )
     if writer is not None:
         writer.write(record)

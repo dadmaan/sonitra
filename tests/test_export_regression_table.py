@@ -4,6 +4,7 @@ import csv
 import importlib.util
 import json
 import math
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -1033,3 +1034,129 @@ def test_main_split_with_no_matching_rows_fails_without_writing(
     assert exit_code == 1
     assert "no rows" in capsys.readouterr().err
     assert not list(work_dir.glob("regression_table*.csv"))
+
+
+# --- render diagnostics columns ------------------------------------------------
+
+
+def test_build_rows_adds_render_diagnostic_columns(ert: ModuleType) -> None:
+    record = _make_record(
+        ert,
+        metrics={"note.onset_f1": 0.9},
+        render_diagnostics={
+            "input_rms": 0.25,
+            "input_peak": 0.5,
+            "pre_gain_db": None,
+            "post_gain_db": -12.5,
+            "peak_before_guard": 0.8,
+            "guard_gain_db": -2.5,
+            "guard_engaged": True,
+            "rms": 0.1,
+            "peak": 0.4,
+            "is_silent": False,
+            "is_clipped": False,
+            "too_short": False,
+            "duration_mismatch": False,
+        },
+    )
+
+    rows = ert.build_rows([record], effect_types={})
+
+    row = rows[0]
+    assert row["render_input_peak_dbfs"] == pytest.approx(20 * math.log10(0.5), abs=1e-9)
+    assert row["render_input_rms_dbfs"] == pytest.approx(20 * math.log10(0.25), abs=1e-9)
+    assert row["render_pre_gain_db"] == ""
+    assert row["render_post_gain_db"] == pytest.approx(-12.5)
+    assert row["render_guard_gain_db"] == pytest.approx(-2.5)
+
+
+def test_build_rows_render_diagnostic_empty_cells(ert: ModuleType) -> None:
+    record = _make_record(
+        ert,
+        metrics={"note.onset_f1": 0.9},
+        render_diagnostics={
+            "input_rms": 0.0,
+            "input_peak": -0.5,
+            "pre_gain_db": None,
+            "post_gain_db": None,
+            "guard_gain_db": None,
+        },
+    )
+
+    row = ert.build_rows([record], effect_types={})[0]
+
+    # a non-positive level has no dBFS, and None gains stay empty
+    for column in (
+        "render_input_peak_dbfs",
+        "render_input_rms_dbfs",
+        "render_pre_gain_db",
+        "render_post_gain_db",
+        "render_guard_gain_db",
+    ):
+        assert row[column] == ""
+
+    # non-finite levels are empty too, not a NaN/inf cell
+    non_finite = _make_record(
+        ert, render_diagnostics={"input_peak": float("nan"), "input_rms": float("inf")}
+    )
+    non_finite_row = ert.build_rows([non_finite], effect_types={})[0]
+    assert non_finite_row["render_input_peak_dbfs"] == ""
+    assert non_finite_row["render_input_rms_dbfs"] == ""
+
+    # a non-empty dict without any exported key still adds the columns, empty
+    unrelated = _make_record(ert, render_diagnostics={"rms": 0.1})
+    unrelated_row = ert.build_rows([unrelated], effect_types={})[0]
+    assert "render_input_rms_dbfs" in unrelated_row
+    assert unrelated_row["render_input_rms_dbfs"] == ""
+
+
+def test_write_csv_without_render_diagnostics_byte_identical(
+    ert: ModuleType, tmp_path: Path
+) -> None:
+    record = _make_record(ert, metrics={"note.onset_f1": 0.9})
+    rows = ert.build_rows([record], effect_types={})
+    out_path = tmp_path / "regression_table.csv"
+
+    ert.write_csv(rows, out_path)
+
+    # byte-for-byte the table this tool has always written for records that
+    # carry no render diagnostics
+    assert out_path.read_bytes() == (
+        b"condition,transcriber,song,midi_path,status,note.onset_f1\r\n"
+        b"baseline,basic_pitch,song_01,corpus/maestro/midi/2004/song_01.midi,"
+        b"succeeded,0.9\r\n"
+    )
+
+    # a record carrying diagnostics gets the new columns after the identity
+    # columns and before the metrics
+    with_diagnostics = _make_record(
+        ert,
+        metrics={"note.onset_f1": 0.9},
+        render_diagnostics={"input_peak": 0.5, "input_rms": 0.25},
+    )
+    diag_path = tmp_path / "with_diagnostics.csv"
+    ert.write_csv(ert.build_rows([with_diagnostics], effect_types={}), diag_path)
+    assert diag_path.read_text().splitlines()[0] == (
+        "condition,transcriber,song,midi_path,status,"
+        "render_input_peak_dbfs,render_input_rms_dbfs,render_pre_gain_db,"
+        "render_post_gain_db,render_guard_gain_db,note.onset_f1"
+    )
+
+
+def test_render_diagnostic_columns_match_snake_case(ert: ModuleType) -> None:
+    record = _make_record(
+        ert, render_diagnostics={"input_peak": 0.5, "input_rms": 0.25}
+    )
+    row = ert.build_rows([record], effect_types={})[0]
+
+    render_columns = [key for key in row if key.startswith("render_")]
+
+    assert render_columns == [
+        "render_input_peak_dbfs",
+        "render_input_rms_dbfs",
+        "render_pre_gain_db",
+        "render_post_gain_db",
+        "render_guard_gain_db",
+    ]
+    for column in render_columns:
+        assert re.fullmatch(r"[a-z][a-z0-9_]*", column)

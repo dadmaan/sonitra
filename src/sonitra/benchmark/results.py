@@ -45,6 +45,13 @@ class BenchmarkRecord:
     """Provenance metadata from the transcriber (package version, checkpoint,
     device, filtered counts). Defaulted so old JSONL without this key still
     loads via ``BenchmarkRecord(**json.loads(line))``."""
+    render_diagnostics: dict[str, Any] = field(default_factory=dict)
+    """Level and quality-gate diagnostics copied from the file's render-log
+    ``quality_flags`` (input level, stage gains, guard, gate flags); the same
+    dict on every transcriber row of that file. Empty when the render raised
+    before diagnostics existed or when the record predates the field.
+    Defaulted so old JSONL without this key still loads via
+    ``BenchmarkRecord(**json.loads(line))``."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -19,19 +19,29 @@ import numpy as np
 import pytest
 import yaml
 
+from sonitra import pipeline as pipeline_module
 from sonitra.benchmark import runner as runner_module
 from sonitra.benchmark.host_info import collect_host_info
-from sonitra.benchmark.results import BenchmarkRecord
+from sonitra.benchmark.results import BenchmarkRecord, compute_fingerprint
 from sonitra.benchmark.runner import run_benchmark
-from sonitra.config import ConditionSection, PipelineConfig, SweepSection
+from sonitra.config import (
+    ConditionSection,
+    NormalisationSection,
+    NormalisationStage,
+    PipelineConfig,
+    SweepSection,
+)
 from sonitra.effects.builtin_effects import TuningOffsetConfig
 from sonitra.midi_reader import parse_midi
+from sonitra.midi_writer import write_transcription_outputs
+from sonitra.pipeline import PipelineResult
 from sonitra.separation.protocol import register_separator
 from sonitra.storage import write_wav
 from sonitra.transcribe.base import NumericSettingsError, TranscriptionError, TranscriptionResult
 from sonitra.transcribe.configs import (
     BasicPitchTranscriberConfig,
     ExternalCommandTranscriberConfig,
+    PrecomputedTranscriberConfig,
 )
 from sonitra.transcribe.numerics import read_numeric_env
 
@@ -2160,3 +2170,495 @@ def test_benchmark_silent_on_default_workers(
 
     assert _benchmark_worker_warnings(caplog, "transcription.max_workers") == []
     assert _benchmark_worker_warnings(caplog, "evaluation.max_workers") == []
+
+
+# ── render diagnostics reach every record ────────────────────────────────
+
+_RENDER_DIAGNOSTIC_KEYS = {
+    "input_rms",
+    "input_peak",
+    "pre_gain_db",
+    "post_gain_db",
+    "peak_before_guard",
+    "guard_gain_db",
+    "guard_engaged",
+    "rms",
+    "peak",
+    "is_silent",
+    "is_clipped",
+    "too_short",
+    "duration_mismatch",
+}
+
+
+def _write_silent_midi(path: Path) -> Path:
+    """A notes-free MIDI: the synth renders silence and the gate rejects it."""
+    write_transcription_outputs(TranscriptionResult(notes=[], transcriber="stub"), path)
+    return path
+
+
+def _add_quiet_normalisation_condition(config: PipelineConfig) -> None:
+    """Baseline versus a post stage 20 dB lower, both levelling the same files."""
+    config.benchmark.sweeps = []
+    config.benchmark.conditions.append(
+        ConditionSection(
+            name="quiet",
+            overrides={"normalisation.post.target_db": -53.0},
+        )
+    )
+    config.normalisation = NormalisationSection(
+        enabled=True,
+        placement="post",
+        post=NormalisationStage(mode="rms", target_db=-33.0),
+    )
+
+
+def test_records_carry_render_diagnostics_per_condition(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    corpus_dir: Path,
+) -> None:
+    _add_quiet_normalisation_condition(benchmark_config)
+    benchmark_config.transcription.transcribers.append(
+        PrecomputedTranscriberConfig(midi_dir=str(corpus_dir), name="oracle2")
+    )
+    midi = midi_fixture("test_c4.mid")
+
+    result = run_benchmark([midi], tmp_path, benchmark_config)
+
+    records = [record for record in result.records if record.midi_path == str(midi)]
+    assert len(records) == 4  # 2 conditions x 2 transcribers
+    for record in records:
+        assert set(record.render_diagnostics) == _RENDER_DIAGNOSTIC_KEYS
+    by_condition: dict[str, list[BenchmarkRecord]] = {}
+    for record in records:
+        by_condition.setdefault(record.condition, []).append(record)
+    # every transcriber row of one file carries the same diagnostics
+    for rows in by_condition.values():
+        assert all(row.render_diagnostics == rows[0].render_diagnostics for row in rows)
+    baseline_post = by_condition["baseline"][0].render_diagnostics["post_gain_db"]
+    quiet_post = by_condition["quiet"][0].render_diagnostics["post_gain_db"]
+    assert baseline_post - quiet_post == pytest.approx(20.0, abs=1e-6)
+
+
+def test_gate_rejected_record_carries_render_diagnostics(
+    benchmark_config: PipelineConfig, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    silent_midi = _write_silent_midi(tmp_path / "silent.mid")
+
+    result = run_benchmark([silent_midi], tmp_path / "wd", benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    assert set(record.render_diagnostics) == _RENDER_DIAGNOSTIC_KEYS
+    assert record.render_diagnostics["is_silent"] is True
+    assert record.render_diagnostics["input_rms"] < 0.001
+
+
+def _stub_pipeline_log(monkeypatch: pytest.MonkeyPatch, factory) -> None:
+    """Replace run_pipeline with one logging *factory(path, out_dir)* per file.
+
+    Returning ``None`` from the factory leaves that file out of the render log.
+    """
+
+    def fake_run_pipeline(paths, out_dir, **kwargs) -> PipelineResult:
+        log = []
+        for path in paths:
+            entry = factory(Path(path), Path(out_dir))
+            if entry is not None:
+                log.append(entry)
+        return PipelineResult(
+            succeeded=0, failed=len(log), skipped=0, elapsed_seconds=0.0, log=log
+        )
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_run_pipeline)
+
+
+def test_render_exception_record_keeps_empty_render_diagnostics(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi = midi_fixture("test_c4.mid")
+    _stub_pipeline_log(
+        monkeypatch,
+        lambda path, out_dir: {
+            "midi": str(path),
+            "output": str(out_dir / f"{path.stem}.wav"),
+            "status": "failed",
+            "error": "render exploded",
+            "quality_flags": {"error": "render exploded"},
+            "elapsed_seconds": 0.1,
+        },
+    )
+
+    result = run_benchmark([midi], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    assert record.error == "render exploded"
+    assert record.render_diagnostics == {}
+
+
+def test_resume_keeps_old_records_without_render_diagnostics(
+    benchmark_config: PipelineConfig, midi_fixture, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi_paths = [midi_fixture("test_c4.mid")]
+
+    run_benchmark(midi_paths, tmp_path, benchmark_config)
+    results_file = tmp_path / benchmark_config.benchmark.results_path
+    stripped = []
+    for line in results_file.read_text().splitlines():
+        payload = json.loads(line)
+        payload.pop("render_diagnostics", None)
+        stripped.append(json.dumps(payload))
+    results_file.write_text("\n".join(stripped) + "\n")
+    fingerprint_file = results_file.with_name(results_file.name + ".fingerprint")
+    before = (results_file.read_bytes(), fingerprint_file.read_bytes())
+
+    benchmark_config.benchmark.resume = True
+    second = run_benchmark(midi_paths, tmp_path, benchmark_config)
+
+    assert (results_file.read_bytes(), fingerprint_file.read_bytes()) == before
+    assert len(second.records) == 1
+    assert second.records[0].status == "succeeded"
+    assert second.records[0].render_diagnostics == {}
+
+
+# ── a gate rejection names the checks that failed ────────────────────────
+
+
+class _FixedAudioSource:
+    """Source stub: fixed audio and a fixed planned duration for every file."""
+
+    def __init__(self, audio: np.ndarray, sample_rate: int, expected_sec: float) -> None:
+        self._audio = audio
+        self._sample_rate = sample_rate
+        self._expected_sec = expected_sec
+
+    def load(self, path: Path) -> tuple[np.ndarray, int]:
+        return self._audio.copy(), self._sample_rate
+
+    def expected_duration_sec(self, path: Path) -> float:
+        return self._expected_sec
+
+
+def _install_fixed_audio_source(
+    monkeypatch: pytest.MonkeyPatch, audio: np.ndarray, sample_rate: int, expected_sec: float
+) -> None:
+    monkeypatch.setattr(
+        pipeline_module,
+        "make_source",
+        lambda cfg: _FixedAudioSource(audio, sample_rate, expected_sec),
+    )
+
+
+def test_duration_mismatch_gate_rejection_names_check(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.quality_gates.max_duration_deviation_sec = 0.0
+    sample_rate = benchmark_config.render_pipeline.sample_rate
+    expected = 1.0
+    samples = int(sample_rate * expected) + 1  # one sample longer than planned
+    tone = 0.25 * np.sin(2 * np.pi * 440.0 * np.arange(samples) / sample_rate)
+    _install_fixed_audio_source(
+        monkeypatch, tone.astype(np.float32).reshape(1, -1), sample_rate, expected
+    )
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    assert record.error == "quality gate failed: duration_mismatch"
+    assert record.render_diagnostics["duration_mismatch"] is True
+    assert record.render_diagnostics["is_silent"] is False
+
+
+def test_silent_render_gate_rejection_names_check(
+    benchmark_config: PipelineConfig, tmp_path: Path
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    silent_midi = _write_silent_midi(tmp_path / "silent.mid")
+
+    result = run_benchmark([silent_midi], tmp_path / "wd", benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    assert record.error == "quality gate failed: is_silent"
+    assert record.render_diagnostics["is_silent"] is True
+
+
+def test_multiple_gate_rejections_named_in_fixed_order(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    benchmark_config.quality_gates.max_duration_deviation_sec = 0.0
+    sample_rate = benchmark_config.render_pipeline.sample_rate
+    expected = 1.0
+    samples = int(sample_rate * expected) + 1
+    _install_fixed_audio_source(
+        monkeypatch, np.zeros((1, samples), dtype=np.float32), sample_rate, expected
+    )
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    # silent plus duration mismatch, in the fixed order the runner promises
+    # (alphabetical would put duration_mismatch first)
+    assert record.error == "quality gate failed: is_silent, duration_mismatch"
+    assert record.render_diagnostics["is_silent"] is True
+    assert record.render_diagnostics["duration_mismatch"] is True
+    assert record.render_diagnostics["too_short"] is False
+    assert record.render_diagnostics["is_clipped"] is False
+
+
+def test_raised_render_keeps_exception_text(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    midi = midi_fixture("test_c4.mid")
+    _stub_pipeline_log(
+        monkeypatch,
+        lambda path, out_dir: {
+            "midi": str(path),
+            "output": str(out_dir / f"{path.stem}.wav"),
+            "status": "failed",
+            "error": "kaboom",
+            "elapsed_seconds": 0.1,
+        },
+    )
+
+    result = run_benchmark([midi], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.error == "kaboom"
+    assert record.render_diagnostics == {}
+
+
+def test_missing_render_entry_keeps_generic_text(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    _stub_pipeline_log(monkeypatch, lambda path, out_dir: None)
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    assert record.error == "render failed or produced no output"
+    assert record.render_diagnostics == {}
+
+
+def test_missing_render_output_keeps_generic_text(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_config.benchmark.sweeps = []
+    _stub_pipeline_log(
+        monkeypatch,
+        lambda path, out_dir: {
+            "midi": str(path),
+            "output": str(out_dir / "never-written.wav"),
+            "status": "succeeded",
+            "elapsed_seconds": 0.1,
+        },
+    )
+
+    result = run_benchmark([midi_fixture("test_c4.mid")], tmp_path, benchmark_config)
+
+    record = result.records[0]
+    assert record.status == "render_failed"
+    assert record.error == "render failed or produced no output"
+    assert record.render_diagnostics == {}
+
+
+# ── per-condition manifests live inside the work dir ─────────────────────
+
+
+def _add_quiet_condition(config: PipelineConfig) -> None:
+    config.benchmark.sweeps = []
+    config.benchmark.conditions.append(
+        ConditionSection(
+            name="quiet",
+            overrides={"render_pipeline.duration_padding_sec": 1.0},
+        )
+    )
+
+
+def test_condition_manifests_written_under_work_dir(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _add_quiet_condition(benchmark_config)
+    benchmark_config.observability.write_manifest = True
+    work_dir = tmp_path / "work"
+    midi = midi_fixture("test_c4.mid")
+
+    run_benchmark([midi], work_dir, benchmark_config)
+
+    baseline_manifest = work_dir / "manifests" / "baseline" / "renders.jsonl"
+    quiet_manifest = work_dir / "manifests" / "quiet" / "renders.jsonl"
+    assert baseline_manifest.exists()
+    assert quiet_manifest.exists()
+    baseline_rows = [
+        json.loads(line) for line in baseline_manifest.read_text().splitlines()
+    ]
+    quiet_rows = [
+        json.loads(line) for line in quiet_manifest.read_text().splitlines()
+    ]
+    assert len(baseline_rows) == 1
+    assert len(quiet_rows) == 1
+    # each manifest holds only its own condition's rows
+    assert "/baseline/" in baseline_rows[0]["output_path"]
+    assert "/quiet/" in quiet_rows[0]["output_path"]
+    assert {row["midi_path"] for row in baseline_rows + quiet_rows} == {str(midi)}
+    # nothing lands in the process working directory
+    assert list(cwd.iterdir()) == []
+
+
+def test_absolute_manifest_path_written_next_to_source(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _add_quiet_condition(benchmark_config)
+    benchmark_config.observability.write_manifest = True
+    central = tmp_path / "central" / "renders.jsonl"
+    benchmark_config.observability.manifest_path = central
+
+    run_benchmark([midi_fixture("test_c4.mid")], tmp_path / "work", benchmark_config)
+
+    assert (tmp_path / "central" / "renders.baseline.jsonl").exists()
+    assert (tmp_path / "central" / "renders.quiet.jsonl").exists()
+    # the path as configured is never written directly: it is a per-condition template
+    assert not central.exists()
+    assert list(cwd.iterdir()) == []
+
+
+def test_failed_list_next_to_condition_manifest(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _add_quiet_condition(benchmark_config)
+    benchmark_config.observability.write_manifest = True
+    benchmark_config.observability.write_failed_list = True
+    missing = tmp_path / "missing.mid"
+    work_dir = tmp_path / "work"
+
+    run_benchmark([midi_fixture("test_c4.mid"), missing], work_dir, benchmark_config)
+
+    for slug in ("baseline", "quiet"):
+        failed_list = work_dir / "manifests" / slug / "renders.failed.txt"
+        assert failed_list.exists()
+        assert str(missing) in failed_list.read_text()
+    assert list(cwd.iterdir()) == []
+
+
+def test_write_manifest_false_writes_no_manifest(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _add_quiet_condition(benchmark_config)
+    assert benchmark_config.observability.write_manifest is False
+    midi = midi_fixture("test_c4.mid")
+
+    run_benchmark([midi], tmp_path / "off", benchmark_config)
+
+    assert list((tmp_path / "off").rglob("renders.jsonl")) == []
+    assert list(cwd.iterdir()) == []
+
+    # enabling it writes each condition's manifest under the work dir instead
+    benchmark_config.observability.write_manifest = True
+    run_benchmark([midi], tmp_path / "on", benchmark_config)
+
+    assert (tmp_path / "on" / "manifests" / "baseline" / "renders.jsonl").exists()
+    assert (tmp_path / "on" / "manifests" / "quiet" / "renders.jsonl").exists()
+    assert list(cwd.iterdir()) == []
+
+
+def test_manifest_copy_leaves_snapshot_and_fingerprint_untouched(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _add_quiet_condition(benchmark_config)
+    benchmark_config.observability.write_manifest = True
+    expected_config = tmp_path / "expected.yaml"
+    benchmark_config.save(expected_config)
+    work_dir = tmp_path / "work"
+
+    run_benchmark([midi_fixture("test_c4.mid")], work_dir, benchmark_config)
+
+    assert (work_dir / "manifests" / "baseline" / "renders.jsonl").exists()
+    assert (work_dir / "manifests" / "quiet" / "renders.jsonl").exists()
+    # the per-condition copy replaced the path only in the copy
+    assert (work_dir / "config.yaml").read_bytes() == expected_config.read_bytes()
+    results_file = work_dir / benchmark_config.benchmark.results_path
+    fingerprint_file = results_file.with_name(results_file.name + ".fingerprint")
+    assert fingerprint_file.read_text() == compute_fingerprint(benchmark_config)
+
+
+def test_direct_run_pipeline_keeps_relative_manifest_path(
+    benchmark_config: PipelineConfig,
+    midi_fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _add_quiet_condition(benchmark_config)
+    benchmark_config.observability.write_manifest = True
+    midi = midi_fixture("test_c4.mid")
+
+    # a benchmark run must not drop its manifest into the working directory
+    run_benchmark([midi], tmp_path / "work", benchmark_config)
+    assert not (cwd / "renders.jsonl").exists()
+
+    # the pipeline entry point itself still resolves the configured relative path
+    runner_module.run_pipeline([midi], tmp_path / "out", config=benchmark_config)
+    assert (cwd / "renders.jsonl").exists()

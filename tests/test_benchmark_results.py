@@ -406,3 +406,27 @@ def test_load_records_defaults_timing_fields(tmp_path: Path) -> None:
     assert math.isnan(records[0].separate_seconds)
     assert math.isnan(records[0].transcribe_seconds)
     assert math.isnan(records[0].evaluate_seconds)
+
+
+def test_load_records_defaults_render_diagnostics(tmp_path: Path) -> None:
+    # A results file written before render diagnostics existed must still load
+    # via BenchmarkRecord(**json.loads(line)); the field defaults to an empty dict.
+    old_payload = {
+        "condition": "baseline",
+        "transcriber": "bp",
+        "midi_path": "a.mid",
+        "audio_path": "a.wav",
+        "status": "succeeded",
+        "metrics": {"note.onset_f1": 0.9},
+        "overrides": {},
+        "error": None,
+        "source_path": None,
+    }
+    path = tmp_path / "old.jsonl"
+    path.write_text(json.dumps(old_payload) + "\n")
+
+    records = load_records(path)
+
+    assert len(records) == 1
+    assert records[0].render_diagnostics == {}
+    assert records[0].to_dict()["render_diagnostics"] == {}
