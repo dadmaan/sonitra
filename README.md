@@ -154,7 +154,7 @@ Sonitra finds both `.mid` and `.midi` endings. It searches all subfolders at any
 ```yaml
 io:
   corpus_root: ./corpus
-  dataset: maestro-v3   # scopes everything under corpus/maestro-v3/
+  dataset: maestro-v3 # scopes everything under corpus/maestro-v3/
   output_format: wav
 ```
 
@@ -210,10 +210,6 @@ The devcontainer and the Docker images run it for you on start. See [docs/model-
 ## Evaluation metrics
 
 Sonitra scores note hits, frame hits, and expressive playing. Note means a single musical note. Frame means a short 10 ms slice of sound. It uses mir_eval-style matching, a standard music-scoring method built with NumPy and SciPy. It also has an optional audio check with DTW. DTW means dynamic time warping, a way to line up two audio clips in time and measure the gap. See [docs/evaluation.md](docs/evaluation.md) for the full table. Scores also depend on the device and the numeric mode; see [docs/reproducibility.md](docs/reproducibility.md).
-
-## Statistical analysis
-
-`python scripts/run_mixed_effects_analysis.py --work-dir DIR` fits a mixed-effects regression to a benchmark run. This form of statistics pulls apart each test setup's effect from how hard each piece was. You need R with `glmmTMB`. R is a stats language. See [docs/statistical-analysis.md](docs/statistical-analysis.md).
 
 ## Python API and REST API
 

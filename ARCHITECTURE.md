@@ -235,7 +235,7 @@ flowchart TB
         conv["guitarset_jams_to_midi.py · musicnet_labels_to_midi.py (annotations/ → midi/ + metadata/)"]
         check["check_dataset.py (pre-run pairing and MIDI checks)"]
         batch["run_transcribe_eval.py (render → transcribe → evaluate per preset)"]
-        analysis["enrich_metadata.py → export_regression_table.py → run_mixed_effects_analysis.py (R)"]
+        analysis["enrich_metadata.py → export_regression_table.py"]
     end
 ```
 
@@ -246,7 +246,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     core["Core deps (dawdreamer · mido · numpy · scipy · pedalboard · fastapi · uvicorn · httpx · typer · pyyaml · pydantic · rich · basic-pitch >=0.4,<0.5)"]
-    ext["External (not pip): fluidsynth CLI · SoundFont (.sf2) · VST3 plugins · R + glmmTMB · jsonlite"]
+    ext["External (not pip): fluidsynth CLI · SoundFont (.sf2) · VST3 plugins"]
     extras["Optional extras"]
     demucs["[demucs] stem separation"]
     gpu["[gpu] CUDA wheels for TF GPU inference (bare-metal Linux x86_64)"]
@@ -274,7 +274,6 @@ flowchart TB
         gate["pytest is the quality gate (no ruff/black/mypy)"]
         m1["skip_if_no_vst / integration (require VST_PATH / VST3_PATH)"]
         m2["slow (heavy backends: basic-pitch)"]
-        m3["requires_r (R with glmmTMB)"]
     end
 ```
 
