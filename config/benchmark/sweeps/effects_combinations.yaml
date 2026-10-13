@@ -1,7 +1,7 @@
 # Effects combinations: compare discrete acoustic scenarios against a common baseline.
 # All six effect types are declared; conditions selectively enable them via overrides.
-# Base state: Compressor (0) + Reverb (1) enabled; Chorus (2), Delay (3),
-#             Distortion (4), Clipping (5) disabled.
+# Base state: Clipping (0) disabled, Compressor (1) + Reverb (2) enabled;
+#             Chorus (3), Delay (4), Distortion (5) disabled.
 # Conditions (named only, no sweeps): 9 total
 #
 # Usage:
@@ -44,13 +44,16 @@ pedalboard:
     reload_plugin_per_file: false
     silence_flush_sec: 0.5
   effects:
-    - type: Compressor        # index 0
+    - type: Clipping          # index 0
+      threshold_db: -6.0
+      enabled: false
+    - type: Compressor        # index 1
       threshold_db: -18.0
       ratio: 4.0
       attack_ms: 5.0
       release_ms: 100.0
       enabled: true
-    - type: Reverb            # index 1
+    - type: Reverb            # index 2
       room_size: 0.4
       damping: 0.5
       wet_level: 0.15
@@ -58,23 +61,20 @@ pedalboard:
       width: 1.0
       freeze_mode: false
       enabled: true
-    - type: Chorus            # index 2
+    - type: Chorus            # index 3
       rate_hz: 1.0
       depth: 0.25
       centre_delay_ms: 7.0
       feedback: 0.0
       mix: 0.5
       enabled: false
-    - type: Delay             # index 3
+    - type: Delay             # index 4
       delay_seconds: 0.5
       feedback: 0.0
       mix: 0.5
       enabled: false
-    - type: Distortion        # index 4
+    - type: Distortion        # index 5
       drive_db: 25.0
-      enabled: false
-    - type: Clipping          # index 5
-      threshold_db: -6.0
       enabled: false
 
 normalisation:
@@ -154,34 +154,34 @@ benchmark:
       overrides: {}
     - name: no_effects
       overrides:
-        pedalboard.effects.0.enabled: false
         pedalboard.effects.1.enabled: false
+        pedalboard.effects.2.enabled: false
     - name: heavy_compression
       overrides:
-        pedalboard.effects.0.ratio: 16.0
-        pedalboard.effects.0.threshold_db: -30.0
+        pedalboard.effects.1.ratio: 16.0
+        pedalboard.effects.1.threshold_db: -30.0
     - name: extreme_reverb
       overrides:
-        pedalboard.effects.1.wet_level: 0.95
-        pedalboard.effects.1.room_size: 0.95
+        pedalboard.effects.2.wet_level: 0.95
+        pedalboard.effects.2.room_size: 0.95
     - name: chorus_delay
       overrides:
-        pedalboard.effects.2.enabled: true
         pedalboard.effects.3.enabled: true
+        pedalboard.effects.4.enabled: true
     - name: distortion
       overrides:
-        pedalboard.effects.4.enabled: true
+        pedalboard.effects.5.enabled: true
     - name: overload_clip
       overrides:
-        pedalboard.effects.5.enabled: true
+        pedalboard.effects.0.enabled: true
     - name: quiet_minus_20db
       overrides:
         normalisation.post.target_db: -53.0
     - name: all_effects
       overrides:
-        pedalboard.effects.2.enabled: true
         pedalboard.effects.3.enabled: true
         pedalboard.effects.4.enabled: true
         pedalboard.effects.5.enabled: true
+        pedalboard.effects.0.enabled: true
   sweeps: []
   max_workers: 1

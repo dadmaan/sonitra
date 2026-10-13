@@ -33,6 +33,9 @@ _SRC_DIR = _REPO_ROOT / "src"
 # provides and what output-only levelling cannot.
 _LEVEL_DEPENDENT_TYPES = frozenset({"Distortion", "Compressor", "Limiter", "Clipping"})
 
+# Effects that reduce the transients a Clipping effect is meant to cut.
+_DYNAMICS_TYPES = frozenset({"Compressor", "Limiter"})
+
 # Presets that run an enabled level-dependent effect while levelling only after
 # the chain. Each is a documented per-study level decision rather than an
 # oversight, so this is the open to-do: it should only ever shrink, and a file
@@ -97,6 +100,31 @@ def _positive_gain_offenders(cfg: PipelineConfig, label: str) -> list[str]:
     return offenders
 
 
+def _clipping_behind_dynamics_offenders(cfg: PipelineConfig, label: str) -> list[str]:
+    """Describe Clipping effects that a Compressor or Limiter precedes.
+
+    A compressor in front lowers the transients a clipper is meant to cut, so a
+    "clip at -6 dBFS" treatment would clip almost nothing. Enabled state is
+    irrelevant: conditions toggle it, while the preset fixes the order.
+    """
+    offenders: list[str] = []
+    effects = cfg.pedalboard.effects
+    for index, effect in enumerate(effects):
+        if effect.type != "Clipping":
+            continue
+        blockers = [
+            f"effects[{earlier_index}] {earlier.type}"
+            for earlier_index, earlier in enumerate(effects[:index])
+            if earlier.type in _DYNAMICS_TYPES
+        ]
+        if blockers:
+            offenders.append(
+                f"{label}: effects[{index}] Clipping sits behind "
+                + ", ".join(blockers)
+            )
+    return offenders
+
+
 def _post_placement_offenders(paths: list[Path]) -> set[str]:
     """Config-relative paths that level only after a level-dependent effect.
 
@@ -150,6 +178,42 @@ def test_positive_gain_rule_flags_a_gain_with_nothing_after_it() -> None:
     cfg = PipelineConfig.model_validate(payload)
     assert not _positive_gain_offenders(cfg, "synthetic"), (
         "a level-dependent effect after the gain must satisfy the rule"
+    )
+
+
+def test_clipping_precedes_every_compressor_and_limiter() -> None:
+    """No shipped preset clips after a dynamics effect that tames transients."""
+    offenders: list[str] = []
+    for path in presets():
+        cfg = load_config(path)
+        label = path.relative_to(CONFIG_DIR).as_posix()
+        offenders.extend(_clipping_behind_dynamics_offenders(cfg, label))
+
+    assert not offenders, "\n".join(offenders)
+
+
+def test_clipping_rule_flags_a_clipper_behind_a_compressor() -> None:
+    """The rule above rejects a Clipping effect that a Compressor precedes."""
+    payload = load_config(_SOURCE_PATH).model_dump(mode="python")
+    payload["pedalboard"]["effects"] = [
+        {
+            "type": "Compressor",
+            "threshold_db": -18.0,
+            "ratio": 4.0,
+            "attack_ms": 5.0,
+            "release_ms": 100.0,
+        },
+        {"type": "Clipping", "threshold_db": -6.0},
+    ]
+    cfg = PipelineConfig.model_validate(payload)
+    assert _clipping_behind_dynamics_offenders(cfg, "synthetic"), (
+        "a Clipping effect behind a Compressor must be flagged"
+    )
+
+    payload["pedalboard"]["effects"].reverse()
+    cfg = PipelineConfig.model_validate(payload)
+    assert not _clipping_behind_dynamics_offenders(cfg, "synthetic"), (
+        "a Clipping effect before every dynamics effect must satisfy the rule"
     )
 
 
