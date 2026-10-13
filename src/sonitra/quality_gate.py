@@ -57,7 +57,7 @@ def check_quality(
     used for the silence gate when no post stage set the output level
     (*output_level_set* false): a stage that killed the signal is caught,
     a deliberately quiet target is not. Callers that pass no input level
-    keep the output-only check.
+    keep the output-only check, whatever *output_level_set* says.
     """
     audio_arr = np.asarray(audio, dtype=np.float32)
     if audio_arr.ndim == 1:
@@ -68,7 +68,7 @@ def check_quality(
     peak = float(np.max(np.abs(audio_arr))) if audio_arr.size else 0.0
 
     input_silent = input_rms is not None and input_rms < cfg.silence_threshold_rms
-    output_silent = (not output_level_set) and rms < cfg.silence_threshold_rms
+    output_silent = (input_rms is None or not output_level_set) and rms < cfg.silence_threshold_rms
     is_silent = input_silent or output_silent
     for_clip = peak_before_guard if peak_before_guard is not None else peak
     is_clipped = for_clip > cfg.clip_threshold and not guard_engaged

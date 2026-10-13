@@ -201,6 +201,24 @@ def test_input_absent_falls_back_to_the_output_rms(dummy_silent_audio, dummy_aud
     loud = check_quality(dummy_audio, 44100, cfg, input_rms=None)
     assert loud.is_silent is False
 
+
+def test_input_absent_checks_the_output_even_when_level_set(
+    dummy_silent_audio, dummy_audio
+):
+    # No input level means there is nothing else to go on, so the final RMS
+    # decides even when a post stage set the level.
+    cfg = QualityGatesSection(silence_threshold_rms=0.001)
+    silent = check_quality(
+        dummy_silent_audio, 44100, cfg, input_rms=None, output_level_set=True
+    )
+    assert silent.is_silent is True
+    assert silent.passed is False
+    loud = check_quality(
+        dummy_audio, 44100, cfg, input_rms=None, output_level_set=True
+    )
+    assert loud.is_silent is False
+
+
 def test_input_levels_in_to_dict_default_to_none(dummy_audio):
     data = check_quality(dummy_audio, 44100, QualityGatesSection()).to_dict()
     assert data["input_rms"] is None
