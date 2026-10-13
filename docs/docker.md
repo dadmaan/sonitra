@@ -90,17 +90,6 @@ The table below shows which folders on your machine link to which folders in the
 
 Set `SONITRA_CONFIG` in `.env` to use a different config path inside the container. The default is `/app/config/config.yaml`.
 
-## R (statistical analysis)
-
-Both images include R with the `glmmTMB` and `jsonlite` packages. R adds about 400 MB. If you never use R, you can skip it. Set `INSTALL_R=0` in `.env` to leave it out:
-
-```bash
-echo "INSTALL_R=0" >> .env
-docker compose -f docker/docker-compose.yml --profile cpu build   # or --profile gpu
-```
-
-The two images carry different R versions because they build on different base systems. The CPU image (Debian) has R 4.5 with glmmTMB 1.1.10. The GPU image (Ubuntu 22.04) has R 4.1.2 with glmmTMB 1.1.2.3.
-
 ## TransKun (piano transcription)
 
 Both images include TransKun with its torch build. The build comes from the `transkun` extra in `pyproject.toml`. TransKun is the piano transcription backend you select with `type: transkun`. Torch is the machine-learning library it runs on. So TransKun works with no extra setup. If you never transcribe with TransKun, you can skip it. Set `INSTALL_TRANSKUN=0` in `.env` to leave it out:
@@ -114,7 +103,7 @@ The two images carry different torch builds. The CPU image carries CPU torch. Th
 
 TransKun inference now runs on both images. The GPU image copies its Python from `python:3.11-slim-bookworm`, the same 3.11.16 the venv was built with. Ubuntu 22.04's apt Python is the pre-release 3.11.0rc1, which lacks `sys.get_int_max_str_digits`, a function torch's dynamo path calls. TensorFlow and torch still coexist and both see the GPU.
 
-Measured sizes with defaults (`INSTALL_R=1`, `INSTALL_TRANSKUN=1`): `sonitra:latest` is 3.68 GB and `sonitra:gpu` is 15.6 GB. With both `INSTALL_R=0` and `INSTALL_TRANSKUN=0`: 2.56 GB and 10.5 GB. The slim figure drops R and TransKun together, so do not read it as TransKun alone. The hFT-Transformer weights are not in either figure: they live in the `./models` bind mount, not in the image.
+Measured sizes with defaults (`INSTALL_TRANSKUN=1`): `sonitra:latest` is 3.48 GB and `sonitra:gpu` is 15.5 GB. The hFT-Transformer weights are not in either figure: they live in the `./models` bind mount, not in the image.
 
 ## hFT-Transformer weights
 
